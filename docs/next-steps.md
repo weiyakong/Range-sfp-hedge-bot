@@ -4,6 +4,10 @@ Version: **0.2**
 
 This project should be tested slowly and visually before any automation is considered.
 
+## Merge note
+
+Version 0.2 keeps the version 0.1 visual-only project files and upgrades the indicator behavior. If you are comparing branches, prefer the v0.2 Pine Script where conflicts mention labels, trigger lines, conflict handling, expansion filtering, swing freshness, or clustering.
+
 ## 1. Test visually on BTC
 
 Add the Pine Script indicator to a BTC chart in TradingView. Review multiple timeframes and different market conditions.

@@ -4,6 +4,11 @@ Version: **0.2**
 
 Range SFP Hedge Bot starts as a **TradingView visual analysis project**. Version 0.2 provides a Pine Script v5 indicator that helps traders visually study possible Swing Failure Pattern (SFP) reactions around important BTC levels.
 
+## Version history
+
+- **v0.1:** Initial visual TradingView indicator and documentation. No trading, no exchange connection, and no API keys.
+- **v0.2:** Keeps the v0.1 visual-only scope while improving chart readability with shorter labels, trigger-level lines, conflict handling, expansion filtering, swing freshness checks, and same-zone SFP clustering.
+
 ## What this project does
 
 - Adds a TradingView indicator for visual BTC chart analysis.
