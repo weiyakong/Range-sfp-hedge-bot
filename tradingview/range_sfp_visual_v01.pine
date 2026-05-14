@@ -1,0 +1,120 @@
+//@version=5
+indicator("Range SFP Visual v0.1", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// -----------------------------------------------------------------------------
+// Range SFP Visual v0.1
+// This is an indicator only. It does not place orders or connect to exchanges.
+// Use it for visual BTC analysis and manual review of possible SFP reactions.
+// -----------------------------------------------------------------------------
+
+// === User settings ===
+swingLength = input.int(5, "Swing pivot length", minval=1, tooltip="Number of candles used on each side of a pivot high/low.")
+showDaily = input.bool(true, "Show daily high/low")
+showWeekly = input.bool(true, "Show weekly high/low")
+showMonthly = input.bool(true, "Show monthly high/low")
+showSwings = input.bool(true, "Show swing high/low")
+showSfpLabels = input.bool(true, "Show possible SFP labels")
+showChopWarning = input.bool(true, "Show chop warning")
+
+chopLookback = input.int(20, "Chop lookback candles", minval=5, tooltip="How many recent candles to inspect for compression and repeated touches.")
+chopAtrLength = input.int(14, "Chop ATR length", minval=1)
+chopRangeAtrMultiplier = input.float(1.2, "Chop range ATR multiplier", minval=0.1, step=0.1, tooltip="If recent range is below ATR times this value, the market may be compressed.")
+touchZoneAtrMultiplier = input.float(0.25, "Repeated touch zone ATR multiplier", minval=0.05, step=0.05, tooltip="How close price must be to the mid-zone to count as repeated touches.")
+minTouchesForChop = input.int(6, "Minimum repeated touches", minval=2)
+
+// === Previous higher-timeframe levels ===
+// We use the previous completed period so the level is stable during the current candle.
+previousDailyHigh = request.security(syminfo.tickerid, "D", high[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousDailyLow = request.security(syminfo.tickerid, "D", low[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousWeeklyHigh = request.security(syminfo.tickerid, "W", high[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousWeeklyLow = request.security(syminfo.tickerid, "W", low[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousMonthlyHigh = request.security(syminfo.tickerid, "M", high[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousMonthlyLow = request.security(syminfo.tickerid, "M", low[1], barmerge.gaps_off, barmerge.lookahead_off)
+
+// === Simple swing high and swing low detection ===
+// ta.pivothigh and ta.pivotlow confirm only after swingLength candles pass.
+pivotHigh = ta.pivothigh(high, swingLength, swingLength)
+pivotLow = ta.pivotlow(low, swingLength, swingLength)
+
+var float lastSwingHigh = na
+var float lastSwingLow = na
+
+if not na(pivotHigh)
+    lastSwingHigh := pivotHigh
+
+if not na(pivotLow)
+    lastSwingLow := pivotLow
+
+// === Level plots ===
+plot(showDaily ? previousDailyHigh : na, "Previous Daily High", color=color.new(color.orange, 0), linewidth=1, style=plot.style_linebr)
+plot(showDaily ? previousDailyLow : na, "Previous Daily Low", color=color.new(color.orange, 0), linewidth=1, style=plot.style_linebr)
+plot(showWeekly ? previousWeeklyHigh : na, "Previous Weekly High", color=color.new(color.blue, 0), linewidth=1, style=plot.style_linebr)
+plot(showWeekly ? previousWeeklyLow : na, "Previous Weekly Low", color=color.new(color.blue, 0), linewidth=1, style=plot.style_linebr)
+plot(showMonthly ? previousMonthlyHigh : na, "Previous Monthly High", color=color.new(color.purple, 0), linewidth=1, style=plot.style_linebr)
+plot(showMonthly ? previousMonthlyLow : na, "Previous Monthly Low", color=color.new(color.purple, 0), linewidth=1, style=plot.style_linebr)
+plot(showSwings ? lastSwingHigh : na, "Last Swing High", color=color.new(color.red, 0), linewidth=2, style=plot.style_linebr)
+plot(showSwings ? lastSwingLow : na, "Last Swing Low", color=color.new(color.green, 0), linewidth=2, style=plot.style_linebr)
+
+// Mark confirmed pivot candles so users can see where swing levels came from.
+plotshape(showSwings and not na(pivotHigh), title="Confirmed Swing High", style=shape.triangledown, location=location.abovebar, offset=-swingLength, color=color.new(color.red, 0), size=size.tiny, text="SH")
+plotshape(showSwings and not na(pivotLow), title="Confirmed Swing Low", style=shape.triangleup, location=location.belowbar, offset=-swingLength, color=color.new(color.green, 0), size=size.tiny, text="SL")
+
+// === SFP helper functions ===
+// Bearish: candle trades above a level and closes back below it.
+// Bullish: candle trades below a level and closes back above it.
+bearishSweepReclaim(level) =>
+    not na(level) and high > level and close < level
+
+bullishSweepReclaim(level) =>
+    not na(level) and low < level and close > level
+
+bearishDaily = bearishSweepReclaim(previousDailyHigh)
+bearishWeekly = bearishSweepReclaim(previousWeeklyHigh)
+bearishMonthly = bearishSweepReclaim(previousMonthlyHigh)
+bearishSwing = bearishSweepReclaim(lastSwingHigh)
+
+bullishDaily = bullishSweepReclaim(previousDailyLow)
+bullishWeekly = bullishSweepReclaim(previousWeeklyLow)
+bullishMonthly = bullishSweepReclaim(previousMonthlyLow)
+bullishSwing = bullishSweepReclaim(lastSwingLow)
+
+possibleBearishSfp = bearishDaily or bearishWeekly or bearishMonthly or bearishSwing
+possibleBullishSfp = bullishDaily or bullishWeekly or bullishMonthly or bullishSwing
+
+bearishReason = (bearishDaily ? "D " : "") + (bearishWeekly ? "W " : "") + (bearishMonthly ? "M " : "") + (bearishSwing ? "Swing " : "")
+bullishReason = (bullishDaily ? "D " : "") + (bullishWeekly ? "W " : "") + (bullishMonthly ? "M " : "") + (bullishSwing ? "Swing " : "")
+
+// === Simple chop warning ===
+// This is intentionally basic. It looks for a small recent range and many candles
+// touching the same middle zone. It is only a warning, not a trading rule.
+recentRange = ta.highest(high, chopLookback) - ta.lowest(low, chopLookback)
+atrValue = ta.atr(chopAtrLength)
+rangeIsCompressed = not na(atrValue) and recentRange < atrValue * chopRangeAtrMultiplier
+zoneMidpoint = (ta.highest(high, chopLookback) + ta.lowest(low, chopLookback)) / 2.0
+touchDistance = atrValue * touchZoneAtrMultiplier
+repeatedTouches = 0
+
+for index = 0 to chopLookback - 1
+    candleTouchesZone = math.abs(close[index] - zoneMidpoint) <= touchDistance or math.abs(high[index] - zoneMidpoint) <= touchDistance or math.abs(low[index] - zoneMidpoint) <= touchDistance
+    repeatedTouches += candleTouchesZone ? 1 : 0
+
+chopWarning = showChopWarning and rangeIsCompressed and repeatedTouches >= minTouchesForChop
+
+bgcolor(chopWarning ? color.new(color.gray, 88) : na, title="Chop warning background")
+
+if chopWarning and not chopWarning[1]
+    label.new(bar_index, high, "Chop warning\nLow range + repeated touches", style=label.style_label_down, color=color.new(color.gray, 0), textcolor=color.white, size=size.small)
+
+// === Visual SFP labels ===
+if showSfpLabels and possibleBearishSfp
+    label.new(bar_index, high, "Possible bearish SFP\nSweep + reclaim below\nLevels: " + bearishReason, style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.small)
+
+if showSfpLabels and possibleBullishSfp
+    label.new(bar_index, low, "Possible bullish SFP\nSweep + reclaim above\nLevels: " + bullishReason, style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white, size=size.small)
+
+// === Placeholder alert conditions ===
+// These alerts are simple placeholders for future versions. They only report that
+// the visual condition appeared; they do not send orders or execution commands.
+alertcondition(possibleBearishSfp, title="Possible Bearish SFP", message="Possible bearish SFP visual condition on {{ticker}} {{interval}}.")
+alertcondition(possibleBullishSfp, title="Possible Bullish SFP", message="Possible bullish SFP visual condition on {{ticker}} {{interval}}.")
+alertcondition(chopWarning, title="Chop Warning", message="Chop warning visual condition on {{ticker}} {{interval}}.")
