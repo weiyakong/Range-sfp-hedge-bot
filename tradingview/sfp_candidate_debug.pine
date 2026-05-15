@@ -1,16 +1,17 @@
 //@version=6
-indicator("SFP Candidate Debug v0.4", overlay=true, max_lines_count=500, max_labels_count=200)
+indicator("SFP Candidate Debug v0.5", overlay=true, max_lines_count=500, max_labels_count=200)
 
 // Diagnostic only: raw swing -> Candidate after 700+ USD move -> sweep -> SFP confirmed / broken.
 // Candidate labels are drawn on the original raw swing bar, not on the confirmation bar.
-// Impulse mode blocks creation of new counter-trend Candidates until exhaustion/reclaim.
+// v0.5: during impulse, new counter-trend raw swings are NOT collected and are NOT promoted to Candidates.
+// Existing Candidates created before impulse are still watched for sweep / SFP / broken.
 // No entries, SL, TP, strategy orders, webhooks, or live trading.
 
 showDashboard = input.bool(true, "Show dashboard")
 showCandidateLabels = input.bool(true, "Show Candidate labels")
 showSweepLabels = input.bool(true, "Show Sweep labels")
 showSfpLabels = input.bool(true, "Show SFP confirmed labels")
-showBrokenLabels = input.bool(true, "Show Broken / invalidated labels")
+showBrokenLabels = input.bool(true, "Show Broken labels")
 showPastLevels = input.bool(false, "Show used/broken levels")
 
 useCurrentTfSwings = input.bool(true, "Use current TF swings")
@@ -102,6 +103,10 @@ labelAt(x, y, labelText, isHigh, bg) =>
 rawMove(price, isHigh) =>
     isHigh ? price - low : high - price
 
+counterTrendRawBlocked(isHigh) =>
+    // Bearish impulse: do not create new Low Candidates. Bullish impulse: do not create new High Candidates.
+    (impulseMode == -1 and not isHigh) or (impulseMode == 1 and isHigh)
+
 hasDuplicateCandidate(price, isHigh) =>
     bool duplicate = false
     if array.size(candPrice) > 0
@@ -110,7 +115,8 @@ hasDuplicateCandidate(price, isHigh) =>
     duplicate
 
 addRawSwing(price, isHigh, src, originBar) =>
-    if not na(price)
+    // v0.5: during active impulse, counter-trend raw swings are not collected at all.
+    if not na(price) and not counterTrendRawBlocked(isHigh)
         array.push(rawPrice, price)
         array.push(rawIsHigh, isHigh)
         array.push(rawSource, src)
@@ -191,8 +197,8 @@ if array.size(rawPrice) > 0
             rs = array.get(rawSource, i)
             rb = array.get(rawBar, i)
             moveSize = rawMove(rp, rh)
-            counterTrendBlocked = (impulseMode == -1 and not rh) or (impulseMode == 1 and rh)
-            if moveSize >= minMoveUsd and not counterTrendBlocked
+            // v0.5: old raw swings that become counter-trend during a later impulse are paused, not invalidated/labelled.
+            if moveSize >= minMoveUsd and not counterTrendRawBlocked(rh)
                 wasAdded = addCandidate(rp, rh, rs, rb)
                 array.set(rawActive, i, false)
                 if wasAdded
@@ -202,14 +208,6 @@ if array.size(rawPrice) > 0
                     if showCandidateLabels
                         candidateText = (rh ? "Candidate High" : "Candidate Low") + " · " + sourceShort(rs) + " · +" + str.tostring(math.round(moveSize))
                         labelAt(rb, rp, candidateText, rh, color.new(levelColor(rh, true), 0))
-            else if moveSize >= minMoveUsd and counterTrendBlocked
-                array.set(rawActive, i, false)
-                lastStatus := impulseMode == -1 ? "Raw Low blocked by bearish impulse" : "Raw High blocked by bullish impulse"
-                lastSource := sourceShort(rs)
-                lastPrice := rp
-                if showBrokenLabels
-                    blockY = rh ? rp + sweepLabelOffsetUsd : rp - sweepLabelOffsetUsd
-                    labelAt(rb, blockY, impulseMode == -1 ? "BLOCKED Low by impulse" : "BLOCKED High by impulse", rh, color.rgb(120, 90, 180))
 
 dHigh = useDwmBodyReference ? request.security(syminfo.tickerid, "D", math.max(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off) : na
 dLow = useDwmBodyReference ? request.security(syminfo.tickerid, "D", math.min(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off) : na
@@ -238,8 +236,7 @@ if array.size(candPrice) > 0
             pending = array.get(candPendingSweep, i)
             pendingBar = array.get(candPendingBar, i)
             nextBarSfp = pending and bar_index - pendingBar <= maxImmediateReclaimBars and (ch ? close < cp : close > cp)
-            candidateInvalidatedByImpulse = (impulseMode == -1 and not ch and cleanBreak) or (impulseMode == 1 and ch and cleanBreak)
-            if sweptNoReclaim and not sameBarSfp and not candidateInvalidatedByImpulse
+            if sweptNoReclaim and not sameBarSfp
                 array.set(candPendingSweep, i, true)
                 array.set(candPendingBar, i, bar_index)
                 lastStatus := ch ? "Swept Candidate High" : "Swept Candidate Low"
@@ -257,14 +254,6 @@ if array.size(candPrice) > 0
                 if showSfpLabels
                     sfpText = (ch ? "SFP High confirmed" : "SFP Low confirmed") + " · " + sourceShort(cs) + " · " + str.tostring(cp, format.mintick)
                     labelAt(bar_index, cp, sfpText, ch, color.new(levelColor(ch, true), 0))
-                retireCandidate(i)
-            else if candidateInvalidatedByImpulse
-                lastStatus := ch ? "Candidate High invalidated by bullish impulse" : "Candidate Low invalidated by bearish impulse"
-                lastSource := sourceShort(cs)
-                lastPrice := cp
-                if showBrokenLabels
-                    invalidY = ch ? cp + sweepLabelOffsetUsd : cp - sweepLabelOffsetUsd
-                    labelAt(bar_index, invalidY, ch ? "INVALIDATED High by impulse" : "INVALIDATED Low by impulse", ch, color.rgb(120, 90, 180))
                 retireCandidate(i)
             else if cleanBreak and not sameBarSfp and not nextBarSfp
                 lastStatus := ch ? "Candidate High broken" : "Candidate Low broken"
@@ -296,7 +285,7 @@ var table dash = table.new(position.top_right, 2, 6, border_width=1)
 if showDashboard and barstate.islast
     table.clear(dash, 0, 0, 1, 5)
     table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.new(color.black, 0))
-    table.cell(dash, 1, 0, "Candidate Debug v0.4", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, "Candidate Debug v0.5", text_color=color.white, bgcolor=color.new(color.black, 0))
     table.cell(dash, 0, 1, "Impulse mode", text_color=color.white)
     table.cell(dash, 1, 1, impulseText, text_color=color.white)
     table.cell(dash, 0, 2, "Nearest Candidate", text_color=color.white)
