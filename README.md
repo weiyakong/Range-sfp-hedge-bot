@@ -1,58 +1,57 @@
 # Range SFP Hedge Bot
 
-Version: **0.4.3**
+Version: **0.4.4**
 
-Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.4.3 keeps the project visual-only and fixes Relevant Reaction Level lifecycle/directionality.
+Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.4.4 narrows Relevant Reaction Level output so only true SFPs at active Relevant High / Low levels are actionable relevant-level events.
 
-## Main purpose of v0.4.3
+## Main purpose of v0.4.4
 
-Version 0.4.3 ensures a Relevant Reaction Level stops acting active after it is cleanly broken.
+Version 0.4.4 makes the relevant-level lifecycle strict:
 
-Core rules:
+- A **Relevant Reaction Low** can print `SFP at Relevant Low` only while it is active, unbroken, and swept/reclaimed by the current candle.
+- A **Relevant Reaction High** can print `SFP at Relevant High` only while it is active, unbroken, and swept/reclaimed by the current candle.
+- Generic relevant-level reaction labels are disabled from working logic.
+- Broken or past relevant levels cannot create SFP labels.
+- Clean breaks are checked only after SFP is checked first, so one level cannot print SFP and Broken on the same candle.
 
-- A **Relevant Reaction Low** is active support only while price is above it and it has not been broken downward.
-- A **Relevant Reaction High** is active resistance only while price is below it and it has not been broken upward.
-- Broken relevant levels are removed from active reaction/SFP logic.
-- Broken levels can optionally remain visible as muted history with `showPastRelevantLevels = true`.
-- A broken support retest is not a long reaction.
-- A broken resistance retest is not a short reaction.
-
-## Relevant level lifecycle
+## Relevant SFP lifecycle
 
 Active Relevant Reaction Low:
 
-- Can produce `Reaction at Relevant Level` from above.
-- Can produce `SFP at Relevant Low` only while still active.
-- Becomes `Broken Relevant Low` after a clean break below.
+- Valid Bull SFP: current low sweeps below the level and current close reclaims above it.
+- Clean break: if no reclaim occurs and price closes below the buffered level, it becomes `Broken Relevant Low`.
+- No touch or sweep means no relevant-level event.
 
 Active Relevant Reaction High:
 
-- Can produce `Reaction at Relevant Level` from below.
-- Can produce `SFP at Relevant High` only while still active.
-- Becomes `Broken Relevant High` after a clean break above.
+- Valid Bear SFP: current high sweeps above the level and current close reclaims below it.
+- Clean break: if no reclaim occurs and price closes above the buffered level, it becomes `Broken Relevant High`.
+- No touch or sweep means no relevant-level event.
 
 Broken/past relevant levels:
 
 - Are muted or hidden depending on `showPastRelevantLevels`.
 - Do not extend as active levels.
-- Do not create SFP candidates.
-- Do not create same-direction active reaction labels.
-- May show only compact `Broken support retest` or `Broken resistance retest` labels when past relevant levels are visible.
+- Do not create SFP labels.
+- Do not create actionable relevant-level events.
 
 ## Clean break defaults
 
-A clean break uses close-based logic:
+Clean breaks use close-based buffered logic by default:
 
+- `cleanBreakCloseRequired = true`
 - `cleanBreakAtrBuffer = 0.3`
 - `cleanBreakUsdBuffer = 100`
 
-Wick-through-and-reclaim candles are treated as SFPs first and do not break the relevant level on the same candle. Clean closes beyond the buffered level mark the level broken.
+Wick-through-and-reclaim candles are treated as SFPs first and do not break the relevant level on the same candle.
 
-## Noise and grouping defaults
+## Quiet visual defaults
 
 Defaults are intentionally quiet:
 
 - `showRelevantReactionLevels = true`
+- `showRelevantSfpLabels = true`
+- `showDebugReactionLabels = false`
 - `showPastRelevantLevels = false`
 - `showPastSwingLevels = true`
 - `showMinorReactionLabels = false`
@@ -61,25 +60,22 @@ Defaults are intentionally quiet:
 - `showStructureCandidates = false`
 - `showOrdinaryDwmHighLowLevels = false`
 - `relevantEventCooldownBars = 12`
-- `relevantZoneMergeUsd = 100`
 - `dashboardMode = Compact`
-
-Close relevant highs/lows are grouped into a zone label instead of producing many overlapping relevant lines.
 
 ## Dashboard
 
 Compact dashboard shows:
 
-- Version: v0.4.3
+- Version: v0.4.4
 - Market Mode
 - EMA Bias
 - HTF Context
-- Nearest Relevant Level
+- Nearest active Relevant Level
 - Last Relevant Event
 
-Nearest Relevant Level only considers active levels on the correct side of price: active lows below price and active highs above price.
+`Last Relevant Event` is limited to `SFP at Relevant Low`, `SFP at Relevant High`, `Broken Relevant Low`, `Broken Relevant High`, or `None`.
 
-## What v0.4.3 deliberately does not do
+## What v0.4.4 deliberately does not do
 
 This version does **not** try to trade.
 
@@ -92,6 +88,7 @@ This version does **not** try to trade.
 - It does **not** add re-entry logic.
 - It does **not** add reversal logic.
 - It does **not** add countertrend scalp mode.
+- It does **not** add front-run reaction logic.
 - It does **not** add Fibonacci, FVG, Volume Profile, CVD, AVWAP, or Moon cycle modules.
 
 ## Visual-only scope
