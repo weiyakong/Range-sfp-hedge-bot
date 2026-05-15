@@ -1,12 +1,12 @@
 # Range SFP Hedge Bot
 
-Version: **0.3.1**
+Version: **0.3.2**
 
-Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.3.1 provides a Pine Script v5 indicator for visually qualifying possible Swing Failure Pattern (SFP) setups around important BTC levels.
+Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.3.2 provides a Pine Script v5 indicator for visually qualifying possible Swing Failure Pattern (SFP) setups around important BTC levels.
 
 ## What this project does
 
-Version 0.3.1 is no longer meant to act like a noisy SFP label generator. It is a setup qualification tool:
+Version 0.3.2 is no longer meant to act like a noisy SFP label generator. It is a setup qualification tool:
 
 1. Context first.
 2. Decision zone second.
@@ -23,19 +23,22 @@ The indicator helps visualize:
 - `Ambiguous / No Trade` handling when both sides sweep and context is unclear.
 - `Countertrend / No Trade` handling in strong trends unless rejection and structure weakness/strength are present.
 - Entry, SL, and TP0 lines when a valid visual setup qualifies.
-- Late-entry protection so Entry / SL / TP0 are not drawn after price has moved too far from the reclaim level.
+- Late-entry protection so Entry / SL / TP0 are not drawn after price has moved too far from the reclaim level or too many bars have passed.
+- Local micro-structure trigger selection so nearby local highs/lows can be used instead of automatically preferring D/W/M levels.
 
 ## TP0 terminology
 
-`TP0` is the protection point at **2R** from the planned entry. At TP0, the future concept is to close 50% and protect the remaining position.
+`TP0` is the protection point. In this visual version, TP0 is shown at **2R** from the planned entry so setups can be reviewed consistently.
 
-TP1, TP2, TP3, and Runner logic are **not included yet**. They are planned future modules.
+In a future execution bot, TP0 should be calculated as the protection price where closing 50% of the position covers full trading fees, the potential stop loss on the remaining position, and an optional slippage buffer. TP0 is not meant to be a normal profit target; it is the position protection point.
+
+TP1, TP2, TP3, and Runner logic are **not included yet**. They are planned future profit-taking modules.
 
 ## SFP reclaim logic
 
-Version 0.3.1 does **not** require mandatory candle-close confirmation by default. The default logic is based on an intrabar sweep and reclaim/current price returning back beyond the level. In Pine Script, the realtime bar's `close` value represents the current price.
+Version 0.3.2 does **not** require mandatory candle-close confirmation by default. The default logic is based on an intrabar sweep and reclaim/current price returning back beyond the level. In Pine Script, the realtime bar's `close` value represents the current price.
 
-A conservative candle-close confirmation option exists in the indicator settings, but it is not the default. Version 0.3.1 also anchors planned entry at or just beyond the trigger/reclaim level; if price has already moved too far away, the setup is marked `Late Entry / No Trade` instead of inventing a delayed entry plan.
+A conservative candle-close confirmation option exists in the indicator settings, but it is not the default. Version 0.3.2 also anchors planned entry at or just beyond the actual swept/reclaimed trigger level; if price has already moved too far away or too many bars have passed, the setup is marked `Late Entry / No Trade` or `Missed / Too Late` instead of inventing a delayed entry plan.
 
 ## What this project does not do
 
@@ -63,7 +66,7 @@ Future versions may explore additional analysis modules after visual testing:
 - Paper trading tools after validation.
 - Exchange testnet experiments only after validation.
 
-Real exchange execution is not part of version 0.3.1.
+Real exchange execution is not part of version 0.3.2.
 
 ## Risk warning
 
