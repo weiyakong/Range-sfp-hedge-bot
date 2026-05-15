@@ -1,14 +1,14 @@
 //@version=5
-indicator("Range SFP Visual v0.3", overlay=true, max_labels_count=250, max_lines_count=500)
+indicator("Range SFP Visual v0.3.1", overlay=true, max_labels_count=250, max_lines_count=500)
 
 // -----------------------------------------------------------------------------
-// Range SFP Visual v0.3
+// Range SFP Visual v0.3.1
 // Visual-only TradingView indicator. No strategy orders, exchange connections,
 // API keys, live trading, webhook automation, server code, or bot execution.
 //
-// v0.3 changes the tool from a noisy SFP label generator into a setup qualifier:
+// v0.3.1 keeps the setup-qualification flow and fixes late entries:
 // 1) context first, 2) decision zone second, 3) SFP/rejection third,
-// 4) TP0 / 2R room check fourth.
+// 4) TP0 / 2R room check fourth, using an early reclaim-level entry.
 // -----------------------------------------------------------------------------
 
 // === Display settings ===
@@ -24,6 +24,8 @@ showExpansionWarnings = input.bool(true, "Show expansion warnings")
 showDashboard = input.bool(true, "Show dashboard")
 showTradePlanLines = input.bool(true, "Show Entry / SL / TP0")
 showConsolidationZones = input.bool(true, "Show consolidation zones")
+showOnlyLatestSetup = input.bool(true, "Show only latest Entry / SL / TP0 plan")
+maxVisibleSetupLabels = input.int(5, "Max visible setup labels", minval=1, maxval=50)
 
 // === Core settings ===
 swingLength = input.int(5, "Swing pivot length", minval=1)
@@ -66,6 +68,7 @@ impulseAtrMultiplier = input.float(1.5, "Impulse ATR multiplier", minval=0.1, st
 strongRejectionWickRatio = input.float(1.2, "Strong rejection wick/body ratio", minval=0.1, step=0.1)
 slAtrBuffer = input.float(0.10, "SL buffer ATR", minval=0.0, step=0.01)
 reactionZoneAtrDistance = input.float(0.40, "Reaction zone ATR distance", minval=0.01, step=0.01)
+maxEntryDistanceFromTriggerR = input.float(0.35, "Max entry distance from trigger in R", minval=0.0, step=0.05, tooltip="If current price has already moved this far from the trigger/reclaim level, the setup is marked Late Entry / No Trade and no Entry / SL / TP0 plan is drawn.")
 
 // Basic consolidation reaction zones. These are not entries by themselves.
 consolidationLookback = input.int(10, "Consolidation lookback", minval=3)
@@ -112,7 +115,7 @@ strictChopNoTrade = marketMode == "Chop"
 
 // === Previous higher-timeframe levels ===
 // D/W/M mean previous Daily, Weekly, and Monthly highs/lows. They are decision
-// levels only; v0.3 still requires context, rejection, and TP0 room.
+// levels only; v0.3.1 still requires context, rejection, early entry proximity, and TP0 room.
 previousDailyHigh = request.security(syminfo.tickerid, "D", high[1], barmerge.gaps_off, barmerge.lookahead_off)
 previousDailyLow = request.security(syminfo.tickerid, "D", low[1], barmerge.gaps_off, barmerge.lookahead_off)
 previousWeeklyHigh = request.security(syminfo.tickerid, "W", high[1], barmerge.gaps_off, barmerge.lookahead_off)
@@ -197,7 +200,7 @@ plotshape(showSwingLevels and not na(pivotLow) and not strictChopNoTrade, title=
 // === Basic consolidation reaction zones ===
 // After impulse + sideways consolidation, the consolidation top/bottom can become
 // a decision zone. These zones are not automatic entries. They can later become
-// TP1/TP2/TP3 style targets in future versions, but v0.3 only checks TP0 room.
+// TP1/TP2/TP3 style targets in future versions, but v0.3.1 only checks TP0 room.
 consolidationRange = ta.highest(high, consolidationLookback) - ta.lowest(low, consolidationLookback)
 isConsolidating = not na(atrValue) and consolidationRange <= atrValue * consolidationMaxAtrRange
 bullishImpulseBeforeConsolidation = close[consolidationLookback] - close[consolidationLookback + impulseLookback] > atrValue * impulseAtrMultiplier
@@ -340,14 +343,21 @@ nearestAbove(currentNearest, candidate, entryPrice) =>
 nearestBelow(currentNearest, candidate, entryPrice) =>
     not na(candidate) and candidate < entryPrice ? (na(currentNearest) ? candidate : math.max(currentNearest, candidate)) : currentNearest
 
-bullEntry = resolvedBullishRaw ? close : na
+// v0.3.1 fixes late entries by anchoring Entry near the reclaim/trigger level.
+// The current bar may continue moving after the reclaim. If it has moved too far
+// from the trigger in R terms, the setup is marked Late Entry / No Trade.
+bullEntry = resolvedBullishRaw ? bullLevel + syminfo.mintick : na
 bullSl = resolvedBullishRaw and not na(atrValue) ? low - atrValue * slAtrBuffer : na
 bullRisk = resolvedBullishRaw ? bullEntry - bullSl : na
 bullTp0 = resolvedBullishRaw ? bullEntry + bullRisk * 2.0 : na
-bearEntry = resolvedBearishRaw ? close : na
+bearEntry = resolvedBearishRaw ? bearLevel - syminfo.mintick : na
 bearSl = resolvedBearishRaw and not na(atrValue) ? high + atrValue * slAtrBuffer : na
 bearRisk = resolvedBearishRaw ? bearSl - bearEntry : na
 bearTp0 = resolvedBearishRaw ? bearEntry - bearRisk * 2.0 : na
+bullEntryDistanceR = resolvedBullishRaw and bullRisk > syminfo.mintick ? math.max(0.0, close - bullEntry) / bullRisk : na
+bearEntryDistanceR = resolvedBearishRaw and bearRisk > syminfo.mintick ? math.max(0.0, bearEntry - close) / bearRisk : na
+bullLateEntry = resolvedBullishRaw and not na(bullEntryDistanceR) and bullEntryDistanceR > maxEntryDistanceFromTriggerR
+bearLateEntry = resolvedBearishRaw and not na(bearEntryDistanceR) and bearEntryDistanceR > maxEntryDistanceFromTriggerR
 
 float nearestBullReaction = na
 nearestBullReaction := nearestAbove(nearestBullReaction, previousDailyHigh, bullEntry)
@@ -365,8 +375,8 @@ nearestBearReaction := nearestBelow(nearestBearReaction, longZoneBottom, bearEnt
 
 bullTp0Blocked = resolvedBullishRaw and bullRisk > 0 and not na(nearestBullReaction) and nearestBullReaction < bullTp0
 bearTp0Blocked = resolvedBearishRaw and bearRisk > 0 and not na(nearestBearReaction) and nearestBearReaction > bearTp0
-bullPlanValid = resolvedBullishRaw and bullRisk > syminfo.mintick and not bullTp0Blocked
-bearPlanValid = resolvedBearishRaw and bearRisk > syminfo.mintick and not bearTp0Blocked
+bullPlanValid = resolvedBullishRaw and bullRisk > syminfo.mintick and not bullTp0Blocked and not bullLateEntry
+bearPlanValid = resolvedBearishRaw and bearRisk > syminfo.mintick and not bearTp0Blocked and not bearLateEntry
 
 primaryBearishSfp = bearPlanValid and not ambiguousNoTrade and not bearCountertrendBlocked and not largeCandle and not sameBearCluster
 primaryBullishSfp = bullPlanValid and not ambiguousNoTrade and not bullCountertrendBlocked and not largeCandle and not sameBullCluster
@@ -374,6 +384,26 @@ retestBearishSfp = bearPlanValid and not ambiguousNoTrade and not bearCountertre
 retestBullishSfp = bullPlanValid and not ambiguousNoTrade and not bullCountertrendBlocked and not largeCandle and sameBullCluster
 
 // === Drawing helpers ===
+var label[] setupLabels = array.new<label>()
+var line[] activePlanLines = array.new<line>()
+var label[] activePlanLabels = array.new<label>()
+
+rememberSetupLabel(newLabel) =>
+    if not na(newLabel)
+        array.push(setupLabels, newLabel)
+        if array.size(setupLabels) > maxVisibleSetupLabels
+            label.delete(array.shift(setupLabels))
+
+clearLatestPlan() =>
+    if array.size(activePlanLines) > 0
+        for lineIndex = 0 to array.size(activePlanLines) - 1
+            line.delete(array.get(activePlanLines, lineIndex))
+    if array.size(activePlanLabels) > 0
+        for labelIndex = 0 to array.size(activePlanLabels) - 1
+            label.delete(array.get(activePlanLabels, labelIndex))
+    array.clear(activePlanLines)
+    array.clear(activePlanLabels)
+
 drawTrigger(level, sourceName, triggerColor) =>
     if showTriggerLevelLines and not na(level)
         line.new(math.max(0, bar_index - 3), level, bar_index + 3, level, color=triggerColor, width=2)
@@ -381,12 +411,20 @@ drawTrigger(level, sourceName, triggerColor) =>
 
 drawPlan(entryPrice, slPrice, tp0Price, planColor) =>
     if showTradePlanLines and not na(entryPrice) and not na(slPrice) and not na(tp0Price)
-        line.new(bar_index, entryPrice, bar_index + 8, entryPrice, color=color.new(color.white, 0), width=1)
-        line.new(bar_index, slPrice, bar_index + 8, slPrice, color=color.new(color.red, 0), width=1)
-        line.new(bar_index, tp0Price, bar_index + 8, tp0Price, color=planColor, width=2)
-        label.new(bar_index + 8, entryPrice, "Entry", style=label.style_label_left, color=color.new(color.white, 20), textcolor=color.black, size=size.tiny)
-        label.new(bar_index + 8, slPrice, "SL", style=label.style_label_left, color=color.new(color.red, 20), textcolor=color.white, size=size.tiny)
-        label.new(bar_index + 8, tp0Price, "TP0 2R", style=label.style_label_left, color=color.new(planColor, 20), textcolor=color.white, size=size.tiny)
+        if showOnlyLatestSetup
+            clearLatestPlan()
+        entryLine = line.new(bar_index, entryPrice, bar_index + 8, entryPrice, color=color.new(color.white, 0), width=1)
+        slLine = line.new(bar_index, slPrice, bar_index + 8, slPrice, color=color.new(color.red, 0), width=1)
+        tp0Line = line.new(bar_index, tp0Price, bar_index + 8, tp0Price, color=planColor, width=2)
+        entryLabel = label.new(bar_index + 8, entryPrice, "Entry", style=label.style_label_left, color=color.new(color.white, 20), textcolor=color.black, size=size.tiny)
+        slLabel = label.new(bar_index + 8, slPrice, "SL", style=label.style_label_left, color=color.new(color.red, 20), textcolor=color.white, size=size.tiny)
+        tp0Label = label.new(bar_index + 8, tp0Price, "TP0 2R", style=label.style_label_left, color=color.new(planColor, 20), textcolor=color.white, size=size.tiny)
+        array.push(activePlanLines, entryLine)
+        array.push(activePlanLines, slLine)
+        array.push(activePlanLines, tp0Line)
+        array.push(activePlanLabels, entryLabel)
+        array.push(activePlanLabels, slLabel)
+        array.push(activePlanLabels, tp0Label)
 
 // === Final status and labels ===
 setupText = "None"
@@ -401,13 +439,13 @@ if strictChopNoTrade
     statusText := "Chop / No Trade"
     tp0Text := "N/A"
     if showChopWarnings and not strictChopNoTrade[1]
-        label.new(bar_index, high, "Chop\nNo Trade", style=label.style_label_down, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
+        rememberSetupLabel(label.new(bar_index, high, "Chop\nNo Trade", style=label.style_label_down, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny))
 else if ambiguousNoTrade
     setupText := "Ambiguous"
     statusText := "Ambiguous / No Trade"
     tp0Text := "N/A"
     if showConflictLabels
-        label.new(bar_index, high, "Ambiguous\nNo Trade", style=label.style_label_down, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
+        rememberSetupLabel(label.new(bar_index, high, "Ambiguous\nNo Trade", style=label.style_label_down, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny))
 else if expansionBearish or expansionBullish
     setupText := expansionBearish ? "Bear Sweep" : "Bull Sweep"
     statusText := "Expansion / Wait"
@@ -415,14 +453,23 @@ else if expansionBearish or expansionBullish
     if showExpansionWarnings
         expansionLevel = expansionBearish ? bearLevelRaw : bullLevelRaw
         expansionSource = expansionBearish ? bearSourceRaw : bullSourceRaw
-        label.new(bar_index, expansionBearish ? high : low, "Expansion\nWait", style=expansionBearish ? label.style_label_down : label.style_label_up, color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny)
+        rememberSetupLabel(label.new(bar_index, expansionBearish ? high : low, "Expansion\nWait", style=expansionBearish ? label.style_label_down : label.style_label_up, color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny))
         drawTrigger(expansionLevel, expansionSource, color.new(color.orange, 0))
 else if bearCountertrendBlocked or bullCountertrendBlocked
     setupText := bearCountertrendBlocked ? "Bear SFP" : "Bull SFP"
     statusText := "Countertrend / No Trade"
     tp0Text := "N/A"
     if showSfpLabels
-        label.new(bar_index, bearCountertrendBlocked ? high : low, "Countertrend\nNo Trade", style=bearCountertrendBlocked ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
+        rememberSetupLabel(label.new(bar_index, bearCountertrendBlocked ? high : low, "Countertrend\nNo Trade", style=bearCountertrendBlocked ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny))
+else if bearLateEntry or bullLateEntry
+    setupText := bearLateEntry ? "Bear SFP" : "Bull SFP"
+    statusText := "Late Entry / No Trade"
+    tp0Text := "Missed"
+    if showSfpLabels
+        lateLevel = bearLateEntry ? bearLevel : bullLevel
+        lateSource = bearLateEntry ? bearSource : bullSource
+        rememberSetupLabel(label.new(bar_index, bearLateEntry ? high : low, "Missed\nToo Late", style=bearLateEntry ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny))
+        drawTrigger(lateLevel, lateSource, color.new(color.gray, 0))
 else if bearTp0Blocked or bullTp0Blocked
     setupText := bearTp0Blocked ? "Bear SFP" : "Bull SFP"
     statusText := "TP0 blocked"
@@ -430,14 +477,14 @@ else if bearTp0Blocked or bullTp0Blocked
     if showSfpLabels
         blockedLevel = bearTp0Blocked ? bearLevel : bullLevel
         blockedSource = bearTp0Blocked ? bearSource : bullSource
-        label.new(bar_index, bearTp0Blocked ? high : low, "No Trade\nTP0 blocked", style=bearTp0Blocked ? label.style_label_down : label.style_label_up, color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny)
+        rememberSetupLabel(label.new(bar_index, bearTp0Blocked ? high : low, "No Trade\nTP0 blocked", style=bearTp0Blocked ? label.style_label_down : label.style_label_up, color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny))
         drawTrigger(blockedLevel, blockedSource, color.new(color.orange, 0))
 else if primaryBearishSfp
     setupText := "Bear SFP"
     statusText := "Valid Setup"
     tp0Text := "Clear"
     if showSfpLabels
-        label.new(bar_index, high, "Bear SFP\n" + bearSource, style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.tiny)
+        rememberSetupLabel(label.new(bar_index, high, "Bear SFP\n" + bearSource, style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.tiny))
         drawTrigger(bearLevel, bearSource, color.new(color.red, 0))
         drawPlan(bearEntry, bearSl, bearTp0, color.new(color.red, 0))
     lastPrimaryBearLevel := bearLevel
@@ -448,7 +495,7 @@ else if primaryBullishSfp
     statusText := "Valid Setup"
     tp0Text := "Clear"
     if showSfpLabels
-        label.new(bar_index, low, "Bull SFP\n" + bullSource, style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white, size=size.tiny)
+        rememberSetupLabel(label.new(bar_index, low, "Bull SFP\n" + bullSource, style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white, size=size.tiny))
         drawTrigger(bullLevel, bullSource, color.new(color.green, 0))
         drawPlan(bullEntry, bullSl, bullTp0, color.new(color.green, 0))
     lastPrimaryBullLevel := bullLevel
@@ -459,14 +506,14 @@ else if retestBearishSfp
     statusText := "Watch"
     tp0Text := "Cluster"
     if showSfpLabels
-        label.new(bar_index, high, "Re-sweep\n" + bearSource, style=label.style_label_down, color=color.new(color.maroon, 0), textcolor=color.white, size=size.tiny)
+        rememberSetupLabel(label.new(bar_index, high, "Re-sweep\n" + bearSource, style=label.style_label_down, color=color.new(color.maroon, 0), textcolor=color.white, size=size.tiny))
         drawTrigger(bearLevel, bearSource, color.new(color.maroon, 0))
 else if retestBullishSfp
     setupText := "Retest"
     statusText := "Watch"
     tp0Text := "Cluster"
     if showSfpLabels
-        label.new(bar_index, low, "Retest\n" + bullSource, style=label.style_label_up, color=color.new(color.teal, 0), textcolor=color.white, size=size.tiny)
+        rememberSetupLabel(label.new(bar_index, low, "Retest\n" + bullSource, style=label.style_label_up, color=color.new(color.teal, 0), textcolor=color.white, size=size.tiny))
         drawTrigger(bullLevel, bullSource, color.new(color.teal, 0))
 else if nearLongZone
     setupText := "Long Zone"
@@ -494,7 +541,7 @@ if swingLowFresh and ((invalidateSwingOnCloseBeyondLevel and close < lastSwingLo
 var table dashboard = table.new(position.top_right, 2, 8, border_width=1)
 if showDashboard and barstate.islast
     table.cell(dashboard, 0, 0, "Version", bgcolor=color.new(color.black, 0), text_color=color.white)
-    table.cell(dashboard, 1, 0, "v0.3", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(dashboard, 1, 0, "v0.3.1", bgcolor=color.new(color.black, 0), text_color=color.white)
     table.cell(dashboard, 0, 1, "Market Mode", text_color=color.white)
     table.cell(dashboard, 1, 1, marketMode, text_color=color.white)
     table.cell(dashboard, 0, 2, "EMA Bias", text_color=color.white)

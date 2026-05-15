@@ -1,6 +1,6 @@
 # Next Steps
 
-Version: **0.3**
+Version: **0.3.1**
 
 This project should be tested slowly and visually before any automation is considered.
 
@@ -8,7 +8,7 @@ This project should be tested slowly and visually before any automation is consi
 
 Add the Pine Script indicator to a BTC chart in TradingView. Review multiple timeframes and different market conditions.
 
-## 2. Use the v0.3 qualification order
+## 2. Use the v0.3.1 qualification order
 
 Review setups in this order:
 
@@ -29,13 +29,14 @@ Ask:
 - If countertrend, is there strong rejection and structure weakness/strength?
 - Did the trigger-level line match the level you expected?
 - Is TP0 at 2R realistic before the next meaningful reaction area?
-- Was the candle marked `Ambiguous / No Trade`, `Countertrend / No Trade`, `Expansion / Wait`, or `No Trade / TP0 blocked`?
+- Is the planned entry still close to the trigger/reclaim level?
+- Was the candle marked `Ambiguous / No Trade`, `Countertrend / No Trade`, `Expansion / Wait`, `Late Entry / No Trade`, or `No Trade / TP0 blocked`?
 
 ## 4. Remember the SFP reclaim rule
 
-Version 0.3 does **not** require mandatory candle-close confirmation by default. The default logic allows an intrabar sweep and reclaim/current price returning back beyond the level. Pine Script uses the realtime bar's `close` value as current price.
+Version 0.3.1 does **not** require mandatory candle-close confirmation by default. The default logic allows an intrabar sweep and reclaim/current price returning back beyond the level. Pine Script uses the realtime bar's `close` value as current price.
 
-Only enable conservative close confirmation if you intentionally want a slower confirmation mode.
+Only enable conservative close confirmation if you intentionally want a slower confirmation mode. If price has already moved too far from the trigger/reclaim level, v0.3.1 should mark the setup as late and avoid drawing Entry / SL / TP0.
 
 ## 5. Adjust settings
 
@@ -48,12 +49,14 @@ Experiment with the indicator settings:
 - Same-zone clustering settings.
 - Consolidation zone settings.
 - TP0/SL buffer and reaction-zone distance settings.
+- Maximum entry distance from trigger in R.
+- Latest-only setup plan and max visible setup label settings.
 
 The first values are only starting points.
 
 ## 6. Future modules
 
-TP1, TP2, TP3, and Runner logic are future modules. FVG, Volume Profile, POC, VAH, VAL, CVD, Anchored VWAP, Fibonacci, and multiple-top/bottom RSI divergence are also planned future modules, not part of version 0.3.
+TP1, TP2, TP3, and Runner logic are future modules. FVG, Volume Profile, POC, VAH, VAL, CVD, Anchored VWAP, Fibonacci, and multiple-top/bottom RSI divergence are also planned future modules, not part of version 0.3.1.
 
 ## 7. Keep automation out for now
 
