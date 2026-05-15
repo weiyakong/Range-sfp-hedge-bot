@@ -1,0 +1,595 @@
+//@version=5
+indicator("Range SFP Visual v0.4.4", overlay=true, max_labels_count=220, max_lines_count=500)
+
+// -----------------------------------------------------------------------------
+// Range SFP Visual v0.4.4
+// Visual-only TradingView indicator. No strategy orders, exchange connections,
+// API keys, live trading, webhook automation, server code, or bot execution.
+//
+// v0.4.4 fixes Relevant Reaction Level lifecycle/directionality so broken
+// support/resistance stops acting as an active reaction/SFP level.
+// -----------------------------------------------------------------------------
+
+// === Display settings ===
+dashboardMode = input.string("Compact", "Dashboard mode", options=["Off", "Compact", "Full"])
+showHTFLevels = input.bool(true, "Show HTF levels")
+showLTFSwings = input.bool(true, "Show LTF swings")
+showMicroSwings = input.bool(false, "Show micro swings")
+showPastSwingLevels = input.bool(true, "Show past swing levels")
+showRelevantSfpLabels = input.bool(true, "Show relevant SFP labels")
+showDebugReactionLabels = input.bool(false, "Show debug reaction labels")
+showRelevantReactionLevels = input.bool(true, "Show relevant reaction levels")
+showPastRelevantLevels = input.bool(false, "Show past/broken relevant levels")
+showMinorReactionLabels = input.bool(false, "Show minor reaction labels")
+showMicroSwingLabels = input.bool(false, "Show micro swing labels")
+showDebugLabels = input.bool(false, "Show debug labels")
+showBodyAlignedDwmLevels = input.bool(true, "Show D/W/M body-aligned levels")
+showOrdinaryDwmHighLowLevels = input.bool(false, "Show ordinary D/W/M high/low levels", tooltip="Context-only. Off by default.")
+showStructureCandidates = input.bool(false, "Show structure candidates", tooltip="Debug only. Rolling/candidate levels are muted and are not primary levels.")
+maxVisibleLabels = input.int(35, "Max visible labels", minval=1, maxval=120)
+maxStoredLevels = input.int(80, "Max stored swing/body levels", minval=20, maxval=180)
+monthlyBodyLevelColor = input.color(color.white, "Monthly body-aligned color")
+
+// === Swing and context settings ===
+htfSwingLength = input.int(3, "HTF swing pivot length", minval=2, maxval=20)
+ltfSwingLength = input.int(5, "LTF swing pivot length", minval=2, maxval=30)
+include1HMediumStructure = input.bool(true, "Include 1H medium structure")
+reactionToleranceUsd = input.float(100.0, "HTF reaction tolerance USD", minval=0.0, step=1.0)
+microSwingMaxAtr = input.float(1.0, "Micro swing max ATR", minval=0.1, step=0.1)
+minorSwingMaxAtr = input.float(2.0, "Minor swing max ATR", minval=0.1, step=0.1)
+minMajorSwingAtr = input.float(4.0, "Major swing min ATR", minval=0.5, step=0.1)
+chopLookbackBars = input.int(24, "Chop lookback bars", minval=5)
+chopOverlapThreshold = input.float(0.6, "Chop overlap threshold", minval=0.0, maxval=1.0, step=0.05)
+relevantRangeAtr = input.float(3.0, "Relevant range min ATR", minval=0.5, step=0.1)
+impulseLookback = input.int(8, "Impulse lookback", minval=2)
+impulseAtrMultiplier = input.float(2.5, "Impulse ATR multiplier", minval=0.5, step=0.1)
+displacementCandleAtr = input.float(2.0, "Displacement candle ATR", minval=0.5, step=0.1)
+labelCooldownBars = input.int(8, "Min bars between context labels", minval=1)
+reactionLookaheadBars = input.int(24, "Reaction lookahead bars", minval=1)
+reactionMinUsd = input.float(700.0, "Relevant reaction min USD", minval=0.0, step=10.0)
+reactionMinAtr = input.float(3.0, "Relevant reaction min ATR", minval=0.1, step=0.1)
+reactionMinPercent = input.float(0.7, "Relevant reaction min percent", minval=0.0, step=0.1)
+cleanBreakCloseRequired = input.bool(true, "Clean break requires close")
+cleanBreakAtrBuffer = input.float(0.3, "Clean break ATR buffer", minval=0.0, step=0.05)
+cleanBreakUsdBuffer = input.float(100.0, "Clean break USD buffer", minval=0.0, step=10.0)
+relevantEventCooldownBars = input.int(12, "Relevant event cooldown bars", minval=1)
+relevantZoneMergeUsd = input.float(100.0, "Relevant zone merge USD", minval=0.0, step=10.0)
+
+// Market-mode settings remain context-only.
+emaFastLength = input.int(21, "Fast EMA length", minval=1)
+emaSlowLength = input.int(55, "Slow EMA length", minval=2)
+adxLength = input.int(14, "ADX length", minval=1)
+adxSmoothing = input.int(14, "ADX smoothing", minval=1)
+adxTrendThreshold = input.float(20.0, "ADX trend threshold", minval=1.0, step=0.5)
+emaSeparationAtr = input.float(0.35, "EMA separation ATR", minval=0.01, step=0.01)
+atrLength = input.int(14, "ATR length", minval=1)
+atrBaselineLength = input.int(50, "ATR baseline length", minval=5)
+volExpansionMultiplier = input.float(1.4, "Volatility expansion multiplier", minval=0.1, step=0.1)
+
+// === Measurements ===
+atrValue = ta.atr(atrLength)
+atrBaseline = ta.sma(atrValue, atrBaselineLength)
+emaFast = ta.ema(close, emaFastLength)
+emaSlow = ta.ema(close, emaSlowLength)
+[plusDi, minusDi, adxValue] = ta.dmi(adxLength, adxSmoothing)
+bodyHigh = math.max(open, close)
+bodyLow = math.min(open, close)
+reactionTolerance = reactionToleranceUsd > 0.0 ? reactionToleranceUsd : (not na(atrValue) ? atrValue * 0.35 : syminfo.mintick)
+emaSeparation = not na(atrValue) and atrValue > 0.0 ? math.abs(emaFast - emaSlow) / atrValue : 0.0
+emaBias = emaFast > emaSlow and emaSeparation >= emaSeparationAtr ? "Bullish" : emaFast < emaSlow and emaSeparation >= emaSeparationAtr ? "Bearish" : "Neutral"
+strongTrend = adxValue >= adxTrendThreshold and emaSeparation >= emaSeparationAtr
+volatilityExpansion = not na(atrValue) and not na(atrBaseline) and atrValue > atrBaseline * volExpansionMultiplier
+marketMode = volatilityExpansion ? "Expansion" : strongTrend ? "Trend" : "Range"
+
+// === Storage ===
+var float[] levelPrices = array.new<float>()
+var bool[] levelIsHigh = array.new<bool>()
+var bool[] levelActive = array.new<bool>()
+var bool[] levelIsHTF = array.new<bool>()
+var bool[] levelIsDwm = array.new<bool>()
+var string[] levelNames = array.new<string>()
+var string[] levelScales = array.new<string>()
+var int[] levelBornBars = array.new<int>()
+var line[] levelLines = array.new<line>()
+var label[] visualLabels = array.new<label>()
+
+rememberLabel(newLabel) =>
+    if not na(newLabel)
+        array.push(visualLabels, newLabel)
+        if array.size(visualLabels) > maxVisibleLabels
+            label.delete(array.shift(visualLabels))
+
+levelBaseColor(name, isHigh, isHtf, isDwm) =>
+    isDwm and str.contains(name, "Daily") ? color.lime : isDwm and str.contains(name, "Weekly") ? color.orange : isDwm and str.contains(name, "Monthly") ? monthlyBodyLevelColor : isHtf ? (isHigh ? color.red : color.green) : (isHigh ? color.new(color.red, 25) : color.new(color.green, 25))
+
+levelWidth(isHtf, scale) =>
+    scale == "Major Swing" ? 3 : isHtf ? 2 : 1
+
+levelStyle(isDwm, scale) =>
+    isDwm ? line.style_dotted : scale == "Micro Swing" ? line.style_dotted : line.style_solid
+
+pastName(name, isHigh) =>
+    str.contains(name, "Swing") ? (isHigh ? "Past Swing High" : "Past Swing Low") : name
+
+addLevel(price, isHigh, name, scale, isHtf, isDwm, showLevel) =>
+    bool added = false
+    if not na(price) and showLevel
+        bool duplicate = false
+        if array.size(levelPrices) > 0
+            for idx = 0 to array.size(levelPrices) - 1
+                duplicate := duplicate or (array.get(levelActive, idx) and array.get(levelIsHigh, idx) == isHigh and math.abs(array.get(levelPrices, idx) - price) <= reactionTolerance)
+        if not duplicate
+            baseColor = levelBaseColor(name, isHigh, isHtf, isDwm)
+            activeColor = isHtf or isDwm ? color.new(baseColor, 0) : color.new(baseColor, scale == "Minor Swing" ? 45 : 65)
+            newLine = line.new(bar_index, price, bar_index + 1, price, color=activeColor, width=levelWidth(isHtf, scale), style=levelStyle(isDwm, scale))
+            array.push(levelPrices, price)
+            array.push(levelIsHigh, isHigh)
+            array.push(levelActive, true)
+            array.push(levelIsHTF, isHtf)
+            array.push(levelIsDwm, isDwm)
+            array.push(levelNames, name)
+            array.push(levelScales, scale)
+            array.push(levelBornBars, bar_index)
+            array.push(levelLines, newLine)
+            if isHtf and not isDwm and showDebugLabels
+                rememberLabel(label.new(bar_index, price, name, style=isHigh ? label.style_label_down : label.style_label_up, color=color.new(baseColor, 15), textcolor=color.white, size=size.tiny))
+            if array.size(levelPrices) > maxStoredLevels
+                oldLine = array.shift(levelLines)
+                line.delete(oldLine)
+                array.shift(levelPrices)
+                array.shift(levelIsHigh)
+                array.shift(levelActive)
+                array.shift(levelIsHTF)
+                array.shift(levelIsDwm)
+                array.shift(levelNames)
+                array.shift(levelScales)
+                array.shift(levelBornBars)
+            added := true
+    added
+
+markPast(idx) =>
+    if array.get(levelActive, idx)
+        array.set(levelActive, idx, false)
+        levelLine = array.get(levelLines, idx)
+        line.set_x2(levelLine, bar_index)
+        isHigh = array.get(levelIsHigh, idx)
+        isHtf = array.get(levelIsHTF, idx)
+        isDwm = array.get(levelIsDwm, idx)
+        baseColor = levelBaseColor(array.get(levelNames, idx), isHigh, isHtf, isDwm)
+        line.set_color(levelLine, color.new(baseColor, 84))
+        line.set_width(levelLine, 1)
+        if not showPastSwingLevels
+            line.delete(levelLine)
+
+// === Relevant Reaction Level storage ===
+var float[] candidatePrices = array.new<float>()
+var bool[] candidateIsHigh = array.new<bool>()
+var int[] candidateBars = array.new<int>()
+var bool[] candidateActive = array.new<bool>()
+var string[] candidateSources = array.new<string>()
+var float[] relevantPrices = array.new<float>()
+var bool[] relevantIsHigh = array.new<bool>()
+var bool[] relevantActive = array.new<bool>()
+var bool[] relevantBroken = array.new<bool>()
+var string[] relevantNames = array.new<string>()
+var line[] relevantLines = array.new<line>()
+var int[] relevantLastEventBars = array.new<int>()
+var int[] relevantCreatedBars = array.new<int>()
+var string lastRelevantEvent = "None"
+
+addCandidate(price, isHigh, source) =>
+    if showRelevantReactionLevels and not na(price)
+        bool duplicate = false
+        if array.size(candidatePrices) > 0
+            for idx = 0 to array.size(candidatePrices) - 1
+                duplicate := duplicate or (array.get(candidateActive, idx) and array.get(candidateIsHigh, idx) == isHigh and math.abs(array.get(candidatePrices, idx) - price) <= relevantZoneMergeUsd)
+        if array.size(relevantPrices) > 0
+            for idx = 0 to array.size(relevantPrices) - 1
+                duplicate := duplicate or (array.get(relevantIsHigh, idx) == isHigh and math.abs(array.get(relevantPrices, idx) - price) <= relevantZoneMergeUsd)
+        if not duplicate
+            array.push(candidatePrices, price)
+            array.push(candidateIsHigh, isHigh)
+            array.push(candidateBars, bar_index)
+            array.push(candidateActive, true)
+            array.push(candidateSources, source)
+
+addRelevantLevel(price, isHigh, source, startBar) =>
+    bool added = false
+    if showRelevantReactionLevels and not na(price)
+        bool duplicate = false
+        if array.size(relevantPrices) > 0
+            for idx = 0 to array.size(relevantPrices) - 1
+                sameZone = array.get(relevantIsHigh, idx) == isHigh and math.abs(array.get(relevantPrices, idx) - price) <= relevantZoneMergeUsd
+                if sameZone
+                    duplicate := true
+                    zoneMid = (array.get(relevantPrices, idx) + price) / 2.0
+                    zoneName = isHigh ? "Relevant High Zone ~" + str.tostring(zoneMid, format.mintick) : "Relevant Low Zone ~" + str.tostring(zoneMid, format.mintick)
+                    array.set(relevantNames, idx, zoneName)
+        if not duplicate
+            baseColor = isHigh ? color.rgb(255, 80, 130) : color.lime
+            levelName = isHigh ? "Relevant Reaction High" : "Relevant Reaction Low"
+            newLine = line.new(startBar, price, bar_index + 1, price, color=color.new(baseColor, 0), width=2)
+            array.push(relevantPrices, price)
+            array.push(relevantIsHigh, isHigh)
+            array.push(relevantActive, true)
+            array.push(relevantBroken, false)
+            array.push(relevantNames, levelName)
+            array.push(relevantLines, newLine)
+            array.push(relevantLastEventBars, na)
+            array.push(relevantCreatedBars, bar_index)
+            if showDebugReactionLabels
+                rememberLabel(label.new(bar_index, price, isHigh ? "Relevant High" : "Relevant Low", style=isHigh ? label.style_label_down : label.style_label_up, color=color.new(baseColor, 0), textcolor=color.white, size=size.tiny))
+            added := true
+    added
+
+markRelevantInactive(idx) =>
+    if array.get(relevantActive, idx)
+        array.set(relevantActive, idx, false)
+        array.set(relevantBroken, idx, true)
+        relLine = array.get(relevantLines, idx)
+        line.set_x2(relLine, bar_index)
+        line.set_color(relLine, color.new(array.get(relevantIsHigh, idx) ? color.rgb(255, 80, 130) : color.lime, 84))
+        line.set_width(relLine, 1)
+        if not showPastRelevantLevels
+            line.delete(relLine)
+
+// === HTF swing detection ===
+htfPivotHigh(tf) =>
+    request.security(syminfo.tickerid, tf, ta.pivothigh(high, htfSwingLength, htfSwingLength), barmerge.gaps_off, barmerge.lookahead_off)
+htfPivotLow(tf) =>
+    request.security(syminfo.tickerid, tf, ta.pivotlow(low, htfSwingLength, htfSwingLength), barmerge.gaps_off, barmerge.lookahead_off)
+
+p1hH = include1HMediumStructure ? htfPivotHigh("60") : na
+p1hL = include1HMediumStructure ? htfPivotLow("60") : na
+p4hH = htfPivotHigh("240")
+p4hL = htfPivotLow("240")
+p8hH = htfPivotHigh("480")
+p8hL = htfPivotLow("480")
+p12hH = htfPivotHigh("720")
+p12hL = htfPivotLow("720")
+p1dH = htfPivotHigh("D")
+p1dL = htfPivotLow("D")
+
+var float last1hH = na
+var float last1hL = na
+var float last4hH = na
+var float last4hL = na
+var float last8hH = na
+var float last8hL = na
+var float last12hH = na
+var float last12hL = na
+var float last1dH = na
+var float last1dL = na
+
+if showHTFLevels and not na(p1hH) and p1hH != last1hH
+    last1hH := p1hH
+    addLevel(p1hH, true, "1H Swing High", "Medium Swing", true, false, true)
+    addCandidate(p1hH, true, "1H Swing High")
+if showHTFLevels and not na(p1hL) and p1hL != last1hL
+    last1hL := p1hL
+    addLevel(p1hL, false, "1H Swing Low", "Medium Swing", true, false, true)
+    addCandidate(p1hL, false, "1H Swing Low")
+if showHTFLevels and not na(p4hH) and p4hH != last4hH
+    last4hH := p4hH
+    addLevel(p4hH, true, "4H Swing High", "Major Swing", true, false, true)
+    addCandidate(p4hH, true, "4H Swing High")
+if showHTFLevels and not na(p4hL) and p4hL != last4hL
+    last4hL := p4hL
+    addLevel(p4hL, false, "4H Swing Low", "Major Swing", true, false, true)
+    addCandidate(p4hL, false, "4H Swing Low")
+if showHTFLevels and not na(p8hH) and p8hH != last8hH
+    last8hH := p8hH
+    addLevel(p8hH, true, "8H Swing High", "Major Swing", true, false, true)
+    addCandidate(p8hH, true, "8H Swing High")
+if showHTFLevels and not na(p8hL) and p8hL != last8hL
+    last8hL := p8hL
+    addLevel(p8hL, false, "8H Swing Low", "Major Swing", true, false, true)
+    addCandidate(p8hL, false, "8H Swing Low")
+if showHTFLevels and not na(p12hH) and p12hH != last12hH
+    last12hH := p12hH
+    addLevel(p12hH, true, "12H Swing High", "Major Swing", true, false, true)
+    addCandidate(p12hH, true, "12H Swing High")
+if showHTFLevels and not na(p12hL) and p12hL != last12hL
+    last12hL := p12hL
+    addLevel(p12hL, false, "12H Swing Low", "Major Swing", true, false, true)
+    addCandidate(p12hL, false, "12H Swing Low")
+if showHTFLevels and not na(p1dH) and p1dH != last1dH
+    last1dH := p1dH
+    addLevel(p1dH, true, "1D Swing High", "Major Swing", true, false, true)
+    addCandidate(p1dH, true, "1D Swing High")
+if showHTFLevels and not na(p1dL) and p1dL != last1dL
+    last1dL := p1dL
+    addLevel(p1dL, false, "1D Swing Low", "Major Swing", true, false, true)
+    addCandidate(p1dL, false, "1D Swing Low")
+
+// === D/W/M body-aligned context levels ===
+previousDailyBodyHigh = request.security(syminfo.tickerid, "D", math.max(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+previousDailyBodyLow = request.security(syminfo.tickerid, "D", math.min(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+previousWeeklyBodyHigh = request.security(syminfo.tickerid, "W", math.max(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+previousWeeklyBodyLow = request.security(syminfo.tickerid, "W", math.min(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+previousMonthlyBodyHigh = request.security(syminfo.tickerid, "M", math.max(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+previousMonthlyBodyLow = request.security(syminfo.tickerid, "M", math.min(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+var float lastDbh = na
+var float lastDbl = na
+var float lastWbh = na
+var float lastWbl = na
+var float lastMbh = na
+var float lastMbl = na
+if showBodyAlignedDwmLevels and not na(previousDailyBodyHigh) and previousDailyBodyHigh != lastDbh
+    lastDbh := previousDailyBodyHigh
+    addLevel(previousDailyBodyHigh, true, "Daily Body High", "Medium Swing", true, true, true)
+    addCandidate(previousDailyBodyHigh, true, "Daily Body High")
+if showBodyAlignedDwmLevels and not na(previousDailyBodyLow) and previousDailyBodyLow != lastDbl
+    lastDbl := previousDailyBodyLow
+    addLevel(previousDailyBodyLow, false, "Daily Body Low", "Medium Swing", true, true, true)
+    addCandidate(previousDailyBodyLow, false, "Daily Body Low")
+if showBodyAlignedDwmLevels and not na(previousWeeklyBodyHigh) and previousWeeklyBodyHigh != lastWbh
+    lastWbh := previousWeeklyBodyHigh
+    addLevel(previousWeeklyBodyHigh, true, "Weekly Body High", "Major Swing", true, true, true)
+    addCandidate(previousWeeklyBodyHigh, true, "Weekly Body High")
+if showBodyAlignedDwmLevels and not na(previousWeeklyBodyLow) and previousWeeklyBodyLow != lastWbl
+    lastWbl := previousWeeklyBodyLow
+    addLevel(previousWeeklyBodyLow, false, "Weekly Body Low", "Major Swing", true, true, true)
+    addCandidate(previousWeeklyBodyLow, false, "Weekly Body Low")
+if showBodyAlignedDwmLevels and not na(previousMonthlyBodyHigh) and previousMonthlyBodyHigh != lastMbh
+    lastMbh := previousMonthlyBodyHigh
+    addLevel(previousMonthlyBodyHigh, true, "Monthly Body High", "Major Swing", true, true, true)
+    addCandidate(previousMonthlyBodyHigh, true, "Monthly Body High")
+if showBodyAlignedDwmLevels and not na(previousMonthlyBodyLow) and previousMonthlyBodyLow != lastMbl
+    lastMbl := previousMonthlyBodyLow
+    addLevel(previousMonthlyBodyLow, false, "Monthly Body Low", "Major Swing", true, true, true)
+    addCandidate(previousMonthlyBodyLow, false, "Monthly Body Low")
+
+// Optional ordinary D/W/M wick levels. Context only; off by default.
+previousDailyHigh = request.security(syminfo.tickerid, "D", high[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousDailyLow = request.security(syminfo.tickerid, "D", low[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousWeeklyHigh = request.security(syminfo.tickerid, "W", high[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousWeeklyLow = request.security(syminfo.tickerid, "W", low[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousMonthlyHigh = request.security(syminfo.tickerid, "M", high[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousMonthlyLow = request.security(syminfo.tickerid, "M", low[1], barmerge.gaps_off, barmerge.lookahead_off)
+plot(showOrdinaryDwmHighLowLevels ? previousDailyHigh : na, "Previous Daily High", color=color.new(color.gray, 55), style=plot.style_linebr)
+plot(showOrdinaryDwmHighLowLevels ? previousDailyLow : na, "Previous Daily Low", color=color.new(color.gray, 55), style=plot.style_linebr)
+plot(showOrdinaryDwmHighLowLevels ? previousWeeklyHigh : na, "Previous Weekly High", color=color.new(color.blue, 60), style=plot.style_linebr)
+plot(showOrdinaryDwmHighLowLevels ? previousWeeklyLow : na, "Previous Weekly Low", color=color.new(color.blue, 60), style=plot.style_linebr)
+plot(showOrdinaryDwmHighLowLevels ? previousMonthlyHigh : na, "Previous Monthly High", color=color.new(color.purple, 60), style=plot.style_linebr)
+plot(showOrdinaryDwmHighLowLevels ? previousMonthlyLow : na, "Previous Monthly Low", color=color.new(color.purple, 60), style=plot.style_linebr)
+
+// === LTF swing classification: reaction layer, not main level source ===
+ltfPivotHigh = ta.pivothigh(high, ltfSwingLength, ltfSwingLength)
+ltfPivotLow = ta.pivotlow(low, ltfSwingLength, ltfSwingLength)
+ltfWindowLow = ta.lowest(low, ltfSwingLength * 2 + 1)
+ltfWindowHigh = ta.highest(high, ltfSwingLength * 2 + 1)
+ltfHighSizeAtr = not na(ltfPivotHigh) and not na(atrValue[ltfSwingLength]) and atrValue[ltfSwingLength] > 0 ? (ltfPivotHigh - ltfWindowLow[ltfSwingLength]) / atrValue[ltfSwingLength] : na
+ltfLowSizeAtr = not na(ltfPivotLow) and not na(atrValue[ltfSwingLength]) and atrValue[ltfSwingLength] > 0 ? (ltfWindowHigh[ltfSwingLength] - ltfPivotLow) / atrValue[ltfSwingLength] : na
+ltfHighScale = not na(ltfHighSizeAtr) and ltfHighSizeAtr >= minMajorSwingAtr ? "Medium Swing" : not na(ltfHighSizeAtr) and ltfHighSizeAtr <= microSwingMaxAtr ? "Micro Swing" : "Minor Swing"
+ltfLowScale = not na(ltfLowSizeAtr) and ltfLowSizeAtr >= minMajorSwingAtr ? "Medium Swing" : not na(ltfLowSizeAtr) and ltfLowSizeAtr <= microSwingMaxAtr ? "Micro Swing" : "Minor Swing"
+showCurrentLtfHigh = showLTFSwings and not na(ltfPivotHigh) and (ltfHighScale != "Micro Swing" or showMicroSwings)
+showCurrentLtfLow = showLTFSwings and not na(ltfPivotLow) and (ltfLowScale != "Micro Swing" or showMicroSwings)
+if showCurrentLtfHigh
+    addLevel(ltfPivotHigh, true, ltfHighScale == "Micro Swing" ? "Micro Swing High" : "LTF Swing High", ltfHighScale, false, false, true)
+    if ltfHighScale != "Micro Swing"
+        addCandidate(ltfPivotHigh, true, "LTF Swing High")
+if showCurrentLtfLow
+    addLevel(ltfPivotLow, false, ltfLowScale == "Micro Swing" ? "Micro Swing Low" : "LTF Swing Low", ltfLowScale, false, false, true)
+    if ltfLowScale != "Micro Swing"
+        addCandidate(ltfPivotLow, false, "LTF Swing Low")
+
+// === Extend active levels and consume crossed/touched levels ===
+int crossedHtfLevels = 0
+if array.size(levelPrices) > 0
+    for idx = 0 to array.size(levelPrices) - 1
+        if array.get(levelActive, idx)
+            line.set_x2(array.get(levelLines, idx), bar_index + 1)
+            level = array.get(levelPrices, idx)
+            isHigh = array.get(levelIsHigh, idx)
+            crossed = isHigh ? high >= level : low <= level
+            if crossed
+                if array.get(levelIsHTF, idx)
+                    crossedHtfLevels += 1
+                markPast(idx)
+
+// === MTF context and chop/impulse classification ===
+overlapCount = 0
+for chopIndex = 1 to chopLookbackBars
+    overlapCount += high[chopIndex] >= low and low[chopIndex] <= high ? 1 : 0
+overlapRatio = overlapCount / chopLookbackBars
+rangeHeight = ta.highest(high, chopLookbackBars) - ta.lowest(low, chopLookbackBars)
+microChop = overlapRatio >= chopOverlapThreshold and not na(atrValue) and rangeHeight <= atrValue * minorSwingMaxAtr
+relevantRange = overlapRatio >= chopOverlapThreshold and not na(atrValue) and rangeHeight >= atrValue * relevantRangeAtr
+if relevantRange
+    addCandidate(ta.highest(high, chopLookbackBars), true, "Range High")
+    addCandidate(ta.lowest(low, chopLookbackBars), false, "Range Low")
+
+bodyClusterHigh = ta.highest(bodyHigh[1], chopLookbackBars)
+bodyClusterLow = ta.lowest(bodyLow[1], chopLookbackBars)
+bodyHighClusterTouches = 0
+bodyLowClusterTouches = 0
+for bodyIdx = 1 to chopLookbackBars
+    bodyHighClusterTouches += math.abs(bodyHigh[bodyIdx] - bodyClusterHigh) <= reactionTolerance ? 1 : 0
+    bodyLowClusterTouches += math.abs(bodyLow[bodyIdx] - bodyClusterLow) <= reactionTolerance ? 1 : 0
+if bodyHighClusterTouches >= 2
+    addCandidate(bodyClusterHigh, true, "Body High Cluster")
+if bodyLowClusterTouches >= 2
+    addCandidate(bodyClusterLow, false, "Body Low Cluster")
+
+localBreakLow = low < ta.lowest(low[1], 8)
+localBreakHigh = high > ta.highest(high[1], 8)
+if array.size(candidatePrices) > 0
+    for idx = 0 to array.size(candidatePrices) - 1
+        if array.get(candidateActive, idx)
+            cPrice = array.get(candidatePrices, idx)
+            cIsHigh = array.get(candidateIsHigh, idx)
+            cAge = bar_index - array.get(candidateBars, idx)
+            reactionMove = cIsHigh ? cPrice - low : high - cPrice
+            reactionPct = cPrice != 0.0 ? reactionMove / cPrice * 100.0 : 0.0
+            reactionByUsd = reactionMove >= reactionMinUsd
+            reactionByAtr = not na(atrValue) and reactionMove >= atrValue * reactionMinAtr
+            reactionByPct = reactionPct >= reactionMinPercent
+            reactionByBreak = cIsHigh ? localBreakLow : localBreakHigh
+            if cAge <= reactionLookaheadBars and (reactionByUsd or reactionByAtr or reactionByPct or reactionByBreak)
+                addRelevantLevel(cPrice, cIsHigh, array.get(candidateSources, idx), array.get(candidateBars, idx))
+                array.set(candidateActive, idx, false)
+            else if cAge > reactionLookaheadBars
+                array.set(candidateActive, idx, false)
+
+float nearestRelevantDistance = na
+float nearestRelevantPrice = na
+bool nearestRelevantIsHigh = false
+string nearestRelevantName = "None"
+string relevantEventThisBar = "None"
+if array.size(relevantPrices) > 0
+    for idx = 0 to array.size(relevantPrices) - 1
+        relPrice = array.get(relevantPrices, idx)
+        relIsHigh = array.get(relevantIsHigh, idx)
+        relLine = array.get(relevantLines, idx)
+        breakBuffer = math.max(cleanBreakUsdBuffer, not na(atrValue) ? atrValue * cleanBreakAtrBuffer : 0.0)
+        breakValue = relIsHigh ? relPrice + breakBuffer : relPrice - breakBuffer
+        closedThroughBreak = cleanBreakCloseRequired and (relIsHigh ? close > breakValue : close < breakValue)
+        cleanBreak = closedThroughBreak
+        sweptRelevant = relIsHigh ? high > relPrice : low < relPrice
+        relevantWasActiveBeforeBar = array.get(relevantActive, idx) and not array.get(relevantBroken, idx) and array.get(relevantCreatedBars, idx) < bar_index
+        // Only active, unbroken relevant levels from before this candle can print actionable SFP labels.
+        sfpRelevant = relevantWasActiveBeforeBar and (relIsHigh ? (high > relPrice and close < relPrice) : (low < relPrice and close > relPrice))
+        canRelevantSfpLabel = showRelevantSfpLabels
+        if relevantWasActiveBeforeBar
+            line.set_x2(relLine, bar_index + 1)
+            isCandidateNearest = relIsHigh ? relPrice > close : relPrice < close
+            relDistance = math.abs(close - relPrice)
+            if isCandidateNearest and (na(nearestRelevantDistance) or relDistance < nearestRelevantDistance)
+                nearestRelevantDistance := relDistance
+                nearestRelevantPrice := relPrice
+                nearestRelevantIsHigh := relIsHigh
+                nearestRelevantName := array.get(relevantNames, idx)
+            if sfpRelevant
+                relevantEventThisBar := relIsHigh ? "SFP at Relevant High" : "SFP at Relevant Low"
+                lastRelevantEvent := relevantEventThisBar
+                array.set(relevantLastEventBars, idx, bar_index)
+                if canRelevantSfpLabel
+                    rememberLabel(label.new(bar_index, relIsHigh ? high : low, relevantEventThisBar, style=relIsHigh ? label.style_label_down : label.style_label_up, color=color.new(relIsHigh ? color.rgb(255, 80, 130) : color.lime, 0), textcolor=color.white, size=size.tiny))
+            else if sweptRelevant and cleanBreak
+                markRelevantInactive(idx)
+                if relevantEventThisBar == "None"
+                    relevantEventThisBar := relIsHigh ? "Broken Relevant High" : "Broken Relevant Low"
+                    lastRelevantEvent := relevantEventThisBar
+
+move15m = close - close[impulseLookback]
+impulse15mBull = not na(atrValue) and move15m > atrValue * impulseAtrMultiplier
+impulse15mBear = not na(atrValue) and move15m < -atrValue * impulseAtrMultiplier
+impulse1h = request.security(syminfo.tickerid, "60", close - close[4], barmerge.gaps_off, barmerge.lookahead_off)
+atr1h = request.security(syminfo.tickerid, "60", ta.atr(atrLength), barmerge.gaps_off, barmerge.lookahead_off)
+impulse4h = request.security(syminfo.tickerid, "240", close - close[2], barmerge.gaps_off, barmerge.lookahead_off)
+atr4h = request.security(syminfo.tickerid, "240", ta.atr(atrLength), barmerge.gaps_off, barmerge.lookahead_off)
+intradayImpulse = not na(atr1h) and math.abs(impulse1h) > atr1h * impulseAtrMultiplier
+majorDisplacement = crossedHtfLevels > 0 or (not na(atr4h) and math.abs(impulse4h) > atr4h * impulseAtrMultiplier) or (not na(atrValue) and (high - low) > atrValue * displacementCandleAtr)
+impulseContext = majorDisplacement ? (close >= open ? "4H displacement / major move" : "4H displacement / major move") : intradayImpulse ? "1H impulse / relevant intraday move" : impulse15mBull ? "Bullish impulse" : impulse15mBear ? "Bearish impulse" : microChop ? "Micro Chop" : relevantRange ? "Relevant Range" : "15m impulse only / local move"
+postImpulseContext = majorDisplacement and microChop ? "Post-impulse micro chop" : majorDisplacement ? "Post-impulse correction watch" : ""
+
+// === Nearest HTF/body level and 15m reaction layer ===
+float nearestHtfDistance = na
+float nearestHtfPrice = na
+bool nearestHtfIsHigh = false
+string nearestHtfName = "None"
+string nearestHtfScale = "None"
+if array.size(levelPrices) > 0
+    for idx = 0 to array.size(levelPrices) - 1
+        if array.get(levelActive, idx) and (array.get(levelIsHTF, idx) or array.get(levelIsDwm, idx))
+            distance = math.abs(close - array.get(levelPrices, idx))
+            if na(nearestHtfDistance) or distance < nearestHtfDistance
+                nearestHtfDistance := distance
+                nearestHtfPrice := array.get(levelPrices, idx)
+                nearestHtfIsHigh := array.get(levelIsHigh, idx)
+                nearestHtfName := array.get(levelNames, idx)
+                nearestHtfScale := array.get(levelScales, idx)
+
+nearHtfLevel = not na(nearestHtfDistance) and nearestHtfDistance <= reactionTolerance
+htfContext = nearHtfLevel ? "Near HTF swing level" : not na(nearestHtfPrice) ? "Mid-range / no important level nearby" : "Inside HTF range"
+currentReaction = "No reaction"
+if microChop
+    currentReaction := "Micro chop / ignore"
+else if nearHtfLevel and nearestHtfIsHigh and high > nearestHtfPrice and close < nearestHtfPrice
+    currentReaction := "SFP candidate at HTF level"
+else if nearHtfLevel and not nearestHtfIsHigh and low < nearestHtfPrice and close > nearestHtfPrice
+    currentReaction := "SFP candidate at HTF level"
+else if nearHtfLevel and nearestHtfIsHigh and close < nearestHtfPrice and high >= nearestHtfPrice - reactionTolerance
+    currentReaction := "Rejection at HTF level"
+else if nearHtfLevel and not nearestHtfIsHigh and close > nearestHtfPrice and low <= nearestHtfPrice + reactionTolerance
+    currentReaction := "Rejection at HTF level"
+else if nearHtfLevel and nearestHtfIsHigh and close > nearestHtfPrice and close[1] <= nearestHtfPrice
+    currentReaction := "Reclaim at HTF level"
+else if nearHtfLevel and not nearestHtfIsHigh and close < nearestHtfPrice and close[1] >= nearestHtfPrice
+    currentReaction := "Reclaim at HTF level"
+else if nearHtfLevel and math.abs(close - nearestHtfPrice) <= reactionTolerance
+    currentReaction := "Retest"
+else if showMinorReactionLabels and not nearHtfLevel and (impulse15mBull or impulse15mBear)
+    currentReaction := "Minor reaction / ignore"
+
+activeScenario = relevantEventThisBar == "SFP at Relevant Low" ? "Relevant Low SFP" : relevantEventThisBar == "SFP at Relevant High" ? "Relevant High SFP" : "None"
+
+var int lastReactionLabelBar = na
+canLabel = showDebugReactionLabels and (na(lastReactionLabelBar) or bar_index - lastReactionLabelBar >= labelCooldownBars)
+if canLabel and currentReaction != "No reaction" and currentReaction != "Micro chop / ignore"
+    lastReactionLabelBar := bar_index
+    rememberLabel(label.new(bar_index, nearestHtfIsHigh ? high : low, currentReaction, style=nearestHtfIsHigh ? label.style_label_down : label.style_label_up, color=color.new(nearestHtfIsHigh ? color.red : color.green, 10), textcolor=color.white, size=size.tiny))
+else if canLabel and showMicroSwings and currentReaction == "Micro chop / ignore"
+    lastReactionLabelBar := bar_index
+    rememberLabel(label.new(bar_index, close, "Micro Chop", style=label.style_label_left, color=color.new(color.gray, 70), textcolor=color.white, size=size.tiny))
+
+if showDebugLabels and postImpulseContext != ""
+    rememberLabel(label.new(bar_index, close, postImpulseContext, style=label.style_label_left, color=color.new(color.blue, 60), textcolor=color.white, size=size.tiny))
+
+// === Full-dashboard nearest levels by timeframe ===
+nearestByText(tfName) =>
+    float bestDistance = na
+    string bestName = "None"
+    if array.size(levelPrices) > 0
+        for idx = 0 to array.size(levelPrices) - 1
+            if array.get(levelActive, idx) and str.contains(array.get(levelNames, idx), tfName)
+                distance = math.abs(close - array.get(levelPrices, idx))
+                if na(bestDistance) or distance < bestDistance
+                    bestDistance := distance
+                    bestName := array.get(levelNames, idx)
+    bestName
+
+nearest4h = nearestByText("4H")
+nearest8h = nearestByText("8H")
+nearest12h = nearestByText("12H")
+nearest1d = nearestByText("1D")
+
+// === Dashboard ===
+var table dashboard = table.new(position.top_right, 2, 14, border_width=1)
+if dashboardMode != "Off" and barstate.islast
+    table.clear(dashboard, 0, 0, 1, 13)
+    table.cell(dashboard, 0, 0, "Version", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(dashboard, 1, 0, "v0.4.4", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(dashboard, 0, 1, "Market Mode", text_color=color.white)
+    table.cell(dashboard, 1, 1, marketMode, text_color=color.white)
+    table.cell(dashboard, 0, 2, "EMA Bias", text_color=color.white)
+    table.cell(dashboard, 1, 2, emaBias, text_color=color.white)
+    table.cell(dashboard, 0, 3, "HTF Context", text_color=color.white)
+    table.cell(dashboard, 1, 3, htfContext, text_color=color.white)
+    table.cell(dashboard, 0, 4, "Nearest Active Relevant", text_color=color.white)
+    table.cell(dashboard, 1, 4, nearestRelevantName, text_color=color.white)
+    table.cell(dashboard, 0, 5, "Last Relevant Event", text_color=color.white)
+    table.cell(dashboard, 1, 5, lastRelevantEvent, text_color=color.white)
+    if dashboardMode == "Full"
+        table.cell(dashboard, 0, 6, "Active Scenario", text_color=color.white)
+        table.cell(dashboard, 1, 6, activeScenario, text_color=color.white)
+        table.cell(dashboard, 0, 7, "Nearest 4H", text_color=color.white)
+        table.cell(dashboard, 1, 7, nearest4h, text_color=color.white)
+        table.cell(dashboard, 0, 8, "Nearest 8H", text_color=color.white)
+        table.cell(dashboard, 1, 8, nearest8h, text_color=color.white)
+        table.cell(dashboard, 0, 9, "Nearest 12H", text_color=color.white)
+        table.cell(dashboard, 1, 9, nearest12h, text_color=color.white)
+        table.cell(dashboard, 0, 10, "Nearest 1D", text_color=color.white)
+        table.cell(dashboard, 1, 10, nearest1d, text_color=color.white)
+        table.cell(dashboard, 0, 11, "Debug 15m Reaction", text_color=color.white)
+        table.cell(dashboard, 1, 11, showDebugReactionLabels ? currentReaction : "Debug off", text_color=color.white)
+        table.cell(dashboard, 0, 12, "Swing Scale", text_color=color.white)
+        table.cell(dashboard, 1, 12, nearestHtfScale, text_color=color.white)
+        table.cell(dashboard, 0, 13, "Impulse / Chop", text_color=color.white)
+        table.cell(dashboard, 1, 13, postImpulseContext != "" ? postImpulseContext : impulseContext, text_color=color.white)
+
+// Visual-only alert placeholders for context only. No orders, webhooks, exchange
+// commands, strategy entries, stops, targets, or bot execution.
+alertcondition(relevantEventThisBar == "SFP at Relevant Low" or relevantEventThisBar == "SFP at Relevant High", title="SFP Candidate at Relevant Level", message="SFP candidate at relevant reaction level on {{ticker}} {{interval}}.")
+alertcondition(majorDisplacement, title="HTF Displacement Context", message="Major displacement context on {{ticker}} {{interval}}.")
