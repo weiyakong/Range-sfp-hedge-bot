@@ -1,0 +1,450 @@
+//@version=5
+indicator("Range SFP Visual v0.3.8", overlay=true, max_labels_count=180, max_lines_count=500)
+
+// -----------------------------------------------------------------------------
+// Range SFP Visual v0.3.8
+// Visual-only TradingView indicator. No strategy orders, exchange connections,
+// API keys, live trading, webhook automation, server code, or bot execution.
+//
+// v0.3.8 intentionally stops generating trade plans. It is a clean structure,
+// swing, D/W/M body-level, retest, and SFP-candidate visualizer for validating
+// whether the script sees the same levels a human sees.
+// -----------------------------------------------------------------------------
+
+// === Display settings ===
+dashboardMode = input.string("Compact", "Dashboard mode", options=["Off", "Compact", "Full"])
+showSwingLevels = input.bool(true, "Show fresh swing levels")
+showStructureLevels = input.bool(true, "Show validated structure levels")
+showBodyAlignedDwmLevels = input.bool(true, "Show D/W/M body-aligned levels")
+showOrdinaryDwmHighLowLevels = input.bool(false, "Show ordinary D/W/M high/low levels", tooltip="Context-only. Off by default to reduce clutter.")
+showConsumedLevels = input.bool(false, "Show consumed levels", tooltip="Default is false. If enabled, consumed levels stay visible in very muted colors.")
+historicalVisualTestMode = input.bool(false, "Historical visual test mode", tooltip="Default is false. Keeps only compact historical structure/SFP candidate labels; no trade plans are drawn.")
+showStructureCandidates = input.bool(false, "Show structure candidates", tooltip="Debug only. Candidate rolling levels are muted and are not final levels until validated/frozen.")
+showEntryDiagnostics = input.bool(false, "Show compact diagnostics", tooltip="Default is false. v0.3.8 uses compact structure diagnostics only; it does not show entry diagnostics or trade plans.")
+showContextLabels = input.bool(true, "Show context labels")
+showSfpCandidateLabels = input.bool(true, "Show SFP candidate labels")
+maxVisibleLabels = input.int(30, "Max visible labels", minval=1, maxval=100)
+monthlyBodyLevelColor = input.color(color.white, "Monthly body-aligned color")
+
+// === Core settings ===
+swingLength = input.int(5, "Swing pivot length", minval=2)
+minSwingProminenceAtr = input.float(0.60, "Min swing prominence ATR", minval=0.0, step=0.05)
+structureLookback = input.int(24, "Structure lookback", minval=12, tooltip="Candidate window for validated/frozen structure levels. Rolling highs/lows are candidates only.")
+minStructureBars = input.int(12, "Min structure bars", minval=2)
+minStructureTouches = input.int(2, "Min structure touches", minval=2)
+structureToleranceUsd = input.float(75.0, "Structure tolerance USD", minval=0.0, step=1.0)
+consolidationLookback = input.int(10, "Consolidation lookback", minval=3)
+consolidationMaxAtrRange = input.float(1.5, "Max consolidation range ATR", minval=0.1, step=0.1)
+levelCooldownBars = input.int(8, "Min bars between similar level labels", minval=1)
+
+// Market-mode settings remain context-only.
+emaFastLength = input.int(21, "Fast EMA length", minval=1)
+emaSlowLength = input.int(55, "Slow EMA length", minval=2)
+adxLength = input.int(14, "ADX length", minval=1)
+adxSmoothing = input.int(14, "ADX smoothing", minval=1)
+adxTrendThreshold = input.float(20.0, "ADX trend threshold", minval=1.0, step=0.5)
+emaSeparationAtr = input.float(0.35, "EMA separation ATR", minval=0.01, step=0.01)
+atrLength = input.int(14, "ATR length", minval=1)
+atrBaselineLength = input.int(50, "ATR baseline length", minval=5)
+volExpansionMultiplier = input.float(1.4, "Volatility expansion multiplier", minval=0.1, step=0.1)
+
+// === Measurements ===
+atrValue = ta.atr(atrLength)
+atrBaseline = ta.sma(atrValue, atrBaselineLength)
+emaFast = ta.ema(close, emaFastLength)
+emaSlow = ta.ema(close, emaSlowLength)
+[plusDi, minusDi, adxValue] = ta.dmi(adxLength, adxSmoothing)
+bodyHigh = math.max(open, close)
+bodyLow = math.min(open, close)
+structureTolerance = structureToleranceUsd > 0.0 ? structureToleranceUsd : (not na(atrValue) ? atrValue * 0.25 : syminfo.mintick)
+emaSeparation = not na(atrValue) and atrValue > 0.0 ? math.abs(emaFast - emaSlow) / atrValue : 0.0
+emaBias = emaFast > emaSlow and emaSeparation >= emaSeparationAtr ? "Bullish" : emaFast < emaSlow and emaSeparation >= emaSeparationAtr ? "Bearish" : "Neutral"
+strongTrend = adxValue >= adxTrendThreshold and emaSeparation >= emaSeparationAtr
+volatilityExpansion = not na(atrValue) and not na(atrBaseline) and atrValue > atrBaseline * volExpansionMultiplier
+marketMode = volatilityExpansion ? "Expansion" : strongTrend ? "Trend" : "Range"
+
+LEVEL_FRESH = "Fresh"
+LEVEL_CONSUMED = "Consumed"
+
+levelColor(baseColor, isFresh) =>
+    isFresh ? color.new(baseColor, 0) : color.new(baseColor, 86)
+
+bodyColorDaily = color.lime
+bodyColorWeekly = color.orange
+bodyColorMonthly = monthlyBodyLevelColor
+
+var label[] visualLabels = array.new<label>()
+rememberLabel(newLabel) =>
+    if not na(newLabel)
+        array.push(visualLabels, newLabel)
+        if array.size(visualLabels) > maxVisibleLabels
+            label.delete(array.shift(visualLabels))
+
+consumeLine(levelLine, baseColor) =>
+    if not na(levelLine)
+        line.set_x2(levelLine, bar_index)
+        line.set_color(levelLine, color.new(baseColor, 86))
+        if not showConsumedLevels
+            line.delete(levelLine)
+
+// === Previous higher-timeframe levels ===
+previousDailyHigh = request.security(syminfo.tickerid, "D", high[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousDailyLow = request.security(syminfo.tickerid, "D", low[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousDailyBodyHigh = request.security(syminfo.tickerid, "D", math.max(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+previousDailyBodyLow = request.security(syminfo.tickerid, "D", math.min(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+previousWeeklyHigh = request.security(syminfo.tickerid, "W", high[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousWeeklyLow = request.security(syminfo.tickerid, "W", low[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousWeeklyBodyHigh = request.security(syminfo.tickerid, "W", math.max(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+previousWeeklyBodyLow = request.security(syminfo.tickerid, "W", math.min(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+previousMonthlyHigh = request.security(syminfo.tickerid, "M", high[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousMonthlyLow = request.security(syminfo.tickerid, "M", low[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousMonthlyBodyHigh = request.security(syminfo.tickerid, "M", math.max(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+previousMonthlyBodyLow = request.security(syminfo.tickerid, "M", math.min(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+
+// Body-aligned D/W/M levels are primary visual context in v0.3.8.
+var float activeDailyBodyHigh = na
+var float activeDailyBodyLow = na
+var float activeWeeklyBodyHigh = na
+var float activeWeeklyBodyLow = na
+var float activeMonthlyBodyHigh = na
+var float activeMonthlyBodyLow = na
+var bool dailyBodyHighFresh = false
+var bool dailyBodyLowFresh = false
+var bool weeklyBodyHighFresh = false
+var bool weeklyBodyLowFresh = false
+var bool monthlyBodyHighFresh = false
+var bool monthlyBodyLowFresh = false
+var line dailyBodyHighLine = na
+var line dailyBodyLowLine = na
+var line weeklyBodyHighLine = na
+var line weeklyBodyLowLine = na
+var line monthlyBodyHighLine = na
+var line monthlyBodyLowLine = na
+
+if showBodyAlignedDwmLevels and not na(previousDailyBodyHigh) and (na(activeDailyBodyHigh) or previousDailyBodyHigh != activeDailyBodyHigh)
+    activeDailyBodyHigh := previousDailyBodyHigh
+    dailyBodyHighFresh := true
+    dailyBodyHighLine := line.new(bar_index, activeDailyBodyHigh, bar_index + 1, activeDailyBodyHigh, color=color.new(bodyColorDaily, 15), width=1, style=line.style_dotted)
+if showBodyAlignedDwmLevels and not na(previousDailyBodyLow) and (na(activeDailyBodyLow) or previousDailyBodyLow != activeDailyBodyLow)
+    activeDailyBodyLow := previousDailyBodyLow
+    dailyBodyLowFresh := true
+    dailyBodyLowLine := line.new(bar_index, activeDailyBodyLow, bar_index + 1, activeDailyBodyLow, color=color.new(bodyColorDaily, 15), width=1, style=line.style_dotted)
+if showBodyAlignedDwmLevels and not na(previousWeeklyBodyHigh) and (na(activeWeeklyBodyHigh) or previousWeeklyBodyHigh != activeWeeklyBodyHigh)
+    activeWeeklyBodyHigh := previousWeeklyBodyHigh
+    weeklyBodyHighFresh := true
+    weeklyBodyHighLine := line.new(bar_index, activeWeeklyBodyHigh, bar_index + 1, activeWeeklyBodyHigh, color=color.new(bodyColorWeekly, 15), width=1, style=line.style_dotted)
+if showBodyAlignedDwmLevels and not na(previousWeeklyBodyLow) and (na(activeWeeklyBodyLow) or previousWeeklyBodyLow != activeWeeklyBodyLow)
+    activeWeeklyBodyLow := previousWeeklyBodyLow
+    weeklyBodyLowFresh := true
+    weeklyBodyLowLine := line.new(bar_index, activeWeeklyBodyLow, bar_index + 1, activeWeeklyBodyLow, color=color.new(bodyColorWeekly, 15), width=1, style=line.style_dotted)
+if showBodyAlignedDwmLevels and not na(previousMonthlyBodyHigh) and (na(activeMonthlyBodyHigh) or previousMonthlyBodyHigh != activeMonthlyBodyHigh)
+    activeMonthlyBodyHigh := previousMonthlyBodyHigh
+    monthlyBodyHighFresh := true
+    monthlyBodyHighLine := line.new(bar_index, activeMonthlyBodyHigh, bar_index + 1, activeMonthlyBodyHigh, color=color.new(bodyColorMonthly, 15), width=1, style=line.style_dotted)
+if showBodyAlignedDwmLevels and not na(previousMonthlyBodyLow) and (na(activeMonthlyBodyLow) or previousMonthlyBodyLow != activeMonthlyBodyLow)
+    activeMonthlyBodyLow := previousMonthlyBodyLow
+    monthlyBodyLowFresh := true
+    monthlyBodyLowLine := line.new(bar_index, activeMonthlyBodyLow, bar_index + 1, activeMonthlyBodyLow, color=color.new(bodyColorMonthly, 15), width=1, style=line.style_dotted)
+
+if dailyBodyHighFresh and not na(dailyBodyHighLine)
+    line.set_x2(dailyBodyHighLine, bar_index + 1)
+if dailyBodyLowFresh and not na(dailyBodyLowLine)
+    line.set_x2(dailyBodyLowLine, bar_index + 1)
+if weeklyBodyHighFresh and not na(weeklyBodyHighLine)
+    line.set_x2(weeklyBodyHighLine, bar_index + 1)
+if weeklyBodyLowFresh and not na(weeklyBodyLowLine)
+    line.set_x2(weeklyBodyLowLine, bar_index + 1)
+if monthlyBodyHighFresh and not na(monthlyBodyHighLine)
+    line.set_x2(monthlyBodyHighLine, bar_index + 1)
+if monthlyBodyLowFresh and not na(monthlyBodyLowLine)
+    line.set_x2(monthlyBodyLowLine, bar_index + 1)
+
+if dailyBodyHighFresh and high >= activeDailyBodyHigh
+    dailyBodyHighFresh := false
+    consumeLine(dailyBodyHighLine, bodyColorDaily)
+if dailyBodyLowFresh and low <= activeDailyBodyLow
+    dailyBodyLowFresh := false
+    consumeLine(dailyBodyLowLine, bodyColorDaily)
+if weeklyBodyHighFresh and high >= activeWeeklyBodyHigh
+    weeklyBodyHighFresh := false
+    consumeLine(weeklyBodyHighLine, bodyColorWeekly)
+if weeklyBodyLowFresh and low <= activeWeeklyBodyLow
+    weeklyBodyLowFresh := false
+    consumeLine(weeklyBodyLowLine, bodyColorWeekly)
+if monthlyBodyHighFresh and high >= activeMonthlyBodyHigh
+    monthlyBodyHighFresh := false
+    consumeLine(monthlyBodyHighLine, bodyColorMonthly)
+if monthlyBodyLowFresh and low <= activeMonthlyBodyLow
+    monthlyBodyLowFresh := false
+    consumeLine(monthlyBodyLowLine, bodyColorMonthly)
+
+// Optional ordinary D/W/M wick levels. Context only; off by default.
+plot(showOrdinaryDwmHighLowLevels ? previousDailyHigh : na, "Previous Daily High", color=color.new(color.gray, 50), style=plot.style_linebr)
+plot(showOrdinaryDwmHighLowLevels ? previousDailyLow : na, "Previous Daily Low", color=color.new(color.gray, 50), style=plot.style_linebr)
+plot(showOrdinaryDwmHighLowLevels ? previousWeeklyHigh : na, "Previous Weekly High", color=color.new(color.blue, 55), style=plot.style_linebr)
+plot(showOrdinaryDwmHighLowLevels ? previousWeeklyLow : na, "Previous Weekly Low", color=color.new(color.blue, 55), style=plot.style_linebr)
+plot(showOrdinaryDwmHighLowLevels ? previousMonthlyHigh : na, "Previous Monthly High", color=color.new(color.purple, 55), style=plot.style_linebr)
+plot(showOrdinaryDwmHighLowLevels ? previousMonthlyLow : na, "Previous Monthly Low", color=color.new(color.purple, 55), style=plot.style_linebr)
+
+// === Fresh swing levels ===
+pivotHigh = ta.pivothigh(high, swingLength, swingLength)
+pivotLow = ta.pivotlow(low, swingLength, swingLength)
+pivotHighBar = bar_index - swingLength
+pivotLowBar = bar_index - swingLength
+pivotWindowLow = ta.lowest(low, swingLength * 2 + 1)
+pivotWindowHigh = ta.highest(high, swingLength * 2 + 1)
+pivotHighProminent = not na(pivotHigh) and not na(atrValue[swingLength]) and (pivotHigh - pivotWindowLow[swingLength]) >= atrValue[swingLength] * minSwingProminenceAtr
+pivotLowProminent = not na(pivotLow) and not na(atrValue[swingLength]) and (pivotWindowHigh[swingLength] - pivotLow) >= atrValue[swingLength] * minSwingProminenceAtr
+
+var float activeSwingHigh = na
+var float activeSwingLow = na
+var int activeSwingHighBar = na
+var int activeSwingLowBar = na
+var int activeSwingHighCreatedBar = na
+var int activeSwingLowCreatedBar = na
+var bool swingHighFresh = false
+var bool swingLowFresh = false
+var line swingHighLine = na
+var line swingLowLine = na
+
+if showSwingLevels and pivotHighProminent
+    activeSwingHigh := pivotHigh
+    activeSwingHighBar := pivotHighBar
+    activeSwingHighCreatedBar := bar_index
+    swingHighFresh := true
+    swingHighLine := line.new(activeSwingHighBar, activeSwingHigh, bar_index + 1, activeSwingHigh, color=color.new(color.red, 0), width=2)
+    if showContextLabels
+        rememberLabel(label.new(activeSwingHighBar, activeSwingHigh, "Swing High", style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=size.tiny))
+
+if showSwingLevels and pivotLowProminent
+    activeSwingLow := pivotLow
+    activeSwingLowBar := pivotLowBar
+    activeSwingLowCreatedBar := bar_index
+    swingLowFresh := true
+    swingLowLine := line.new(activeSwingLowBar, activeSwingLow, bar_index + 1, activeSwingLow, color=color.new(color.green, 0), width=2)
+    if showContextLabels
+        rememberLabel(label.new(activeSwingLowBar, activeSwingLow, "Swing Low", style=label.style_label_up, color=color.new(color.green, 20), textcolor=color.white, size=size.tiny))
+
+if swingHighFresh and not na(swingHighLine)
+    line.set_x2(swingHighLine, bar_index + 1)
+if swingLowFresh and not na(swingLowLine)
+    line.set_x2(swingLowLine, bar_index + 1)
+
+// === Validated/frozen local structure levels ===
+structureHighCandidate = math.max(ta.highest(high[1], structureLookback), ta.highest(bodyHigh[1], structureLookback))
+structureLowCandidate = math.min(ta.lowest(low[1], structureLookback), ta.lowest(bodyLow[1], structureLookback))
+
+countHighTouches(level) =>
+    int touches = 0
+    if not na(level)
+        for i = 1 to structureLookback
+            touches += (math.abs(high[i] - level) <= structureTolerance or math.abs(bodyHigh[i] - level) <= structureTolerance) ? 1 : 0
+    touches
+
+countLowTouches(level) =>
+    int touches = 0
+    if not na(level)
+        for i = 1 to structureLookback
+            touches += (math.abs(low[i] - level) <= structureTolerance or math.abs(bodyLow[i] - level) <= structureTolerance) ? 1 : 0
+    touches
+
+consolidationRange = ta.highest(high, consolidationLookback) - ta.lowest(low, consolidationLookback)
+isConsolidating = not na(atrValue) and consolidationRange <= atrValue * consolidationMaxAtrRange
+consolidationTop = ta.highest(high, consolidationLookback)
+consolidationBottom = ta.lowest(low, consolidationLookback)
+structureHighTouches = countHighTouches(structureHighCandidate)
+structureLowTouches = countLowTouches(structureLowCandidate)
+structureCandidateHasAge = not na(close[minStructureBars])
+structureHighFromTouches = structureHighTouches >= minStructureTouches
+structureLowFromTouches = structureLowTouches >= minStructureTouches
+structureHighFromSwing = swingHighFresh and not na(activeSwingHigh) and not na(activeSwingHighBar) and bar_index - activeSwingHighBar >= minStructureBars and math.abs(activeSwingHigh - structureHighCandidate) <= structureTolerance
+structureLowFromSwing = swingLowFresh and not na(activeSwingLow) and not na(activeSwingLowBar) and bar_index - activeSwingLowBar >= minStructureBars and math.abs(activeSwingLow - structureLowCandidate) <= structureTolerance
+structureHighFromConsolidation = isConsolidating and math.abs(consolidationTop - structureHighCandidate) <= structureTolerance
+structureLowFromConsolidation = isConsolidating and math.abs(consolidationBottom - structureLowCandidate) <= structureTolerance
+validStructureHighCandidate = structureCandidateHasAge and (structureHighFromTouches or structureHighFromSwing or structureHighFromConsolidation)
+validStructureLowCandidate = structureCandidateHasAge and (structureLowFromTouches or structureLowFromSwing or structureLowFromConsolidation)
+
+var float activeStructureHigh = na
+var float activeStructureLow = na
+var int activeStructureHighBar = na
+var int activeStructureLowBar = na
+var bool structureHighFresh = false
+var bool structureLowFresh = false
+var line structureHighLine = na
+var line structureLowLine = na
+var line structureHighCandidateLine = na
+var line structureLowCandidateLine = na
+var string lastStructureEvent = "None"
+
+if showStructureCandidates and not na(structureHighCandidate)
+    if na(structureHighCandidateLine)
+        structureHighCandidateLine := line.new(math.max(0, bar_index - structureLookback), structureHighCandidate, bar_index + 1, structureHighCandidate, color=color.new(color.red, 88), width=1, style=line.style_dotted)
+    else
+        line.set_xy1(structureHighCandidateLine, math.max(0, bar_index - structureLookback), structureHighCandidate)
+        line.set_xy2(structureHighCandidateLine, bar_index + 1, structureHighCandidate)
+if showStructureCandidates and not na(structureLowCandidate)
+    if na(structureLowCandidateLine)
+        structureLowCandidateLine := line.new(math.max(0, bar_index - structureLookback), structureLowCandidate, bar_index + 1, structureLowCandidate, color=color.new(color.green, 88), width=1, style=line.style_dotted)
+    else
+        line.set_xy1(structureLowCandidateLine, math.max(0, bar_index - structureLookback), structureLowCandidate)
+        line.set_xy2(structureLowCandidateLine, bar_index + 1, structureLowCandidate)
+if not showStructureCandidates
+    if not na(structureHighCandidateLine)
+        line.delete(structureHighCandidateLine)
+        structureHighCandidateLine := na
+    if not na(structureLowCandidateLine)
+        line.delete(structureLowCandidateLine)
+        structureLowCandidateLine := na
+
+if showStructureLevels and validStructureHighCandidate and not structureHighFresh
+    activeStructureHigh := structureHighFromConsolidation ? consolidationTop : structureHighFromSwing ? activeSwingHigh : structureHighCandidate
+    activeStructureHighBar := bar_index
+    structureHighFresh := true
+    structureHighLine := line.new(math.max(0, bar_index - structureLookback), activeStructureHigh, bar_index + 1, activeStructureHigh, color=color.new(color.red, 20), width=2)
+    lastStructureEvent := "Structure High frozen"
+    if showContextLabels
+        rememberLabel(label.new(bar_index, activeStructureHigh, "Structure High", style=label.style_label_down, color=color.new(color.red, 10), textcolor=color.white, size=size.tiny))
+
+if showStructureLevels and validStructureLowCandidate and not structureLowFresh
+    activeStructureLow := structureLowFromConsolidation ? consolidationBottom : structureLowFromSwing ? activeSwingLow : structureLowCandidate
+    activeStructureLowBar := bar_index
+    structureLowFresh := true
+    structureLowLine := line.new(math.max(0, bar_index - structureLookback), activeStructureLow, bar_index + 1, activeStructureLow, color=color.new(color.green, 20), width=2)
+    lastStructureEvent := "Structure Low frozen"
+    if showContextLabels
+        rememberLabel(label.new(bar_index, activeStructureLow, "Structure Low", style=label.style_label_up, color=color.new(color.green, 10), textcolor=color.white, size=size.tiny))
+
+if structureHighFresh and not na(structureHighLine)
+    line.set_x2(structureHighLine, bar_index + 1)
+if structureLowFresh and not na(structureLowLine)
+    line.set_x2(structureLowLine, bar_index + 1)
+
+// === Candidate SFPs and context labels only; no entries/plans ===
+bearStructureSfpCandidate = structureHighFresh and not na(activeStructureHighBar) and bar_index > activeStructureHighBar and high > activeStructureHigh and close < activeStructureHigh
+bullStructureSfpCandidate = structureLowFresh and not na(activeStructureLowBar) and bar_index > activeStructureLowBar and low < activeStructureLow and close > activeStructureLow
+bearSwingSfpCandidate = swingHighFresh and not na(activeSwingHighCreatedBar) and bar_index > activeSwingHighCreatedBar and high > activeSwingHigh and close < activeSwingHigh
+bullSwingSfpCandidate = swingLowFresh and not na(activeSwingLowCreatedBar) and bar_index > activeSwingLowCreatedBar and low < activeSwingLow and close > activeSwingLow
+bearSfpCandidate = bearStructureSfpCandidate or bearSwingSfpCandidate
+bullSfpCandidate = bullStructureSfpCandidate or bullSwingSfpCandidate
+
+var string activeScenario = "None"
+if bearSfpCandidate
+    activeScenario := "Short watch"
+    lastStructureEvent := "Bear SFP candidate"
+    if showSfpCandidateLabels
+        rememberLabel(label.new(bar_index, high, "Bear SFP\ncandidate\nStructure reaction", style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.tiny))
+if bullSfpCandidate
+    activeScenario := "Long watch"
+    lastStructureEvent := "Bull SFP candidate"
+    if showSfpCandidateLabels
+        rememberLabel(label.new(bar_index, low, "Bull SFP\ncandidate\nStructure reaction", style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white, size=size.tiny))
+
+// Mark SFP/touch levels consumed after candidate labels are created.
+if structureHighFresh and not na(activeStructureHighBar) and bar_index > activeStructureHighBar and high >= activeStructureHigh
+    structureHighFresh := false
+    consumeLine(structureHighLine, color.red)
+if structureLowFresh and not na(activeStructureLowBar) and bar_index > activeStructureLowBar and low <= activeStructureLow
+    structureLowFresh := false
+    consumeLine(structureLowLine, color.green)
+if swingHighFresh and not na(activeSwingHighCreatedBar) and bar_index > activeSwingHighCreatedBar and high >= activeSwingHigh
+    swingHighFresh := false
+    consumeLine(swingHighLine, color.red)
+if swingLowFresh and not na(activeSwingLowCreatedBar) and bar_index > activeSwingLowCreatedBar and low <= activeSwingLow
+    swingLowFresh := false
+    consumeLine(swingLowLine, color.green)
+
+var int lastContextLabelBar = na
+canPrintContextLabel = showContextLabels and (na(lastContextLabelBar) or bar_index - lastContextLabelBar >= levelCooldownBars)
+lowerHighContext = canPrintContextLabel and structureHighFresh and not na(activeStructureHigh) and high < activeStructureHigh and high >= activeStructureHigh - structureTolerance and close < open
+higherLowContext = canPrintContextLabel and structureLowFresh and not na(activeStructureLow) and low > activeStructureLow and low <= activeStructureLow + structureTolerance and close > open
+retestHighContext = canPrintContextLabel and structureHighFresh and not na(activeStructureHigh) and math.abs(high - activeStructureHigh) <= structureTolerance and close < activeStructureHigh
+retestLowContext = canPrintContextLabel and structureLowFresh and not na(activeStructureLow) and math.abs(low - activeStructureLow) <= structureTolerance and close > activeStructureLow
+
+if lowerHighContext
+    lastContextLabelBar := bar_index
+    lastStructureEvent := "Lower High"
+    rememberLabel(label.new(bar_index, high, "Lower High\nPossible continuation", style=label.style_label_down, color=color.new(color.orange, 10), textcolor=color.white, size=size.tiny))
+else if higherLowContext
+    lastContextLabelBar := bar_index
+    lastStructureEvent := "Higher Low"
+    rememberLabel(label.new(bar_index, low, "Higher Low\nPossible continuation", style=label.style_label_up, color=color.new(color.teal, 10), textcolor=color.white, size=size.tiny))
+else if retestHighContext
+    lastContextLabelBar := bar_index
+    lastStructureEvent := "Retest"
+    rememberLabel(label.new(bar_index, high, "Retest", style=label.style_label_down, color=color.new(color.gray, 10), textcolor=color.white, size=size.tiny))
+else if retestLowContext
+    lastContextLabelBar := bar_index
+    lastStructureEvent := "Retest"
+    rememberLabel(label.new(bar_index, low, "Retest", style=label.style_label_up, color=color.new(color.gray, 10), textcolor=color.white, size=size.tiny))
+
+if showEntryDiagnostics and (bearSfpCandidate or bullSfpCandidate)
+    rememberLabel(label.new(bar_index, bearSfpCandidate ? high : low, "Structure reaction", style=bearSfpCandidate ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 20), textcolor=color.white, size=size.tiny))
+
+nearestFreshLevelText() =>
+    float nearestDistance = na
+    string nearestName = "None"
+    if dailyBodyHighFresh and not na(activeDailyBodyHigh)
+        nearestDistance := math.abs(close - activeDailyBodyHigh)
+        nearestName := "D Body High"
+    if dailyBodyLowFresh and not na(activeDailyBodyLow) and (na(nearestDistance) or math.abs(close - activeDailyBodyLow) < nearestDistance)
+        nearestDistance := math.abs(close - activeDailyBodyLow)
+        nearestName := "D Body Low"
+    if weeklyBodyHighFresh and not na(activeWeeklyBodyHigh) and (na(nearestDistance) or math.abs(close - activeWeeklyBodyHigh) < nearestDistance)
+        nearestDistance := math.abs(close - activeWeeklyBodyHigh)
+        nearestName := "W Body High"
+    if weeklyBodyLowFresh and not na(activeWeeklyBodyLow) and (na(nearestDistance) or math.abs(close - activeWeeklyBodyLow) < nearestDistance)
+        nearestDistance := math.abs(close - activeWeeklyBodyLow)
+        nearestName := "W Body Low"
+    if monthlyBodyHighFresh and not na(activeMonthlyBodyHigh) and (na(nearestDistance) or math.abs(close - activeMonthlyBodyHigh) < nearestDistance)
+        nearestDistance := math.abs(close - activeMonthlyBodyHigh)
+        nearestName := "M Body High"
+    if monthlyBodyLowFresh and not na(activeMonthlyBodyLow) and (na(nearestDistance) or math.abs(close - activeMonthlyBodyLow) < nearestDistance)
+        nearestDistance := math.abs(close - activeMonthlyBodyLow)
+        nearestName := "M Body Low"
+    if structureHighFresh and not na(activeStructureHigh) and (na(nearestDistance) or math.abs(close - activeStructureHigh) < nearestDistance)
+        nearestDistance := math.abs(close - activeStructureHigh)
+        nearestName := "Structure High"
+    if structureLowFresh and not na(activeStructureLow) and (na(nearestDistance) or math.abs(close - activeStructureLow) < nearestDistance)
+        nearestDistance := math.abs(close - activeStructureLow)
+        nearestName := "Structure Low"
+    if swingHighFresh and not na(activeSwingHigh) and (na(nearestDistance) or math.abs(close - activeSwingHigh) < nearestDistance)
+        nearestDistance := math.abs(close - activeSwingHigh)
+        nearestName := "Swing High"
+    if swingLowFresh and not na(activeSwingLow) and (na(nearestDistance) or math.abs(close - activeSwingLow) < nearestDistance)
+        nearestDistance := math.abs(close - activeSwingLow)
+        nearestName := "Swing Low"
+    nearestName
+
+nearestFreshLevel = nearestFreshLevelText()
+
+// === Dashboard ===
+var table dashboard = table.new(position.top_right, 2, 10, border_width=1)
+if dashboardMode != "Off" and barstate.islast
+    table.clear(dashboard, 0, 0, 1, 9)
+    table.cell(dashboard, 0, 0, "Version", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(dashboard, 1, 0, "v0.3.8", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(dashboard, 0, 1, "Market Mode", text_color=color.white)
+    table.cell(dashboard, 1, 1, marketMode, text_color=color.white)
+    table.cell(dashboard, 0, 2, "EMA Bias", text_color=color.white)
+    table.cell(dashboard, 1, 2, emaBias, text_color=color.white)
+    table.cell(dashboard, 0, 3, "Active scenario", text_color=color.white)
+    table.cell(dashboard, 1, 3, activeScenario, text_color=color.white)
+    table.cell(dashboard, 0, 4, "Nearest fresh level", text_color=color.white)
+    table.cell(dashboard, 1, 4, nearestFreshLevel, text_color=color.white)
+    table.cell(dashboard, 0, 5, "Last structure event", text_color=color.white)
+    table.cell(dashboard, 1, 5, lastStructureEvent, text_color=color.white)
+    if dashboardMode == "Full"
+        table.cell(dashboard, 0, 6, "High touches", text_color=color.white)
+        table.cell(dashboard, 1, 6, str.tostring(structureHighTouches), text_color=color.white)
+        table.cell(dashboard, 0, 7, "Low touches", text_color=color.white)
+        table.cell(dashboard, 1, 7, str.tostring(structureLowTouches), text_color=color.white)
+        table.cell(dashboard, 0, 8, "Candidates", text_color=color.white)
+        table.cell(dashboard, 1, 8, showStructureCandidates ? "On" : "Off", text_color=color.white)
+        table.cell(dashboard, 0, 9, "Consumed", text_color=color.white)
+        table.cell(dashboard, 1, 9, showConsumedLevels ? "Shown" : "Hidden", text_color=color.white)
+
+// Visual-only alert placeholders for candidates/context only. No orders, webhooks,
+// exchange commands, strategy entries, stops, targets, or bot execution.
+alertcondition(bearSfpCandidate, title="Bear SFP Candidate", message="Bear SFP candidate visual marker on {{ticker}} {{interval}}.")
+alertcondition(bullSfpCandidate, title="Bull SFP Candidate", message="Bull SFP candidate visual marker on {{ticker}} {{interval}}.")
+alertcondition(lowerHighContext or higherLowContext or retestHighContext or retestLowContext, title="Structure Context", message="Structure context visual marker on {{ticker}} {{interval}}.")
