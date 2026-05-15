@@ -1,15 +1,16 @@
 //@version=6
-indicator("SFP Candidate Debug v0.3", overlay=true, max_lines_count=500, max_labels_count=200)
+indicator("SFP Candidate Debug v0.4", overlay=true, max_lines_count=500, max_labels_count=200)
 
 // Diagnostic only: raw swing -> Candidate after 700+ USD move -> sweep -> SFP confirmed / broken.
 // Candidate labels are drawn on the original raw swing bar, not on the confirmation bar.
+// Impulse mode blocks creation of new counter-trend Candidates until exhaustion/reclaim.
 // No entries, SL, TP, strategy orders, webhooks, or live trading.
 
 showDashboard = input.bool(true, "Show dashboard")
 showCandidateLabels = input.bool(true, "Show Candidate labels")
 showSweepLabels = input.bool(true, "Show Sweep labels")
 showSfpLabels = input.bool(true, "Show SFP confirmed labels")
-showBrokenLabels = input.bool(true, "Show Broken labels")
+showBrokenLabels = input.bool(true, "Show Broken / invalidated labels")
 showPastLevels = input.bool(false, "Show used/broken levels")
 
 useCurrentTfSwings = input.bool(true, "Use current TF swings")
@@ -22,10 +23,44 @@ htfPivotLen = input.int(3, "HTF pivot length", minval=2, maxval=20)
 minMoveUsd = input.float(700.0, "Minimum move from raw swing to become Candidate", minval=0.0, step=50.0)
 mergeUsd = input.float(120.0, "Merge nearby Candidate levels USD", minval=0.0, step=10.0)
 cleanBreakUsdBuffer = input.float(120.0, "Clean break buffer USD", minval=0.0, step=10.0)
+sweepLabelOffsetUsd = input.float(90.0, "Sweep/Broken label vertical offset USD", minval=0.0, step=10.0)
 maxImmediateReclaimBars = input.int(1, "Immediate reclaim window bars", minval=0, maxval=2)
 maxRawSwings = input.int(160, "Max raw swings stored", minval=20, maxval=400)
 maxCandidates = input.int(120, "Max Candidate levels stored", minval=20, maxval=300)
 maxLabels = input.int(120, "Max visible labels", minval=20, maxval=200)
+
+useImpulseFilter = input.bool(true, "Use impulse filter")
+impulseAtrLen = input.int(14, "Impulse ATR length", minval=1)
+impulseBodyAtr = input.float(1.2, "Impulse body ATR multiplier", minval=0.1, step=0.1)
+impulseClosePortion = input.float(0.25, "Impulse close near extreme portion", minval=0.05, maxval=0.45, step=0.05)
+impulseBarsHold = input.int(6, "Impulse mode minimum bars", minval=1, maxval=50)
+exhaustionWickPortion = input.float(0.45, "Exhaustion wick portion", minval=0.1, maxval=0.8, step=0.05)
+
+atrImpulse = ta.atr(impulseAtrLen)
+barRange = high - low
+body = math.abs(close - open)
+lowerWick = math.min(open, close) - low
+upperWick = high - math.max(open, close)
+
+bearImpulseBar = useImpulseFilter and not na(atrImpulse) and close < open and body >= atrImpulse * impulseBodyAtr and barRange > 0 and (close - low) <= barRange * impulseClosePortion
+bullImpulseBar = useImpulseFilter and not na(atrImpulse) and close > open and body >= atrImpulse * impulseBodyAtr and barRange > 0 and (high - close) <= barRange * impulseClosePortion
+bearExhaustion = barRange > 0 and lowerWick >= barRange * exhaustionWickPortion and close > low + barRange * 0.45
+bullExhaustion = barRange > 0 and upperWick >= barRange * exhaustionWickPortion and close < high - barRange * 0.45
+
+var int impulseMode = 0
+var int impulseStartedBar = na
+if bearImpulseBar
+    impulseMode := -1
+    impulseStartedBar := bar_index
+else if bullImpulseBar
+    impulseMode := 1
+    impulseStartedBar := bar_index
+else if impulseMode == -1 and not na(impulseStartedBar) and bar_index - impulseStartedBar >= impulseBarsHold and bearExhaustion
+    impulseMode := 0
+    impulseStartedBar := na
+else if impulseMode == 1 and not na(impulseStartedBar) and bar_index - impulseStartedBar >= impulseBarsHold and bullExhaustion
+    impulseMode := 0
+    impulseStartedBar := na
 
 var float[] rawPrice = array.new<float>()
 var bool[] rawIsHigh = array.new<bool>()
@@ -156,7 +191,8 @@ if array.size(rawPrice) > 0
             rs = array.get(rawSource, i)
             rb = array.get(rawBar, i)
             moveSize = rawMove(rp, rh)
-            if moveSize >= minMoveUsd
+            counterTrendBlocked = (impulseMode == -1 and not rh) or (impulseMode == 1 and rh)
+            if moveSize >= minMoveUsd and not counterTrendBlocked
                 wasAdded = addCandidate(rp, rh, rs, rb)
                 array.set(rawActive, i, false)
                 if wasAdded
@@ -166,6 +202,14 @@ if array.size(rawPrice) > 0
                     if showCandidateLabels
                         candidateText = (rh ? "Candidate High" : "Candidate Low") + " · " + sourceShort(rs) + " · +" + str.tostring(math.round(moveSize))
                         labelAt(rb, rp, candidateText, rh, color.new(levelColor(rh, true), 0))
+            else if moveSize >= minMoveUsd and counterTrendBlocked
+                array.set(rawActive, i, false)
+                lastStatus := impulseMode == -1 ? "Raw Low blocked by bearish impulse" : "Raw High blocked by bullish impulse"
+                lastSource := sourceShort(rs)
+                lastPrice := rp
+                if showBrokenLabels
+                    blockY = rh ? rp + sweepLabelOffsetUsd : rp - sweepLabelOffsetUsd
+                    labelAt(rb, blockY, impulseMode == -1 ? "BLOCKED Low by impulse" : "BLOCKED High by impulse", rh, color.rgb(120, 90, 180))
 
 dHigh = useDwmBodyReference ? request.security(syminfo.tickerid, "D", math.max(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off) : na
 dLow = useDwmBodyReference ? request.security(syminfo.tickerid, "D", math.min(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off) : na
@@ -194,14 +238,17 @@ if array.size(candPrice) > 0
             pending = array.get(candPendingSweep, i)
             pendingBar = array.get(candPendingBar, i)
             nextBarSfp = pending and bar_index - pendingBar <= maxImmediateReclaimBars and (ch ? close < cp : close > cp)
-            if sweptNoReclaim and not sameBarSfp
+            candidateInvalidatedByImpulse = (impulseMode == -1 and not ch and cleanBreak) or (impulseMode == 1 and ch and cleanBreak)
+            if sweptNoReclaim and not sameBarSfp and not candidateInvalidatedByImpulse
                 array.set(candPendingSweep, i, true)
                 array.set(candPendingBar, i, bar_index)
                 lastStatus := ch ? "Swept Candidate High" : "Swept Candidate Low"
                 lastSource := sourceShort(cs)
                 lastPrice := cp
                 if showSweepLabels
-                    labelAt(bar_index, cp, ch ? "Swept Candidate High" : "Swept Candidate Low", ch, color.new(color.gray, 25))
+                    sweepY = ch ? cp + sweepLabelOffsetUsd : cp - sweepLabelOffsetUsd
+                    sweepText = ch ? "SWEEP High" : "SWEEP Low"
+                    labelAt(bar_index, sweepY, sweepText, ch, color.rgb(80, 140, 255))
             if sameBarSfp or nextBarSfp
                 lastStatus := ch ? "SFP High confirmed" : "SFP Low confirmed"
                 lastSource := sourceShort(cs)
@@ -211,12 +258,21 @@ if array.size(candPrice) > 0
                     sfpText = (ch ? "SFP High confirmed" : "SFP Low confirmed") + " · " + sourceShort(cs) + " · " + str.tostring(cp, format.mintick)
                     labelAt(bar_index, cp, sfpText, ch, color.new(levelColor(ch, true), 0))
                 retireCandidate(i)
+            else if candidateInvalidatedByImpulse
+                lastStatus := ch ? "Candidate High invalidated by bullish impulse" : "Candidate Low invalidated by bearish impulse"
+                lastSource := sourceShort(cs)
+                lastPrice := cp
+                if showBrokenLabels
+                    invalidY = ch ? cp + sweepLabelOffsetUsd : cp - sweepLabelOffsetUsd
+                    labelAt(bar_index, invalidY, ch ? "INVALIDATED High by impulse" : "INVALIDATED Low by impulse", ch, color.rgb(120, 90, 180))
+                retireCandidate(i)
             else if cleanBreak and not sameBarSfp and not nextBarSfp
                 lastStatus := ch ? "Candidate High broken" : "Candidate Low broken"
                 lastSource := sourceShort(cs)
                 lastPrice := cp
                 if showBrokenLabels
-                    labelAt(bar_index, cp, ch ? "Candidate High broken" : "Candidate Low broken", ch, color.new(color.red, 35))
+                    brokenY = ch ? cp + sweepLabelOffsetUsd : cp - sweepLabelOffsetUsd
+                    labelAt(bar_index, brokenY, ch ? "BROKEN High" : "BROKEN Low", ch, color.rgb(170, 70, 70))
                 retireCandidate(i)
             else if pending and bar_index - pendingBar > maxImmediateReclaimBars
                 array.set(candPendingSweep, i, false)
@@ -234,18 +290,22 @@ if array.size(candPrice) > 0
                 nearestDist := dist
                 nearest := (ch ? "Candidate High " : "Candidate Low ") + str.tostring(cp, format.mintick) + " · " + sourceShort(array.get(candSource, i))
 
-var table dash = table.new(position.top_right, 2, 5, border_width=1)
+impulseText = impulseMode == -1 ? "Bearish impulse" : impulseMode == 1 ? "Bullish impulse" : "Normal"
+
+var table dash = table.new(position.top_right, 2, 6, border_width=1)
 if showDashboard and barstate.islast
-    table.clear(dash, 0, 0, 1, 4)
+    table.clear(dash, 0, 0, 1, 5)
     table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.new(color.black, 0))
-    table.cell(dash, 1, 0, "Candidate Debug v0.3", text_color=color.white, bgcolor=color.new(color.black, 0))
-    table.cell(dash, 0, 1, "Nearest Candidate", text_color=color.white)
-    table.cell(dash, 1, 1, nearest, text_color=color.white)
-    table.cell(dash, 0, 2, "Last status", text_color=color.white)
-    table.cell(dash, 1, 2, lastStatus, text_color=color.white)
-    table.cell(dash, 0, 3, "Source", text_color=color.white)
-    table.cell(dash, 1, 3, lastSource, text_color=color.white)
-    table.cell(dash, 0, 4, "Price", text_color=color.white)
-    table.cell(dash, 1, 4, na(lastPrice) ? "" : str.tostring(lastPrice, format.mintick), text_color=color.white)
+    table.cell(dash, 1, 0, "Candidate Debug v0.4", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 0, 1, "Impulse mode", text_color=color.white)
+    table.cell(dash, 1, 1, impulseText, text_color=color.white)
+    table.cell(dash, 0, 2, "Nearest Candidate", text_color=color.white)
+    table.cell(dash, 1, 2, nearest, text_color=color.white)
+    table.cell(dash, 0, 3, "Last status", text_color=color.white)
+    table.cell(dash, 1, 3, lastStatus, text_color=color.white)
+    table.cell(dash, 0, 4, "Source", text_color=color.white)
+    table.cell(dash, 1, 4, lastSource, text_color=color.white)
+    table.cell(dash, 0, 5, "Price", text_color=color.white)
+    table.cell(dash, 1, 5, na(lastPrice) ? "" : str.tostring(lastPrice, format.mintick), text_color=color.white)
 
 alertcondition(sfpEventThisBar, title="SFP confirmed from Candidate", message="SFP confirmed from Candidate SFP Level on {{ticker}} {{interval}}.")
