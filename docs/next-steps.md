@@ -1,77 +1,93 @@
 # Next Steps
 
-Version: **0.3.8**
+Version: **0.4.0**
 
 This project should be tested slowly and visually before any automation or trade-plan logic is considered.
 
-## 1. Test only structure and levels
+## 1. Test the multi-timeframe level model
 
-Add the Pine Script indicator to a BTC chart in TradingView. Use BTC 15m first because the v0.3.8 defaults are tuned for that visual review.
+Open BTC on a 15m chart, but evaluate whether the indicator is pulling the important levels from higher timeframes:
 
-Do **not** evaluate entries, stops, TP0, TP1, TP2, TP3, runners, add-ons, reversals, or countertrend scalp logic in this version. They are intentionally absent.
+- 4H Swing High / 4H Swing Low
+- 8H Swing High / 8H Swing Low
+- 12H Swing High / 12H Swing Low
+- 1D Swing High / 1D Swing Low
+- Optional 1H Swing High / 1H Swing Low as medium structure
 
-## 2. Validate the v0.3.8 visual layers
+15m should be treated as the reaction layer, not the primary source of important levels.
 
-Review these layers manually:
+## 2. Validate active vs past behavior
 
-1. Fresh Swing High / Swing Low levels.
-2. Validated/frozen Structure High / Structure Low levels.
-3. Daily / Weekly / Monthly body-aligned levels.
-4. Optional ordinary D/W/M wick high/low context levels.
-5. Lower High / Higher Low / Retest / Structure reaction / Possible continuation labels.
-6. Bear SFP candidate / Bull SFP candidate labels.
-7. Compact dashboard status.
+Review whether active levels:
 
-## 3. Structure checklist
+- extend right while untouched;
+- stop extending after price touches, sweeps, trades through, or displaces through them;
+- become muted Past Swing High / Past Swing Low visual context;
+- stop acting as fresh reaction levels after consumption.
 
-Ask these questions while reviewing historical and live candles:
+Strong displacement candles or sequences should consume crossed levels quickly, especially old 15m/LTF minor swings.
 
-- Did the indicator avoid marking every tiny candle as a swing?
-- Did fresh swing levels extend right until touched?
-- Were consumed levels hidden by default?
-- If `showConsumedLevels` is enabled, were consumed levels very muted?
-- Did local structure require at least two touches/reactions, repeated body levels, a consolidation boundary, or a confirmed swing?
-- Did the script avoid creating a new Structure High / Structure Low on every candle?
-- Once a structure level appeared, did it freeze and extend right instead of moving every candle?
-- Was a Bear/Bull SFP shown only as a candidate label, never as a trade plan?
-- Did the SFP candidate level already exist before the sweep/reclaim candle?
-- Did the dashboard remain compact and avoid covering the chart?
+## 3. Validate swing scale classification
 
-## 4. Defaults to verify
+Check whether swings are classified sensibly:
 
-These settings should be off by default to reduce clutter:
+- HTF 4H / 8H / 12H / 1D levels should usually be more important than 15m levels.
+- 1H levels should behave as medium intraday structure.
+- 15m swings inside overlap/chop should usually be Minor Swing or Micro Swing.
+- Micro swings should be hidden by default with `showMicroSwings = false`.
 
-- `showEntryDiagnostics = false`
-- `historicalVisualTestMode = false`
-- `showStructureCandidates = false`
-- `showConsumedLevels = false`
+## 4. Validate 15m reactions around HTF levels
+
+A 15m reaction should be meaningful only near:
+
+- an HTF swing level;
+- a D/W/M body-aligned level;
+- a major structure level.
+
+Expected reaction labels include:
+
+- `Rejection at HTF level`
+- `SFP candidate at HTF level`
+- `Retest`
+- `Reclaim at HTF level`
+- `Minor reaction / ignore`
+- `Micro Chop`
+
+A 15m SFP-like move in the middle of nowhere should be ignored or classified as minor context, not promoted to an active scenario.
+
+## 5. Validate MTF context
+
+Use the compact dashboard to check:
+
+- Version
+- Market Mode
+- EMA Bias
+- HTF Context
+- Active Scenario
+- Nearest HTF Level
+- Last Structure Event
+
+Use Full dashboard mode only when debugging nearest 4H/8H/12H/1D levels, current 15m reaction, swing scale, and impulse/chop context.
+
+## 6. Keep visual clarity
+
+Default clutter controls should remain:
+
+- `showHTFLevels = true`
+- `showLTFSwings = true`
+- `showMicroSwings = false`
+- `showPastSwingLevels = true`
+- `showReactionLabels = true`
+- `showDebugLabels = false`
 - `showOrdinaryDwmHighLowLevels = false`
+- `dashboardMode = Compact`
 
-The default dashboard mode should be `Compact`.
+Important labels should be few and readable. The indicator should not cover the chart.
 
-## 5. Settings to tune
+## 7. Keep automation out
 
-After basic visual validation, experiment with:
+No live trading, exchange connection, API keys, webhook automation, server code, real bot execution, strategy orders, Entry / SL / TP0, TP1 / TP2 / TP3, runner logic, add-ons, re-entry, reversal engine, countertrend scalp mode, FVG, Volume Profile, CVD, AVWAP, Fibonacci, or Moon cycle module should be added in v0.4.0.
 
-- `swingLength`
-- `minSwingProminenceAtr`
-- `minStructureBars`
-- `minStructureTouches`
-- `structureToleranceUsd`
-- `structureLookback`
-- `consolidationLookback`
-- `consolidationMaxAtrRange`
-- `levelCooldownBars`
-- `showConsumedLevels`
-- `showStructureCandidates`
-- `dashboardMode`
+## 8. Future work
 
-The first goal is alignment with human-marked levels, not signal generation.
-
-## 6. Keep automation out
-
-No live trading, exchange connection, API keys, webhook automation, server code, real bot execution, or strategy orders should be added in v0.3.8.
-
-## 7. Future work
-
-Only after the structure visualizer is trusted should future versions revisit trade qualification, TP0, TP1/TP2/TP3, runners, add-ons, reversals, countertrend scalp mode, FVG, Volume Profile, CVD, AVWAP, Fibonacci, Moon cycle, or any paper-trading/testnet work.
+Only after the MTF visual context is trusted should future versions revisit trade qualification, paper trading, testnet work, or advanced context modules.

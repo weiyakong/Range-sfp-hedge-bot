@@ -1,52 +1,76 @@
 # Range SFP Hedge Bot
 
-Version: **0.3.8**
+Version: **0.4.0**
 
-Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.3.8 intentionally stops trying to generate trade entries and focuses only on validating whether the indicator sees the same structure, swing, and higher-timeframe body levels that a human chart reader sees.
+Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.4.0 keeps the project visual-only and shifts important level discovery away from 15m swings toward multi-timeframe structure.
 
-## What this project does in v0.3.8
+## Main purpose of v0.4.0
 
-Version 0.3.8 is a clean **structure-and-level visualizer**:
+Version 0.4.0 is for validating whether the indicator sees meaningful higher-timeframe levels and classifies 15m reactions around those levels.
 
-- Draws meaningful fresh Swing High / Swing Low levels and extends them right until touched.
-- Hides consumed levels by default, with optional muted consumed-level display through `showConsumedLevels`.
-- Validates and freezes local Structure High / Structure Low levels instead of treating every rolling high/low as structure.
-- Requires structure validation through repeated touches/reactions, repeated body levels, consolidation tops/bottoms, or confirmed swings.
-- Keeps Daily / Weekly / Monthly body-aligned levels because they are important context:
-  - Daily body levels: lime / light green.
-  - Weekly body levels: orange.
-  - Monthly body levels: white by default and configurable.
-- Keeps ordinary D/W/M wick high/low levels optional and context-only, disabled by default with `showOrdinaryDwmHighLowLevels = false`.
-- Shows context labels only, such as `Lower High`, `Higher Low`, `Retest`, `Structure reaction`, and `Possible continuation`.
-- Shows `Bear SFP candidate` and `Bull SFP candidate` labels only when an already-existing fresh level is swept and reclaimed.
-- Uses a compact dashboard by default with Version, Market Mode, EMA Bias, Active scenario, Nearest fresh level, and Last structure event.
+Core idea:
 
-## What v0.3.8 deliberately does not do
+- **HTF levels** are the important reaction levels.
+- **15m/LTF price action** is the reaction, rejection, reclaim, retest, and context layer.
+- 15m micro swings are not primary important levels by default.
 
-Version 0.3.8 does **not** generate trade plans.
+## What the indicator shows
+
+- Higher-timeframe swing levels from 4H, 8H, 12H, and 1D.
+- Optional 1H medium timeframe structure.
+- Active vs Past swing state:
+  - Active levels extend right until touched, swept, traded through, or displaced through.
+  - Past levels stop extending and are muted.
+- Swing scale labels/classes: `Major Swing`, `Medium Swing`, `Minor Swing`, and `Micro Swing`.
+- LTF swings as separate `LTF Swing High`, `LTF Swing Low`, or muted `Micro Swing` context.
+- Daily / Weekly / Monthly body-aligned context levels:
+  - Daily: lime / light green.
+  - Weekly: orange.
+  - Monthly: white by default and configurable.
+- Optional ordinary D/W/M high/low context levels, disabled by default.
+- 15m reaction labels only when meaningful:
+  - `Rejection at HTF level`
+  - `SFP candidate at HTF level`
+  - `Retest`
+  - `Reclaim at HTF level`
+  - `Minor reaction / ignore`
+  - `Micro Chop`
+- Multi-timeframe context labels/dashboard values:
+  - `15m impulse only / local move`
+  - `1H impulse / relevant intraday move`
+  - `4H displacement / major move`
+  - `Inside HTF range`
+  - `Near HTF swing level`
+  - `Mid-range / no important level nearby`
+- Basic impulse/chop context such as `Bullish impulse`, `Bearish impulse`, `Post-impulse micro chop`, and `Post-impulse correction watch`.
+
+## What v0.4.0 deliberately does not do
+
+This version does **not** try to trade.
 
 - It does **not** draw Entry.
 - It does **not** draw SL.
 - It does **not** draw TP0.
-- It does **not** classify setups as `Valid Setup`.
-- It does **not** show `Missed / Too Late`.
-- It does **not** use `Countertrend / No Trade` as a trade decision.
-- It does **not** create trade plans from SFP candidates.
+- It does **not** add TP1 / TP2 / TP3.
+- It does **not** add runner logic.
+- It does **not** add add-ons.
+- It does **not** add re-entry logic.
+- It does **not** add reversal logic.
+- It does **not** add countertrend scalp mode.
+- It does **not** add FVG, Volume Profile, CVD, AVWAP, Fibonacci, or Moon cycle modules.
 
-The goal is level validation first. Trade decisioning and execution logic should not be added until the visual structure model is trusted.
+## Default clutter controls
 
-## Structure model
+Defaults are intentionally conservative:
 
-A local structure level must be validated before it is drawn as a frozen level. Rolling highs/lows are only candidates and are hidden by default unless `showStructureCandidates` is enabled for debugging.
-
-Default BTC 15m testing settings:
-
-- `minStructureBars = 12`
-- `minStructureTouches = 2`
-- `structureToleranceUsd = 75`
-- `structureLookback = 24`
-
-Once a Structure High / Structure Low is frozen, it extends right until touched or consumed. A new SFP candidate cannot be created from a structure level on the same candle that created the structure level.
+- `dashboardMode = Compact`
+- `showHTFLevels = true`
+- `showLTFSwings = true`
+- `showMicroSwings = false`
+- `showPastSwingLevels = true`
+- `showReactionLabels = true`
+- `showDebugLabels = false`
+- `showOrdinaryDwmHighLowLevels = false`
 
 ## Visual-only scope
 
@@ -59,24 +83,6 @@ This version is intentionally visual-only.
 - It does **not** add webhook automation.
 - It does **not** add server code.
 - It does **not** provide financial advice.
-
-## Not included in this version
-
-Do not add these modules to v0.3.8:
-
-- Runner logic.
-- Add-ons.
-- Re-entry logic.
-- Reversal engine.
-- Countertrend scalp mode.
-- TP1 / TP2 / TP3.
-- FVG.
-- Volume Profile.
-- CVD.
-- AVWAP.
-- Fibonacci.
-- Moon cycle.
-- Live trading, webhooks, API keys, server code, or real bot execution.
 
 ## Risk warning
 
