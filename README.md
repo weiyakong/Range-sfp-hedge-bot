@@ -1,24 +1,29 @@
 # Range SFP Hedge Bot
 
-Version: **0.3.5**
+Version: **0.3.6**
 
-Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.3.5 provides a Pine Script v5 indicator for visually qualifying possible Swing Failure Pattern (SFP) setups around important BTC levels.
+Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.3.6 provides a Pine Script v5 indicator for visually qualifying possible Swing Failure Pattern (SFP) setups around important BTC levels.
 
 ## What this project does
 
-Version 0.3.5 is no longer meant to act like a noisy SFP label generator. It is a setup qualification tool:
+Version 0.3.6 is a setup qualification and level-lifecycle visualization tool:
 
 1. Context first.
 2. Decision zone second.
 3. SFP/rejection third.
-4. TP0 / reward-to-risk check fourth.
+4. Entry diagnostics and TP0 / reward-to-risk check fourth.
 
 The indicator helps visualize:
 
-- Previous daily, weekly, and monthly high/low levels as clean horizontal segments.
+- Previous daily, weekly, and monthly wick high/low levels as clean horizontal segments.
+- Previous daily, weekly, and monthly **body-aligned** high/low levels as dotted context levels.
+- Level lifecycle states: `Fresh`, `Touched`, and `Consumed`.
+- Fresh levels extending to the right until their first touch.
+- Consumed levels hidden by default, with an optional historical visual test mode that keeps muted consumed levels and lifecycle labels visible.
+- Live Structure High / Structure Low levels from prior bars, extended until touched.
 - Fresh swing highs and swing lows using pivot detection.
 - Market Mode: `Trend`, `Range`, `Chop`, or `Expansion`.
-- EMA bias, volatility state, setup status, active zone, and TP0 status in a dashboard.
+- EMA bias, volatility state, setup status, trigger source, trigger type, TP0 status, and entry diagnostics in a dashboard.
 - Strict `Chop / No Trade` filtering so SFPs inside compressed chop are suppressed.
 - `Ambiguous / No Trade` handling when both sides sweep and context is unclear.
 - `Countertrend / No Trade` handling in strong trends unless rejection and structure weakness/strength are present.
@@ -29,7 +34,18 @@ The indicator helps visualize:
 - Untapped D/W/M level tracking so previous daily/weekly/monthly levels are used only while fresh and are not repeatedly labeled after being consumed.
 - Structure High / Structure Low and Local High / Local Low trigger selection so current structure can be used instead of automatically preferring D/W/M levels.
 - Swing High / Swing Low trigger handling so SH/SL levels can produce valid SFP setups when they are the actual swept/reclaimed level.
+- Entry diagnostics that explain trigger side/source, distance from trigger, risk (`R`), delay, and the active blocker such as chop, expansion, countertrend, late entry, retest, or TP0 blocked.
 - Weakening-push / exhaustion clues shown as quality context only, without requiring them as a signal condition.
+
+## Level lifecycle model
+
+Version 0.3.6 tracks each major visual level through a simple lifecycle:
+
+- `Fresh`: the level is active, eligible for visual context, and extends right.
+- `Touched`: the first price interaction has occurred.
+- `Consumed`: the level is no longer fresh and should not create repeated primary SFP labels.
+
+By default, consumed levels are hidden to reduce chart noise. Enable **Historical visual test mode** to keep consumed lines muted and print lifecycle labels while reviewing older chart sections.
 
 ## TP0 terminology
 
@@ -41,9 +57,9 @@ TP1, TP2, TP3, and Runner logic are **not included yet**. They are planned futur
 
 ## SFP reclaim logic
 
-Version 0.3.5 does **not** require mandatory candle-close confirmation by default. The default logic is based on an intrabar sweep and reclaim/current price returning back beyond the level. In Pine Script, the realtime bar's `close` value represents the current price.
+Version 0.3.6 does **not** require mandatory candle-close confirmation by default. The default logic is based on an intrabar sweep and reclaim/current price returning back beyond the level. In Pine Script, the realtime bar's `close` value represents the current price.
 
-A conservative candle-close confirmation option exists in the indicator settings, but it is not the default. Version 0.3.5 also anchors planned entry at or just beyond the actual swept/reclaimed trigger level on the current event bar, including Structure High/Low, Local High/Low, Swing High/Low, consolidation triggers, and optionally untapped D/W/M triggers when enabled. Old sweeps and later retests do not create new Entry / SL / TP0 plans.
+A conservative candle-close confirmation option exists in the indicator settings, but it is not the default. Version 0.3.6 also anchors planned entry at or just beyond the actual swept/reclaimed trigger level on the current event bar, including live Structure High/Low, Local High/Low, Swing High/Low, consolidation triggers, and optionally untapped D/W/M wick/body triggers when enabled. Old sweeps and later retests do not create new Entry / SL / TP0 plans.
 
 ## What this project does not do
 
@@ -72,7 +88,7 @@ Future versions may explore additional analysis modules after visual testing:
 - Paper trading tools after validation.
 - Exchange testnet experiments only after validation.
 
-Real exchange execution is not part of version 0.3.5.
+Real exchange execution is not part of version 0.3.6.
 
 ## Risk warning
 

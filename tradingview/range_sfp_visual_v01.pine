@@ -1,14 +1,14 @@
 //@version=5
-indicator("Range SFP Visual v0.3.5", overlay=true, max_labels_count=250, max_lines_count=500)
+indicator("Range SFP Visual v0.3.6", overlay=true, max_labels_count=350, max_lines_count=500)
 
 // -----------------------------------------------------------------------------
-// Range SFP Visual v0.3.5
+// Range SFP Visual v0.3.6
 // Visual-only TradingView indicator. No strategy orders, exchange connections,
 // API keys, live trading, webhook automation, server code, or bot execution.
 //
-// v0.3.5 makes D/W/M context-only by default and prioritizes current structure triggers:
-// 1) context first, 2) decision zone second, 3) SFP/rejection third,
-// 4) TP0 / 2R room check fourth, using current-bar sweep/reclaim events only.
+// v0.3.6 adds level lifecycle states, live structure levels, body-aligned
+// D/W/M context, right-extended fresh levels, historical visual testing, and
+// entry diagnostics while preserving current-bar sweep/reclaim qualification.
 // -----------------------------------------------------------------------------
 
 // === Display settings ===
@@ -27,6 +27,11 @@ showConsolidationZones = input.bool(true, "Show consolidation zones")
 showOnlyLatestSetup = input.bool(true, "Show only latest Entry / SL / TP0 plan")
 maxVisibleSetupLabels = input.int(5, "Max visible setup labels", minval=1, maxval=50)
 useDwmAsPrimaryTriggers = input.bool(false, "Use D/W/M as primary triggers", tooltip="Default is false: D/W/M levels are background context only. If true, only fresh untapped D/W/M levels may create one primary SFP before being consumed.")
+showBodyAlignedDwmLevels = input.bool(true, "Show D/W/M body-aligned levels", tooltip="Plots previous-period body highs/lows from daily, weekly, and monthly candles as additional context levels.")
+showLiveStructureLevels = input.bool(true, "Show live structure levels", tooltip="Plots rolling Structure High/Low levels from previous bars and extends them until touched.")
+hideConsumedLevels = input.bool(true, "Hide consumed levels by default", tooltip="Fresh levels extend right until first touch. When enabled, touched/consumed levels are hidden unless historical visual test mode is on.")
+historicalVisualTestMode = input.bool(false, "Historical visual test mode", tooltip="Keeps consumed levels visible in muted colors and prints compact lifecycle / diagnostic labels for visual backtesting.")
+showEntryDiagnostics = input.bool(true, "Show entry diagnostics", tooltip="Shows dashboard and optional labels explaining trigger distance, delay, R, and blocking reason.")
 
 // === Core settings ===
 swingLength = input.int(5, "Swing pivot length", minval=1)
@@ -119,94 +124,194 @@ volatilityText = largeCandle ? "Large candle" : volatilityExpansion ? "Expansion
 // Bull/Bear SFP, Retest, and Re-sweep labels and shows only Chop / No Trade.
 strictChopNoTrade = marketMode == "Chop"
 
+// === Level lifecycle helpers ===
+LEVEL_FRESH = "Fresh"
+LEVEL_TOUCHED = "Touched"
+LEVEL_CONSUMED = "Consumed"
+
+consumedLineVisible() =>
+    historicalVisualTestMode or not hideConsumedLevels
+
+levelColor(baseColor, state) =>
+    state == LEVEL_FRESH ? color.new(baseColor, 0) : state == LEVEL_TOUCHED ? color.new(baseColor, 50) : color.new(baseColor, 82)
+
+finishLifecycleLine(levelLine, touchedBar, baseColor) =>
+    if not na(levelLine)
+        line.set_x2(levelLine, touchedBar)
+        line.set_color(levelLine, levelColor(baseColor, LEVEL_CONSUMED))
+        if hideConsumedLevels and not historicalVisualTestMode
+            line.delete(levelLine)
+
+historicalLifecycleLabel(levelPrice, labelText, labelColor, isHighSide) =>
+    if historicalVisualTestMode and not na(levelPrice)
+        label.new(bar_index, levelPrice, labelText, style=isHighSide ? label.style_label_down : label.style_label_up, color=color.new(labelColor, 15), textcolor=color.white, size=size.tiny)
+
 // === Previous higher-timeframe levels ===
 // D/W/M mean previous Daily, Weekly, and Monthly highs/lows. They are decision
-// levels only; v0.3.5 treats them as context by default and uses them as triggers only while untapped when enabled and still requires context, rejection, early entry proximity, and TP0 room.
+// levels only; v0.3.6 treats them as context by default and uses them as triggers only while untapped when enabled and still requires context, rejection, early entry proximity, and TP0 room.
 previousDailyHigh = request.security(syminfo.tickerid, "D", high[1], barmerge.gaps_off, barmerge.lookahead_off)
 previousDailyLow = request.security(syminfo.tickerid, "D", low[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousDailyBodyHigh = request.security(syminfo.tickerid, "D", math.max(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+previousDailyBodyLow = request.security(syminfo.tickerid, "D", math.min(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
 previousWeeklyHigh = request.security(syminfo.tickerid, "W", high[1], barmerge.gaps_off, barmerge.lookahead_off)
 previousWeeklyLow = request.security(syminfo.tickerid, "W", low[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousWeeklyBodyHigh = request.security(syminfo.tickerid, "W", math.max(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+previousWeeklyBodyLow = request.security(syminfo.tickerid, "W", math.min(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
 previousMonthlyHigh = request.security(syminfo.tickerid, "M", high[1], barmerge.gaps_off, barmerge.lookahead_off)
 previousMonthlyLow = request.security(syminfo.tickerid, "M", low[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousMonthlyBodyHigh = request.security(syminfo.tickerid, "M", math.max(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+previousMonthlyBodyLow = request.security(syminfo.tickerid, "M", math.min(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
 
 // Clean horizontal segments avoid vertical artifacts when higher-timeframe levels update.
-// D/W/M levels are previous-period levels only. Each one is valid only while
-// untapped; once price reaches it, it is consumed and no longer creates a fresh
-// D/W/M primary SFP. Later behavior is treated as retest/re-sweep context.
+// Every level has a lifecycle: Fresh while extending right, Touched on the first
+// interaction, and Consumed after the first touch/sweep. Consumed lines are hidden
+// by default and retained only when requested or when historical visual test mode is on.
 var float activeDailyHigh = na
 var float activeDailyLow = na
+var float activeDailyBodyHigh = na
+var float activeDailyBodyLow = na
 var float activeWeeklyHigh = na
 var float activeWeeklyLow = na
+var float activeWeeklyBodyHigh = na
+var float activeWeeklyBodyLow = na
 var float activeMonthlyHigh = na
 var float activeMonthlyLow = na
-var bool dailyHighConsumed = true
-var bool dailyLowConsumed = true
-var bool weeklyHighConsumed = true
-var bool weeklyLowConsumed = true
-var bool monthlyHighConsumed = true
-var bool monthlyLowConsumed = true
+var float activeMonthlyBodyHigh = na
+var float activeMonthlyBodyLow = na
+var string dailyHighState = LEVEL_CONSUMED
+var string dailyLowState = LEVEL_CONSUMED
+var string dailyBodyHighState = LEVEL_CONSUMED
+var string dailyBodyLowState = LEVEL_CONSUMED
+var string weeklyHighState = LEVEL_CONSUMED
+var string weeklyLowState = LEVEL_CONSUMED
+var string weeklyBodyHighState = LEVEL_CONSUMED
+var string weeklyBodyLowState = LEVEL_CONSUMED
+var string monthlyHighState = LEVEL_CONSUMED
+var string monthlyLowState = LEVEL_CONSUMED
+var string monthlyBodyHighState = LEVEL_CONSUMED
+var string monthlyBodyLowState = LEVEL_CONSUMED
 var line dailyHighLine = na
 var line dailyLowLine = na
+var line dailyBodyHighLine = na
+var line dailyBodyLowLine = na
 var line weeklyHighLine = na
 var line weeklyLowLine = na
+var line weeklyBodyHighLine = na
+var line weeklyBodyLowLine = na
 var line monthlyHighLine = na
 var line monthlyLowLine = na
+var line monthlyBodyHighLine = na
+var line monthlyBodyLowLine = na
 
 if not na(previousDailyHigh) and (na(activeDailyHigh) or previousDailyHigh != activeDailyHigh)
     activeDailyHigh := previousDailyHigh
-    dailyHighConsumed := false
+    dailyHighState := LEVEL_FRESH
     if showDailyLevels
-        dailyHighLine := line.new(bar_index, activeDailyHigh, bar_index + 1, activeDailyHigh, color=color.new(color.orange, 0), width=1)
+        dailyHighLine := line.new(bar_index, activeDailyHigh, bar_index + 1, activeDailyHigh, color=levelColor(color.orange, dailyHighState), width=1)
 
 if not na(previousDailyLow) and (na(activeDailyLow) or previousDailyLow != activeDailyLow)
     activeDailyLow := previousDailyLow
-    dailyLowConsumed := false
+    dailyLowState := LEVEL_FRESH
     if showDailyLevels
-        dailyLowLine := line.new(bar_index, activeDailyLow, bar_index + 1, activeDailyLow, color=color.new(color.orange, 0), width=1)
+        dailyLowLine := line.new(bar_index, activeDailyLow, bar_index + 1, activeDailyLow, color=levelColor(color.orange, dailyLowState), width=1)
+
+if not na(previousDailyBodyHigh) and (na(activeDailyBodyHigh) or previousDailyBodyHigh != activeDailyBodyHigh)
+    activeDailyBodyHigh := previousDailyBodyHigh
+    dailyBodyHighState := LEVEL_FRESH
+    if showDailyLevels and showBodyAlignedDwmLevels
+        dailyBodyHighLine := line.new(bar_index, activeDailyBodyHigh, bar_index + 1, activeDailyBodyHigh, color=color.new(color.orange, 35), width=1, style=line.style_dotted)
+
+if not na(previousDailyBodyLow) and (na(activeDailyBodyLow) or previousDailyBodyLow != activeDailyBodyLow)
+    activeDailyBodyLow := previousDailyBodyLow
+    dailyBodyLowState := LEVEL_FRESH
+    if showDailyLevels and showBodyAlignedDwmLevels
+        dailyBodyLowLine := line.new(bar_index, activeDailyBodyLow, bar_index + 1, activeDailyBodyLow, color=color.new(color.orange, 35), width=1, style=line.style_dotted)
 
 if not na(previousWeeklyHigh) and (na(activeWeeklyHigh) or previousWeeklyHigh != activeWeeklyHigh)
     activeWeeklyHigh := previousWeeklyHigh
-    weeklyHighConsumed := false
+    weeklyHighState := LEVEL_FRESH
     if showWeeklyLevels
-        weeklyHighLine := line.new(bar_index, activeWeeklyHigh, bar_index + 1, activeWeeklyHigh, color=color.new(color.blue, 0), width=1)
+        weeklyHighLine := line.new(bar_index, activeWeeklyHigh, bar_index + 1, activeWeeklyHigh, color=levelColor(color.blue, weeklyHighState), width=1)
 
 if not na(previousWeeklyLow) and (na(activeWeeklyLow) or previousWeeklyLow != activeWeeklyLow)
     activeWeeklyLow := previousWeeklyLow
-    weeklyLowConsumed := false
+    weeklyLowState := LEVEL_FRESH
     if showWeeklyLevels
-        weeklyLowLine := line.new(bar_index, activeWeeklyLow, bar_index + 1, activeWeeklyLow, color=color.new(color.blue, 0), width=1)
+        weeklyLowLine := line.new(bar_index, activeWeeklyLow, bar_index + 1, activeWeeklyLow, color=levelColor(color.blue, weeklyLowState), width=1)
+
+if not na(previousWeeklyBodyHigh) and (na(activeWeeklyBodyHigh) or previousWeeklyBodyHigh != activeWeeklyBodyHigh)
+    activeWeeklyBodyHigh := previousWeeklyBodyHigh
+    weeklyBodyHighState := LEVEL_FRESH
+    if showWeeklyLevels and showBodyAlignedDwmLevels
+        weeklyBodyHighLine := line.new(bar_index, activeWeeklyBodyHigh, bar_index + 1, activeWeeklyBodyHigh, color=color.new(color.blue, 35), width=1, style=line.style_dotted)
+
+if not na(previousWeeklyBodyLow) and (na(activeWeeklyBodyLow) or previousWeeklyBodyLow != activeWeeklyBodyLow)
+    activeWeeklyBodyLow := previousWeeklyBodyLow
+    weeklyBodyLowState := LEVEL_FRESH
+    if showWeeklyLevels and showBodyAlignedDwmLevels
+        weeklyBodyLowLine := line.new(bar_index, activeWeeklyBodyLow, bar_index + 1, activeWeeklyBodyLow, color=color.new(color.blue, 35), width=1, style=line.style_dotted)
 
 if not na(previousMonthlyHigh) and (na(activeMonthlyHigh) or previousMonthlyHigh != activeMonthlyHigh)
     activeMonthlyHigh := previousMonthlyHigh
-    monthlyHighConsumed := false
+    monthlyHighState := LEVEL_FRESH
     if showMonthlyLevels
-        monthlyHighLine := line.new(bar_index, activeMonthlyHigh, bar_index + 1, activeMonthlyHigh, color=color.new(color.purple, 0), width=1)
+        monthlyHighLine := line.new(bar_index, activeMonthlyHigh, bar_index + 1, activeMonthlyHigh, color=levelColor(color.purple, monthlyHighState), width=1)
 
 if not na(previousMonthlyLow) and (na(activeMonthlyLow) or previousMonthlyLow != activeMonthlyLow)
     activeMonthlyLow := previousMonthlyLow
-    monthlyLowConsumed := false
+    monthlyLowState := LEVEL_FRESH
     if showMonthlyLevels
-        monthlyLowLine := line.new(bar_index, activeMonthlyLow, bar_index + 1, activeMonthlyLow, color=color.new(color.purple, 0), width=1)
+        monthlyLowLine := line.new(bar_index, activeMonthlyLow, bar_index + 1, activeMonthlyLow, color=levelColor(color.purple, monthlyLowState), width=1)
 
-dailyHighValid = showDailyLevels and not dailyHighConsumed and not na(activeDailyHigh)
-dailyLowValid = showDailyLevels and not dailyLowConsumed and not na(activeDailyLow)
-weeklyHighValid = showWeeklyLevels and not weeklyHighConsumed and not na(activeWeeklyHigh)
-weeklyLowValid = showWeeklyLevels and not weeklyLowConsumed and not na(activeWeeklyLow)
-monthlyHighValid = showMonthlyLevels and not monthlyHighConsumed and not na(activeMonthlyHigh)
-monthlyLowValid = showMonthlyLevels and not monthlyLowConsumed and not na(activeMonthlyLow)
+if not na(previousMonthlyBodyHigh) and (na(activeMonthlyBodyHigh) or previousMonthlyBodyHigh != activeMonthlyBodyHigh)
+    activeMonthlyBodyHigh := previousMonthlyBodyHigh
+    monthlyBodyHighState := LEVEL_FRESH
+    if showMonthlyLevels and showBodyAlignedDwmLevels
+        monthlyBodyHighLine := line.new(bar_index, activeMonthlyBodyHigh, bar_index + 1, activeMonthlyBodyHigh, color=color.new(color.purple, 35), width=1, style=line.style_dotted)
+
+if not na(previousMonthlyBodyLow) and (na(activeMonthlyBodyLow) or previousMonthlyBodyLow != activeMonthlyBodyLow)
+    activeMonthlyBodyLow := previousMonthlyBodyLow
+    monthlyBodyLowState := LEVEL_FRESH
+    if showMonthlyLevels and showBodyAlignedDwmLevels
+        monthlyBodyLowLine := line.new(bar_index, activeMonthlyBodyLow, bar_index + 1, activeMonthlyBodyLow, color=color.new(color.purple, 35), width=1, style=line.style_dotted)
+
+dailyHighValid = showDailyLevels and dailyHighState == LEVEL_FRESH and not na(activeDailyHigh)
+dailyLowValid = showDailyLevels and dailyLowState == LEVEL_FRESH and not na(activeDailyLow)
+dailyBodyHighValid = showDailyLevels and showBodyAlignedDwmLevels and dailyBodyHighState == LEVEL_FRESH and not na(activeDailyBodyHigh)
+dailyBodyLowValid = showDailyLevels and showBodyAlignedDwmLevels and dailyBodyLowState == LEVEL_FRESH and not na(activeDailyBodyLow)
+weeklyHighValid = showWeeklyLevels and weeklyHighState == LEVEL_FRESH and not na(activeWeeklyHigh)
+weeklyLowValid = showWeeklyLevels and weeklyLowState == LEVEL_FRESH and not na(activeWeeklyLow)
+weeklyBodyHighValid = showWeeklyLevels and showBodyAlignedDwmLevels and weeklyBodyHighState == LEVEL_FRESH and not na(activeWeeklyBodyHigh)
+weeklyBodyLowValid = showWeeklyLevels and showBodyAlignedDwmLevels and weeklyBodyLowState == LEVEL_FRESH and not na(activeWeeklyBodyLow)
+monthlyHighValid = showMonthlyLevels and monthlyHighState == LEVEL_FRESH and not na(activeMonthlyHigh)
+monthlyLowValid = showMonthlyLevels and monthlyLowState == LEVEL_FRESH and not na(activeMonthlyLow)
+monthlyBodyHighValid = showMonthlyLevels and showBodyAlignedDwmLevels and monthlyBodyHighState == LEVEL_FRESH and not na(activeMonthlyBodyHigh)
+monthlyBodyLowValid = showMonthlyLevels and showBodyAlignedDwmLevels and monthlyBodyLowState == LEVEL_FRESH and not na(activeMonthlyBodyLow)
 
 if dailyHighValid and not na(dailyHighLine)
     line.set_x2(dailyHighLine, bar_index + 1)
 if dailyLowValid and not na(dailyLowLine)
     line.set_x2(dailyLowLine, bar_index + 1)
+if dailyBodyHighValid and not na(dailyBodyHighLine)
+    line.set_x2(dailyBodyHighLine, bar_index + 1)
+if dailyBodyLowValid and not na(dailyBodyLowLine)
+    line.set_x2(dailyBodyLowLine, bar_index + 1)
 if weeklyHighValid and not na(weeklyHighLine)
     line.set_x2(weeklyHighLine, bar_index + 1)
 if weeklyLowValid and not na(weeklyLowLine)
     line.set_x2(weeklyLowLine, bar_index + 1)
+if weeklyBodyHighValid and not na(weeklyBodyHighLine)
+    line.set_x2(weeklyBodyHighLine, bar_index + 1)
+if weeklyBodyLowValid and not na(weeklyBodyLowLine)
+    line.set_x2(weeklyBodyLowLine, bar_index + 1)
 if monthlyHighValid and not na(monthlyHighLine)
     line.set_x2(monthlyHighLine, bar_index + 1)
 if monthlyLowValid and not na(monthlyLowLine)
     line.set_x2(monthlyLowLine, bar_index + 1)
+if monthlyBodyHighValid and not na(monthlyBodyHighLine)
+    line.set_x2(monthlyBodyHighLine, bar_index + 1)
+if monthlyBodyLowValid and not na(monthlyBodyLowLine)
+    line.set_x2(monthlyBodyLowLine, bar_index + 1)
 
 // === Swing high / swing low freshness ===
 // A local swing formed inside chop is ignored. This prevents micro-range pivots
@@ -258,7 +363,7 @@ plotshape(showSwingLevels and not na(pivotLow) and not strictChopNoTrade, title=
 // === Basic consolidation reaction zones ===
 // After impulse + sideways consolidation, the consolidation top/bottom can become
 // a decision zone. These zones are not automatic entries. They can later become
-// TP1/TP2/TP3 style targets in future versions, but v0.3.5 only checks TP0 room.
+// TP1/TP2/TP3 style targets in future versions, but v0.3.6 only checks TP0 room.
 consolidationRange = ta.highest(high, consolidationLookback) - ta.lowest(low, consolidationLookback)
 isConsolidating = not na(atrValue) and consolidationRange <= atrValue * consolidationMaxAtrRange
 bullishImpulseBeforeConsolidation = close[consolidationLookback] - close[consolidationLookback + impulseLookback] > atrValue * impulseAtrMultiplier
@@ -310,7 +415,7 @@ bullishSweepReclaim(level) =>
     not na(level) and low < level and close > level and confirmedOrLive
 
 // Local micro-structure can be the real SFP trigger when it sits near a larger
-// decision zone. v0.3.5 chooses current-bar swept/reclaimed structure/local
+// decision zone. v0.3.6 chooses current-bar swept/reclaimed structure/local
 // triggers first, instead of automatically preferring D/W/M levels.
 localLiquidityHigh = ta.highest(high[1], localTriggerLookback)
 localLiquidityLow = ta.lowest(low[1], localTriggerLookback)
@@ -318,18 +423,46 @@ structureHigh = math.max(ta.highest(high[1], structureLookback), ta.highest(clos
 structureLow = math.min(ta.lowest(low[1], structureLookback), ta.lowest(close[1], structureLookback))
 triggerPriorityTolerance = not na(atrValue) ? atrValue * 0.05 : 0.0
 
+// Live structure levels are rolling, previous-bar-only liquidity references. They
+// extend right while fresh and stop at the first touch. They are also the same
+// Structure High / Structure Low candidates used by SFP detection below.
+var float activeStructureHigh = na
+var float activeStructureLow = na
+var string structureHighState = LEVEL_CONSUMED
+var string structureLowState = LEVEL_CONSUMED
+var line structureHighLine = na
+var line structureLowLine = na
+
+if showLiveStructureLevels and not strictChopNoTrade and not na(structureHigh) and (na(activeStructureHigh) or structureHigh != activeStructureHigh)
+    activeStructureHigh := structureHigh
+    structureHighState := LEVEL_FRESH
+    structureHighLine := line.new(math.max(0, bar_index - structureLookback), activeStructureHigh, bar_index + 1, activeStructureHigh, color=color.new(color.red, 35), width=1, style=line.style_dashed)
+
+if showLiveStructureLevels and not strictChopNoTrade and not na(structureLow) and (na(activeStructureLow) or structureLow != activeStructureLow)
+    activeStructureLow := structureLow
+    structureLowState := LEVEL_FRESH
+    structureLowLine := line.new(math.max(0, bar_index - structureLookback), activeStructureLow, bar_index + 1, activeStructureLow, color=color.new(color.green, 35), width=1, style=line.style_dashed)
+
+structureHighFresh = not strictChopNoTrade and not na(activeStructureHigh) and structureHighState == LEVEL_FRESH
+structureLowFresh = not strictChopNoTrade and not na(activeStructureLow) and structureLowState == LEVEL_FRESH
+
+if showLiveStructureLevels and structureHighFresh and not na(structureHighLine)
+    line.set_x2(structureHighLine, bar_index + 1)
+if showLiveStructureLevels and structureLowFresh and not na(structureLowLine)
+    line.set_x2(structureLowLine, bar_index + 1)
+
 isNearBearDecisionZone(level) =>
-    not na(level) and not na(atrValue) and ((not na(activeDailyHigh) and math.abs(level - activeDailyHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(activeWeeklyHigh) and math.abs(level - activeWeeklyHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(activeMonthlyHigh) and math.abs(level - activeMonthlyHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(lastSwingHigh) and math.abs(level - lastSwingHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(shortZoneTop) and math.abs(level - shortZoneTop) <= atrValue * microTriggerNearZoneAtr))
+    not na(level) and not na(atrValue) and ((not na(activeDailyHigh) and math.abs(level - activeDailyHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(activeDailyBodyHigh) and math.abs(level - activeDailyBodyHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(activeWeeklyHigh) and math.abs(level - activeWeeklyHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(activeWeeklyBodyHigh) and math.abs(level - activeWeeklyBodyHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(activeMonthlyHigh) and math.abs(level - activeMonthlyHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(activeMonthlyBodyHigh) and math.abs(level - activeMonthlyBodyHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(lastSwingHigh) and math.abs(level - lastSwingHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(shortZoneTop) and math.abs(level - shortZoneTop) <= atrValue * microTriggerNearZoneAtr))
 
 isNearBullDecisionZone(level) =>
-    not na(level) and not na(atrValue) and ((not na(activeDailyLow) and math.abs(level - activeDailyLow) <= atrValue * microTriggerNearZoneAtr) or (not na(activeWeeklyLow) and math.abs(level - activeWeeklyLow) <= atrValue * microTriggerNearZoneAtr) or (not na(activeMonthlyLow) and math.abs(level - activeMonthlyLow) <= atrValue * microTriggerNearZoneAtr) or (not na(lastSwingLow) and math.abs(level - lastSwingLow) <= atrValue * microTriggerNearZoneAtr) or (not na(longZoneBottom) and math.abs(level - longZoneBottom) <= atrValue * microTriggerNearZoneAtr))
+    not na(level) and not na(atrValue) and ((not na(activeDailyLow) and math.abs(level - activeDailyLow) <= atrValue * microTriggerNearZoneAtr) or (not na(activeDailyBodyLow) and math.abs(level - activeDailyBodyLow) <= atrValue * microTriggerNearZoneAtr) or (not na(activeWeeklyLow) and math.abs(level - activeWeeklyLow) <= atrValue * microTriggerNearZoneAtr) or (not na(activeWeeklyBodyLow) and math.abs(level - activeWeeklyBodyLow) <= atrValue * microTriggerNearZoneAtr) or (not na(activeMonthlyLow) and math.abs(level - activeMonthlyLow) <= atrValue * microTriggerNearZoneAtr) or (not na(activeMonthlyBodyLow) and math.abs(level - activeMonthlyBodyLow) <= atrValue * microTriggerNearZoneAtr) or (not na(lastSwingLow) and math.abs(level - lastSwingLow) <= atrValue * microTriggerNearZoneAtr) or (not na(longZoneBottom) and math.abs(level - longZoneBottom) <= atrValue * microTriggerNearZoneAtr))
 
 getBearLevel() =>
     float level = na
     string name = ""
     string kind = "None"
-    if not strictChopNoTrade and bearishSweepReclaim(structureHigh)
-        level := structureHigh
+    if structureHighFresh and bearishSweepReclaim(activeStructureHigh)
+        level := activeStructureHigh
         name := "Structure High"
         kind := "Structure"
     if isNearBearDecisionZone(localLiquidityHigh) and not strictChopNoTrade and bearishSweepReclaim(localLiquidityHigh) and (na(level) or math.abs(localLiquidityHigh - close) + triggerPriorityTolerance < math.abs(level - close))
@@ -348,22 +481,34 @@ getBearLevel() =>
         level := activeDailyHigh
         name := "D High"
         kind := "D/W/M"
+    if na(level) and useDwmAsPrimaryTriggers and dailyBodyHighValid and bearishSweepReclaim(activeDailyBodyHigh)
+        level := activeDailyBodyHigh
+        name := "D Body High"
+        kind := "D/W/M Body"
     if na(level) and useDwmAsPrimaryTriggers and weeklyHighValid and bearishSweepReclaim(activeWeeklyHigh)
         level := activeWeeklyHigh
         name := "W High"
         kind := "D/W/M"
+    if na(level) and useDwmAsPrimaryTriggers and weeklyBodyHighValid and bearishSweepReclaim(activeWeeklyBodyHigh)
+        level := activeWeeklyBodyHigh
+        name := "W Body High"
+        kind := "D/W/M Body"
     if na(level) and useDwmAsPrimaryTriggers and monthlyHighValid and bearishSweepReclaim(activeMonthlyHigh)
         level := activeMonthlyHigh
         name := "M High"
         kind := "D/W/M"
+    if na(level) and useDwmAsPrimaryTriggers and monthlyBodyHighValid and bearishSweepReclaim(activeMonthlyBodyHigh)
+        level := activeMonthlyBodyHigh
+        name := "M Body High"
+        kind := "D/W/M Body"
     [level, name, kind]
 
 getBullLevel() =>
     float level = na
     string name = ""
     string kind = "None"
-    if not strictChopNoTrade and bullishSweepReclaim(structureLow)
-        level := structureLow
+    if structureLowFresh and bullishSweepReclaim(activeStructureLow)
+        level := activeStructureLow
         name := "Structure Low"
         kind := "Structure"
     if isNearBullDecisionZone(localLiquidityLow) and not strictChopNoTrade and bullishSweepReclaim(localLiquidityLow) and (na(level) or math.abs(localLiquidityLow - close) + triggerPriorityTolerance < math.abs(level - close))
@@ -382,14 +527,26 @@ getBullLevel() =>
         level := activeDailyLow
         name := "D Low"
         kind := "D/W/M"
+    if na(level) and useDwmAsPrimaryTriggers and dailyBodyLowValid and bullishSweepReclaim(activeDailyBodyLow)
+        level := activeDailyBodyLow
+        name := "D Body Low"
+        kind := "D/W/M Body"
     if na(level) and useDwmAsPrimaryTriggers and weeklyLowValid and bullishSweepReclaim(activeWeeklyLow)
         level := activeWeeklyLow
         name := "W Low"
         kind := "D/W/M"
+    if na(level) and useDwmAsPrimaryTriggers and weeklyBodyLowValid and bullishSweepReclaim(activeWeeklyBodyLow)
+        level := activeWeeklyBodyLow
+        name := "W Body Low"
+        kind := "D/W/M Body"
     if na(level) and useDwmAsPrimaryTriggers and monthlyLowValid and bullishSweepReclaim(activeMonthlyLow)
         level := activeMonthlyLow
         name := "M Low"
         kind := "D/W/M"
+    if na(level) and useDwmAsPrimaryTriggers and monthlyBodyLowValid and bullishSweepReclaim(activeMonthlyBodyLow)
+        level := activeMonthlyBodyLow
+        name := "M Body Low"
+        kind := "D/W/M Body"
     [level, name, kind]
 
 [bearLevelRaw, bearSourceRaw, bearKindRaw] = getBearLevel()
@@ -463,7 +620,7 @@ nearestAbove(currentNearest, candidate, entryPrice) =>
 nearestBelow(currentNearest, candidate, entryPrice) =>
     not na(candidate) and candidate < entryPrice ? (na(currentNearest) ? candidate : math.max(currentNearest, candidate)) : currentNearest
 
-// v0.3.5 is event-based: Entry is drawn only when the current bar itself sweeps
+// v0.3.6 is event-based: Entry is drawn only when the current bar itself sweeps
 // and reclaims the selected trigger level. Old sweeps and later retests never
 // create a new Entry / SL / TP0 plan.
 bullEntryDelayBars = resolvedBullishRaw ? 0 : na
@@ -480,8 +637,8 @@ bullEntryDistanceR = resolvedBullishRaw and bullRisk > syminfo.mintick ? math.ma
 bearEntryDistanceR = resolvedBearishRaw and bearRisk > syminfo.mintick ? math.max(0.0, bearEntry - close) / bearRisk : na
 bullEntryDistanceUsd = resolvedBullishRaw ? math.abs(close - bullLevel) : na
 bearEntryDistanceUsd = resolvedBearishRaw ? math.abs(close - bearLevel) : na
-bullLateByDistance = false
-bearLateByDistance = false
+bullLateByDistance = resolvedBullishRaw and ((not na(bullEntryDistanceR) and bullEntryDistanceR > maxEntryDistanceFromTriggerR) or (not na(bullEntryDistanceUsd) and bullEntryDistanceUsd > maxEntryDistanceFromTriggerUsd))
+bearLateByDistance = resolvedBearishRaw and ((not na(bearEntryDistanceR) and bearEntryDistanceR > maxEntryDistanceFromTriggerR) or (not na(bearEntryDistanceUsd) and bearEntryDistanceUsd > maxEntryDistanceFromTriggerUsd))
 bullLateByDelay = resolvedBullishRaw and not na(bullEntryDelayBars) and bullEntryDelayBars > maxEntryDelayBars
 bearLateByDelay = resolvedBearishRaw and not na(bearEntryDelayBars) and bearEntryDelayBars > maxEntryDelayBars
 bullLateEntry = bullLateByDistance or bullLateByDelay
@@ -491,15 +648,23 @@ bearMissedTooLate = bearLateByDelay
 
 float nearestBullReaction = na
 nearestBullReaction := dailyHighValid ? nearestAbove(nearestBullReaction, activeDailyHigh, bullEntry) : nearestBullReaction
+nearestBullReaction := dailyBodyHighValid ? nearestAbove(nearestBullReaction, activeDailyBodyHigh, bullEntry) : nearestBullReaction
 nearestBullReaction := weeklyHighValid ? nearestAbove(nearestBullReaction, activeWeeklyHigh, bullEntry) : nearestBullReaction
+nearestBullReaction := weeklyBodyHighValid ? nearestAbove(nearestBullReaction, activeWeeklyBodyHigh, bullEntry) : nearestBullReaction
 nearestBullReaction := monthlyHighValid ? nearestAbove(nearestBullReaction, activeMonthlyHigh, bullEntry) : nearestBullReaction
+nearestBullReaction := monthlyBodyHighValid ? nearestAbove(nearestBullReaction, activeMonthlyBodyHigh, bullEntry) : nearestBullReaction
+nearestBullReaction := structureHighFresh ? nearestAbove(nearestBullReaction, activeStructureHigh, bullEntry) : nearestBullReaction
 nearestBullReaction := nearestAbove(nearestBullReaction, lastSwingHigh, bullEntry)
 nearestBullReaction := nearestAbove(nearestBullReaction, shortZoneTop, bullEntry)
 
 float nearestBearReaction = na
 nearestBearReaction := dailyLowValid ? nearestBelow(nearestBearReaction, activeDailyLow, bearEntry) : nearestBearReaction
+nearestBearReaction := dailyBodyLowValid ? nearestBelow(nearestBearReaction, activeDailyBodyLow, bearEntry) : nearestBearReaction
 nearestBearReaction := weeklyLowValid ? nearestBelow(nearestBearReaction, activeWeeklyLow, bearEntry) : nearestBearReaction
+nearestBearReaction := weeklyBodyLowValid ? nearestBelow(nearestBearReaction, activeWeeklyBodyLow, bearEntry) : nearestBearReaction
 nearestBearReaction := monthlyLowValid ? nearestBelow(nearestBearReaction, activeMonthlyLow, bearEntry) : nearestBearReaction
+nearestBearReaction := monthlyBodyLowValid ? nearestBelow(nearestBearReaction, activeMonthlyBodyLow, bearEntry) : nearestBearReaction
+nearestBearReaction := structureLowFresh ? nearestBelow(nearestBearReaction, activeStructureLow, bearEntry) : nearestBearReaction
 nearestBearReaction := nearestBelow(nearestBearReaction, lastSwingLow, bearEntry)
 nearestBearReaction := nearestBelow(nearestBearReaction, longZoneBottom, bearEntry)
 
@@ -512,6 +677,14 @@ primaryBearishSfp = bearPlanValid and not ambiguousNoTrade and not bearCountertr
 primaryBullishSfp = bullPlanValid and not ambiguousNoTrade and not bullCountertrendBlocked and not largeCandle and not sameBullCluster
 retestBearishSfp = bearPlanValid and not ambiguousNoTrade and not bearCountertrendBlocked and not largeCandle and sameBearCluster
 retestBullishSfp = bullPlanValid and not ambiguousNoTrade and not bullCountertrendBlocked and not largeCandle and sameBullCluster
+
+activeDiagnosticSide = resolvedBearishRaw ? "Bear" : resolvedBullishRaw ? "Bull" : "None"
+activeDiagnosticSource = resolvedBearishRaw ? bearSource : resolvedBullishRaw ? bullSource : "None"
+activeDiagnosticDistance = resolvedBearishRaw ? bearEntryDistanceUsd : resolvedBullishRaw ? bullEntryDistanceUsd : na
+activeDiagnosticR = resolvedBearishRaw ? bearRisk : resolvedBullishRaw ? bullRisk : na
+activeDiagnosticDelay = resolvedBearishRaw ? bearEntryDelayBars : resolvedBullishRaw ? bullEntryDelayBars : na
+activeDiagnosticBlocker = strictChopNoTrade ? "Chop" : ambiguousNoTrade ? "Ambiguous" : largeCandle ? "Expansion" : bearCountertrendBlocked or bullCountertrendBlocked ? "Countertrend" : bearLateEntry or bullLateEntry ? "Late" : bearTp0Blocked or bullTp0Blocked ? "TP0 blocked" : sameBearCluster or sameBullCluster ? "Retest" : primaryBearishSfp or primaryBullishSfp ? "Clear" : "None"
+entryDiagnosticText = activeDiagnosticSide == "None" ? "No active SFP" : activeDiagnosticSide + " " + activeDiagnosticSource + " | dist " + str.tostring(activeDiagnosticDistance, format.mintick) + " | R " + str.tostring(activeDiagnosticR, format.mintick) + " | delay " + str.tostring(activeDiagnosticDelay) + " | " + activeDiagnosticBlocker
 
 // === Drawing helpers ===
 var label[] setupLabels = array.new<label>()
@@ -555,6 +728,10 @@ drawPlan(entryPrice, slPrice, tp0Price, planColor) =>
         array.push(activePlanLabels, entryLabel)
         array.push(activePlanLabels, slLabel)
         array.push(activePlanLabels, tp0Label)
+
+drawEntryDiagnostic(price, isHighSide, diagColor) =>
+    if showEntryDiagnostics and (historicalVisualTestMode or barstate.islast) and activeDiagnosticSide != "None"
+        rememberSetupLabel(label.new(bar_index, price, "Diag\n" + entryDiagnosticText, style=isHighSide ? label.style_label_down : label.style_label_up, color=color.new(diagColor, 10), textcolor=color.white, size=size.tiny))
 
 // === Final status and labels ===
 setupText = "None"
@@ -658,20 +835,68 @@ else if nearShortZone
     statusText := "Watch"
     tp0Text := "Need SFP"
 
+if showEntryDiagnostics and (resolvedBearishRaw or resolvedBullishRaw) and (historicalVisualTestMode or barstate.islast)
+    drawEntryDiagnostic(resolvedBearishRaw ? high : low, resolvedBearishRaw, resolvedBearishRaw ? color.red : color.green)
+
 // Mark D/W/M levels consumed after signal checks, so the first sweep/reclaim can
 // be evaluated once but later touches cannot create new D/W/M primary entries.
 if dailyHighValid and high >= activeDailyHigh
-    dailyHighConsumed := true
+    dailyHighState := LEVEL_CONSUMED
+    finishLifecycleLine(dailyHighLine, bar_index, color.orange)
+    historicalLifecycleLabel(activeDailyHigh, "D High\nConsumed", color.orange, true)
 if dailyLowValid and low <= activeDailyLow
-    dailyLowConsumed := true
+    dailyLowState := LEVEL_CONSUMED
+    finishLifecycleLine(dailyLowLine, bar_index, color.orange)
+    historicalLifecycleLabel(activeDailyLow, "D Low\nConsumed", color.orange, false)
+if dailyBodyHighValid and high >= activeDailyBodyHigh
+    dailyBodyHighState := LEVEL_CONSUMED
+    finishLifecycleLine(dailyBodyHighLine, bar_index, color.orange)
+    historicalLifecycleLabel(activeDailyBodyHigh, "D Body High\nConsumed", color.orange, true)
+if dailyBodyLowValid and low <= activeDailyBodyLow
+    dailyBodyLowState := LEVEL_CONSUMED
+    finishLifecycleLine(dailyBodyLowLine, bar_index, color.orange)
+    historicalLifecycleLabel(activeDailyBodyLow, "D Body Low\nConsumed", color.orange, false)
 if weeklyHighValid and high >= activeWeeklyHigh
-    weeklyHighConsumed := true
+    weeklyHighState := LEVEL_CONSUMED
+    finishLifecycleLine(weeklyHighLine, bar_index, color.blue)
+    historicalLifecycleLabel(activeWeeklyHigh, "W High\nConsumed", color.blue, true)
 if weeklyLowValid and low <= activeWeeklyLow
-    weeklyLowConsumed := true
+    weeklyLowState := LEVEL_CONSUMED
+    finishLifecycleLine(weeklyLowLine, bar_index, color.blue)
+    historicalLifecycleLabel(activeWeeklyLow, "W Low\nConsumed", color.blue, false)
+if weeklyBodyHighValid and high >= activeWeeklyBodyHigh
+    weeklyBodyHighState := LEVEL_CONSUMED
+    finishLifecycleLine(weeklyBodyHighLine, bar_index, color.blue)
+    historicalLifecycleLabel(activeWeeklyBodyHigh, "W Body High\nConsumed", color.blue, true)
+if weeklyBodyLowValid and low <= activeWeeklyBodyLow
+    weeklyBodyLowState := LEVEL_CONSUMED
+    finishLifecycleLine(weeklyBodyLowLine, bar_index, color.blue)
+    historicalLifecycleLabel(activeWeeklyBodyLow, "W Body Low\nConsumed", color.blue, false)
 if monthlyHighValid and high >= activeMonthlyHigh
-    monthlyHighConsumed := true
+    monthlyHighState := LEVEL_CONSUMED
+    finishLifecycleLine(monthlyHighLine, bar_index, color.purple)
+    historicalLifecycleLabel(activeMonthlyHigh, "M High\nConsumed", color.purple, true)
 if monthlyLowValid and low <= activeMonthlyLow
-    monthlyLowConsumed := true
+    monthlyLowState := LEVEL_CONSUMED
+    finishLifecycleLine(monthlyLowLine, bar_index, color.purple)
+    historicalLifecycleLabel(activeMonthlyLow, "M Low\nConsumed", color.purple, false)
+if monthlyBodyHighValid and high >= activeMonthlyBodyHigh
+    monthlyBodyHighState := LEVEL_CONSUMED
+    finishLifecycleLine(monthlyBodyHighLine, bar_index, color.purple)
+    historicalLifecycleLabel(activeMonthlyBodyHigh, "M Body High\nConsumed", color.purple, true)
+if monthlyBodyLowValid and low <= activeMonthlyBodyLow
+    monthlyBodyLowState := LEVEL_CONSUMED
+    finishLifecycleLine(monthlyBodyLowLine, bar_index, color.purple)
+    historicalLifecycleLabel(activeMonthlyBodyLow, "M Body Low\nConsumed", color.purple, false)
+
+if structureHighFresh and high >= activeStructureHigh
+    structureHighState := LEVEL_CONSUMED
+    finishLifecycleLine(structureHighLine, bar_index, color.red)
+    historicalLifecycleLabel(activeStructureHigh, "Structure High\nConsumed", color.red, true)
+if structureLowFresh and low <= activeStructureLow
+    structureLowState := LEVEL_CONSUMED
+    finishLifecycleLine(structureLowLine, bar_index, color.green)
+    historicalLifecycleLabel(activeStructureLow, "Structure Low\nConsumed", color.green, false)
 
 // Consume or invalidate swing levels after signal checks.
 if swingHighFresh and high >= lastSwingHigh
@@ -680,17 +905,21 @@ if swingHighFresh and high >= lastSwingHigh
 if swingLowFresh and low <= lastSwingLow
     swingLowTouches += 1
 
-if swingHighFresh and ((invalidateSwingOnCloseBeyondLevel and close > lastSwingHigh) or swingHighTouches > maxTouchesBeforeConsumed or swingHighAge > maxSwingLevelAgeBars or (consumeSwingAfterFirstSfp and bearishSweepReclaim(lastSwingHigh)))
+if swingHighFresh and (swingHighTouches > 0 or (invalidateSwingOnCloseBeyondLevel and close > lastSwingHigh) or swingHighTouches > maxTouchesBeforeConsumed or swingHighAge > maxSwingLevelAgeBars or (consumeSwingAfterFirstSfp and bearishSweepReclaim(lastSwingHigh)))
     swingHighConsumed := true
+    finishLifecycleLine(swingHighLine, bar_index, color.red)
+    historicalLifecycleLabel(lastSwingHigh, "Swing High\nConsumed", color.red, true)
 
-if swingLowFresh and ((invalidateSwingOnCloseBeyondLevel and close < lastSwingLow) or swingLowTouches > maxTouchesBeforeConsumed or swingLowAge > maxSwingLevelAgeBars or (consumeSwingAfterFirstSfp and bullishSweepReclaim(lastSwingLow)))
+if swingLowFresh and (swingLowTouches > 0 or (invalidateSwingOnCloseBeyondLevel and close < lastSwingLow) or swingLowTouches > maxTouchesBeforeConsumed or swingLowAge > maxSwingLevelAgeBars or (consumeSwingAfterFirstSfp and bullishSweepReclaim(lastSwingLow)))
     swingLowConsumed := true
+    finishLifecycleLine(swingLowLine, bar_index, color.green)
+    historicalLifecycleLabel(lastSwingLow, "Swing Low\nConsumed", color.green, false)
 
 // === Dashboard ===
-var table dashboard = table.new(position.top_right, 2, 8, border_width=1)
+var table dashboard = table.new(position.top_right, 2, 12, border_width=1)
 if showDashboard and barstate.islast
     table.cell(dashboard, 0, 0, "Version", bgcolor=color.new(color.black, 0), text_color=color.white)
-    table.cell(dashboard, 1, 0, "v0.3.5", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(dashboard, 1, 0, "v0.3.6", bgcolor=color.new(color.black, 0), text_color=color.white)
     table.cell(dashboard, 0, 1, "Market Mode", text_color=color.white)
     table.cell(dashboard, 1, 1, marketMode, text_color=color.white)
     table.cell(dashboard, 0, 2, "EMA Bias", text_color=color.white)
@@ -705,6 +934,14 @@ if showDashboard and barstate.islast
     table.cell(dashboard, 1, 6, triggerTypeText, text_color=color.white)
     table.cell(dashboard, 0, 7, "TP0 status", text_color=color.white)
     table.cell(dashboard, 1, 7, tp0Text, text_color=color.white)
+    table.cell(dashboard, 0, 8, "Level state", text_color=color.white)
+    table.cell(dashboard, 1, 8, activeDiagnosticSide == "Bear" ? bearKind + " / " + bearSource : activeDiagnosticSide == "Bull" ? bullKind + " / " + bullSource : "Fresh levels extend", text_color=color.white)
+    table.cell(dashboard, 0, 9, "Entry diag", text_color=color.white)
+    table.cell(dashboard, 1, 9, entryDiagnosticText, text_color=color.white)
+    table.cell(dashboard, 0, 10, "D/W/M body", text_color=color.white)
+    table.cell(dashboard, 1, 10, showBodyAlignedDwmLevels ? "On" : "Off", text_color=color.white)
+    table.cell(dashboard, 0, 11, "History mode", text_color=color.white)
+    table.cell(dashboard, 1, 11, historicalVisualTestMode ? "On" : "Off", text_color=color.white)
 
 // Visual-only alert placeholders. No orders, no webhooks, no exchange commands.
 alertcondition(primaryBearishSfp, title="Bear SFP", message="Bear SFP visual setup on {{ticker}} {{interval}}.")
