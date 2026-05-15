@@ -1,6 +1,6 @@
 # Next Steps
 
-Version: **0.3.3**
+Version: **0.3.4**
 
 This project should be tested slowly and visually before any automation is considered.
 
@@ -8,7 +8,7 @@ This project should be tested slowly and visually before any automation is consi
 
 Add the Pine Script indicator to a BTC chart in TradingView. Review multiple timeframes and different market conditions.
 
-## 2. Use the v0.3.3 qualification order
+## 2. Use the v0.3.4 qualification order
 
 Review setups in this order:
 
@@ -37,9 +37,9 @@ Ask:
 
 ## 4. Remember the SFP reclaim rule
 
-Version 0.3.3 does **not** require mandatory candle-close confirmation by default. The default logic allows an intrabar sweep and reclaim/current price returning back beyond the level. Pine Script uses the realtime bar's `close` value as current price.
+Version 0.3.4 does **not** require mandatory candle-close confirmation by default. The default logic allows an intrabar sweep and reclaim/current price returning back beyond the level. Pine Script uses the realtime bar's `close` value as current price.
 
-Only enable conservative close confirmation if you intentionally want a slower confirmation mode. If price has already moved too far from the trigger/reclaim level, or too many bars have passed since the reclaim event, v0.3.3 should mark the setup as late/missed and avoid drawing Entry / SL / TP0.
+Only enable conservative close confirmation if you intentionally want a slower confirmation mode. If the current bar is not the sweep/reclaim event, v0.3.4 should avoid drawing Entry / SL / TP0. Later behavior should be treated as retest/no-new-entry context, not a new plan.
 
 ## 5. Adjust settings
 
@@ -53,7 +53,7 @@ Experiment with the indicator settings:
 - Consolidation zone settings.
 - TP0/SL buffer and reaction-zone distance settings.
 - Maximum entry distance from trigger in R.
-- Maximum entry delay bars.
+- Maximum entry delay bars, which should not create delayed entries.
 - Maximum entry distance from trigger in USD.
 - Local liquidity lookback and local-trigger near-zone settings.
 - Untapped D/W/M level behavior after the first tap/sweep.
@@ -63,7 +63,7 @@ The first values are only starting points.
 
 ## 6. Future modules
 
-TP0 is only a visual 2R protection reference in v0.3.3. Future execution logic should calculate TP0 as the protection price that covers fees, remaining-position stop risk, and optional slippage buffer. TP1, TP2, TP3, and Runner logic are future modules. FVG, Volume Profile, POC, VAH, VAL, CVD, Anchored VWAP, Fibonacci, and multiple-top/bottom RSI divergence, Moon cycle, and Fibonacci time studies are also planned future modules, not part of version 0.3.3.
+TP0 is only a visual 2R protection reference in v0.3.4. Future execution logic should calculate TP0 as the protection price that covers fees, remaining-position stop risk, and optional slippage buffer. TP1, TP2, TP3, and Runner logic are future modules. FVG, Volume Profile, POC, VAH, VAL, CVD, Anchored VWAP, Fibonacci, and multiple-top/bottom RSI divergence, Moon cycle, and Fibonacci time studies are also planned future modules, not part of version 0.3.4.
 
 ## 7. Keep automation out for now
 
