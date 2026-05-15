@@ -1,12 +1,12 @@
 # Range SFP Hedge Bot
 
-Version: **0.4.2**
+Version: **0.4.3**
 
-Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.4.2 keeps the project visual-only and fixes Relevant Reaction Level lifecycle/directionality.
+Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.4.3 keeps the project visual-only and fixes Relevant Reaction Level lifecycle/directionality.
 
-## Main purpose of v0.4.2
+## Main purpose of v0.4.3
 
-Version 0.4.2 ensures a Relevant Reaction Level stops acting active after it is cleanly broken.
+Version 0.4.3 ensures a Relevant Reaction Level stops acting active after it is cleanly broken.
 
 Core rules:
 
@@ -41,14 +41,12 @@ Broken/past relevant levels:
 
 ## Clean break defaults
 
-A clean break uses close-based logic by default:
+A clean break uses close-based logic:
 
-- `cleanBreakCloseRequired = true`
 - `cleanBreakAtrBuffer = 0.3`
 - `cleanBreakUsdBuffer = 100`
-- `keepRelevantLevelAfterCleanBreak = false`
 
-A strong displacement candle through relevant levels also breaks them. Multiple crossed relevant lows/highs can be muted in the same displacement pass.
+Wick-through-and-reclaim candles are treated as SFPs first and do not break the relevant level on the same candle. Clean closes beyond the buffered level mark the level broken.
 
 ## Noise and grouping defaults
 
@@ -72,7 +70,7 @@ Close relevant highs/lows are grouped into a zone label instead of producing man
 
 Compact dashboard shows:
 
-- Version: v0.4.2
+- Version: v0.4.3
 - Market Mode
 - EMA Bias
 - HTF Context
@@ -81,7 +79,7 @@ Compact dashboard shows:
 
 Nearest Relevant Level only considers active levels on the correct side of price: active lows below price and active highs above price.
 
-## What v0.4.2 deliberately does not do
+## What v0.4.3 deliberately does not do
 
 This version does **not** try to trade.
 

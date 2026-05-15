@@ -1,12 +1,12 @@
 //@version=5
-indicator("Range SFP Visual v0.4.2", overlay=true, max_labels_count=220, max_lines_count=500)
+indicator("Range SFP Visual v0.4.3", overlay=true, max_labels_count=220, max_lines_count=500)
 
 // -----------------------------------------------------------------------------
-// Range SFP Visual v0.4.2
+// Range SFP Visual v0.4.3
 // Visual-only TradingView indicator. No strategy orders, exchange connections,
 // API keys, live trading, webhook automation, server code, or bot execution.
 //
-// v0.4.2 fixes Relevant Reaction Level lifecycle/directionality so broken
+// v0.4.3 fixes Relevant Reaction Level lifecycle/directionality so broken
 // support/resistance stops acting as an active reaction/SFP level.
 // -----------------------------------------------------------------------------
 
@@ -48,8 +48,6 @@ reactionLookaheadBars = input.int(24, "Reaction lookahead bars", minval=1)
 reactionMinUsd = input.float(700.0, "Relevant reaction min USD", minval=0.0, step=10.0)
 reactionMinAtr = input.float(3.0, "Relevant reaction min ATR", minval=0.1, step=0.1)
 reactionMinPercent = input.float(0.7, "Relevant reaction min percent", minval=0.0, step=0.1)
-keepRelevantLevelAfterCleanBreak = input.bool(false, "Keep relevant level after clean break")
-cleanBreakCloseRequired = input.bool(true, "Clean break requires close")
 cleanBreakAtrBuffer = input.float(0.3, "Clean break ATR buffer", minval=0.0, step=0.05)
 cleanBreakUsdBuffer = input.float(100.0, "Clean break USD buffer", minval=0.0, step=10.0)
 relevantEventCooldownBars = input.int(12, "Relevant event cooldown bars", minval=1)
@@ -436,8 +434,6 @@ float nearestRelevantPrice = na
 bool nearestRelevantIsHigh = false
 string nearestRelevantName = "None"
 string relevantEventThisBar = "None"
-bullishDisplacementCandle = not na(atrValue) and close > open and (high - low) >= atrValue * displacementCandleAtr
-bearishDisplacementCandle = not na(atrValue) and close < open and (high - low) >= atrValue * displacementCandleAtr
 if array.size(relevantPrices) > 0
     for idx = 0 to array.size(relevantPrices) - 1
         relPrice = array.get(relevantPrices, idx)
@@ -445,13 +441,27 @@ if array.size(relevantPrices) > 0
         relLine = array.get(relevantLines, idx)
         breakBuffer = math.max(cleanBreakUsdBuffer, not na(atrValue) ? atrValue * cleanBreakAtrBuffer : 0.0)
         breakValue = relIsHigh ? relPrice + breakBuffer : relPrice - breakBuffer
-        tradedThroughBreak = relIsHigh ? high > breakValue : low < breakValue
         closedThroughBreak = relIsHigh ? close > breakValue : close < breakValue
-        displacementThroughBreak = relIsHigh ? (bullishDisplacementCandle and high > relPrice and close > relPrice) : (bearishDisplacementCandle and low < relPrice and close < relPrice)
-        cleanBreak = (cleanBreakCloseRequired ? closedThroughBreak : tradedThroughBreak) or displacementThroughBreak
+        cleanBreak = closedThroughBreak
+        // Wick sweep plus reclaim is an SFP first, not a broken relevant level.
+        sfpRelevant = relIsHigh ? (high > relPrice and close < relPrice) : (low < relPrice and close > relPrice)
         canRelevantLabel = showReactionLabels and relevantEventThisBar == "None" and (na(array.get(relevantLastEventBars, idx)) or bar_index - array.get(relevantLastEventBars, idx) >= relevantEventCooldownBars)
         if array.get(relevantActive, idx)
-            if cleanBreak and not keepRelevantLevelAfterCleanBreak
+            if sfpRelevant
+                line.set_x2(relLine, bar_index + 1)
+                isCandidateNearest = relIsHigh ? relPrice > close : relPrice < close
+                relDistance = math.abs(close - relPrice)
+                if isCandidateNearest and (na(nearestRelevantDistance) or relDistance < nearestRelevantDistance)
+                    nearestRelevantDistance := relDistance
+                    nearestRelevantPrice := relPrice
+                    nearestRelevantIsHigh := relIsHigh
+                    nearestRelevantName := array.get(relevantNames, idx)
+                if canRelevantLabel
+                    relevantEventThisBar := relIsHigh ? "SFP at Relevant High" : "SFP at Relevant Low"
+                    lastRelevantEvent := relevantEventThisBar
+                    array.set(relevantLastEventBars, idx, bar_index)
+                    rememberLabel(label.new(bar_index, relIsHigh ? high : low, relevantEventThisBar, style=relIsHigh ? label.style_label_down : label.style_label_up, color=color.new(relIsHigh ? color.rgb(255, 80, 130) : color.lime, 0), textcolor=color.white, size=size.tiny))
+            else if cleanBreak
                 markRelevantInactive(idx)
                 lastRelevantEvent := relIsHigh ? "Broken Relevant High" : "Broken Relevant Low"
             else
@@ -463,14 +473,8 @@ if array.size(relevantPrices) > 0
                     nearestRelevantPrice := relPrice
                     nearestRelevantIsHigh := relIsHigh
                     nearestRelevantName := array.get(relevantNames, idx)
-                sfpRelevant = relIsHigh ? (high > relPrice and close < relPrice) : (low < relPrice and close > relPrice)
                 reactedRelevant = relIsHigh ? (close < relPrice and high >= relPrice - reactionTolerance) : (close > relPrice and low <= relPrice + reactionTolerance)
-                if sfpRelevant and canRelevantLabel
-                    relevantEventThisBar := relIsHigh ? "SFP at Relevant High" : "SFP at Relevant Low"
-                    lastRelevantEvent := relevantEventThisBar
-                    array.set(relevantLastEventBars, idx, bar_index)
-                    rememberLabel(label.new(bar_index, relIsHigh ? high : low, relevantEventThisBar, style=relIsHigh ? label.style_label_down : label.style_label_up, color=color.new(relIsHigh ? color.rgb(255, 80, 130) : color.lime, 0), textcolor=color.white, size=size.tiny))
-                else if reactedRelevant and canRelevantLabel
+                if reactedRelevant and canRelevantLabel
                     relevantEventThisBar := "Reaction at Relevant Level"
                     lastRelevantEvent := relevantEventThisBar
                     array.set(relevantLastEventBars, idx, bar_index)
@@ -578,7 +582,7 @@ var table dashboard = table.new(position.top_right, 2, 14, border_width=1)
 if dashboardMode != "Off" and barstate.islast
     table.clear(dashboard, 0, 0, 1, 13)
     table.cell(dashboard, 0, 0, "Version", bgcolor=color.new(color.black, 0), text_color=color.white)
-    table.cell(dashboard, 1, 0, "v0.4.2", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(dashboard, 1, 0, "v0.4.3", bgcolor=color.new(color.black, 0), text_color=color.white)
     table.cell(dashboard, 0, 1, "Market Mode", text_color=color.white)
     table.cell(dashboard, 1, 1, marketMode, text_color=color.white)
     table.cell(dashboard, 0, 2, "EMA Bias", text_color=color.white)

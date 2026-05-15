@@ -1,6 +1,6 @@
 # Next Steps
 
-Version: **0.4.2**
+Version: **0.4.3**
 
 This project should be tested slowly and visually before any automation or trade-plan logic is considered.
 
@@ -21,12 +21,10 @@ Expected behavior:
 
 Defaults are:
 
-- `cleanBreakCloseRequired = true`
 - `cleanBreakAtrBuffer = 0.3`
 - `cleanBreakUsdBuffer = 100`
-- `keepRelevantLevelAfterCleanBreak = false`
 
-With the default close requirement, a Relevant Reaction Low should break when price closes below the level by the USD/ATR buffer or displaces strongly through it. A Relevant Reaction High should break when price closes above the level by the USD/ATR buffer or displaces strongly through it.
+With close-based lifecycle logic, a Relevant Reaction Low should break when price closes below the level by the USD/ATR buffer. A Relevant Reaction High should break when price closes above the level by the USD/ATR buffer.
 
 ## 3. Validate future retests of broken levels
 
@@ -42,15 +40,15 @@ After a Relevant Reaction High breaks upward:
 - Later retests from above should not show `SFP at Relevant High`.
 - If past relevant labels are enabled, only `Broken resistance retest` may appear.
 
-## 4. Validate displacement through multiple levels
+## 4. Validate SFP-before-break priority
 
-Find strong impulse candles or sequences that cross several relevant levels.
+Find candles that wick through a Relevant Reaction High / Low and then reclaim the level before close.
 
 Expected behavior:
 
-- Bearish displacement through multiple Relevant Reaction Lows marks all crossed lows broken/past.
-- Bullish displacement through multiple Relevant Reaction Highs marks all crossed highs broken/past.
-- Crossed broken levels are not used later for same-direction reaction/SFP labels.
+- A wick below an active Relevant Reaction Low with a close back above it shows `SFP at Relevant Low` and does not mark that low broken on the same candle.
+- A wick above an active Relevant Reaction High with a close back below it shows `SFP at Relevant High` and does not mark that high broken on the same candle.
+- Only a clean close beyond the buffered level, without reclaim, marks the level broken.
 
 ## 5. Validate nearest relevant dashboard field
 
@@ -80,7 +78,7 @@ The chart should use short labels:
 
 ## 7. Keep automation out
 
-No live trading, exchange connection, API keys, webhook automation, server code, real bot execution, strategy orders, Entry / SL / TP0, TP1 / TP2 / TP3, runner logic, add-ons, re-entry, reversal engine, countertrend scalp mode, Fibonacci, FVG, Volume Profile, CVD, AVWAP, or Moon cycle module should be added in v0.4.2.
+No live trading, exchange connection, API keys, webhook automation, server code, real bot execution, strategy orders, Entry / SL / TP0, TP1 / TP2 / TP3, runner logic, add-ons, re-entry, reversal engine, countertrend scalp mode, Fibonacci, FVG, Volume Profile, CVD, AVWAP, or Moon cycle module should be added in v0.4.3.
 
 ## 8. Future work
 
