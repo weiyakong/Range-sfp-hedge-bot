@@ -1,78 +1,81 @@
 # Next Steps
 
-Version: **0.4.4**
+Version: **0.4.5**
 
 This project should be tested slowly and visually before any automation or trade-plan logic is considered.
 
-## 1. Validate active relevant-level SFP only
+## 1. Validate source-aware SFP labels
 
 Open BTC on a 15m chart and find active Relevant Reaction High / Low lines.
 
 Expected behavior:
 
-- An active Relevant Reaction Low prints `SFP at Relevant Low` only when the current candle sweeps below it and closes back above it.
-- An active Relevant Reaction High prints `SFP at Relevant High` only when the current candle sweeps above it and closes back below it.
-- Levels that are not touched or swept produce no relevant-level label.
-- Broken or past relevant levels do not create SFP labels.
+- Allowed active HTF SFP labels show short source text, such as `SFP High · 4H`, `SFP Low · 8H`, or `SFP High · 1D`.
+- Allowed active D/W/M body SFP labels show body source text, such as `SFP Low · W Body` or `SFP High · D Body`.
+- Labels stay short and do not use the old generic `SFP at Relevant High / Low` label text.
 
-## 2. Validate clean break settings
+## 2. Validate source filter defaults
 
 Defaults are:
 
-- `cleanBreakCloseRequired = true`
-- `cleanBreakAtrBuffer = 0.3`
-- `cleanBreakUsdBuffer = 100`
+- `allowHtfSfpLevels = true`
+- `allowDwmBodySfpLevels = true`
+- `allowLtfSfpLevels = false`
+- `allowRangeSfpLevels = false`
+- `allowBodyClusterSfpLevels = false`
+- `showDisabledSfpSources = false`
 
-With close-based lifecycle logic, a Relevant Reaction Low should break when price closes below the level by the USD/ATR buffer and does not reclaim. A Relevant Reaction High should break when price closes above the level by the USD/ATR buffer and does not reclaim.
+With defaults, LTF / Range / Body Cluster SFP candidates may still exist as diagnostic relevant levels, but they should not print active SFP labels and should not update `Last Relevant Event`.
 
-## 3. Validate SFP-before-break priority
+## 3. Validate disabled source diagnostics
+
+Turn on `showDisabledSfpSources = true` only for debugging.
+
+Expected muted labels:
+
+- `Disabled SFP High · LTF`
+- `Disabled SFP Low · Range`
+- `Disabled SFP High · Body Cluster`
+
+These muted labels are diagnostic only and should not update `Last Relevant Event`.
+
+## 4. Validate SFP-before-break priority
 
 Find candles that wick through a Relevant Reaction High / Low and then reclaim the level before close.
 
 Expected behavior:
 
-- A wick below an active Relevant Reaction Low with a close back above it shows `SFP at Relevant Low` and does not mark that low broken on the same candle.
-- A wick above an active Relevant Reaction High with a close back below it shows `SFP at Relevant High` and does not mark that high broken on the same candle.
+- A wick below an active Relevant Reaction Low with a close back above it shows an allowed source-aware low SFP label and does not mark that low broken on the same candle.
+- A wick above an active Relevant Reaction High with a close back below it shows an allowed source-aware high SFP label and does not mark that high broken on the same candle.
 - Only a clean close beyond the buffered level, without reclaim, marks the level broken.
 
-## 4. Validate broken relevant levels
-
-After a Relevant Reaction Low breaks downward:
-
-- Later candles do not show `SFP at Relevant Low` from that broken low.
-- The broken low does not create an actionable relevant-level event.
-
-After a Relevant Reaction High breaks upward:
-
-- Later candles do not show `SFP at Relevant High` from that broken high.
-- The broken high does not create an actionable relevant-level event.
-
-## 5. Validate nearest relevant dashboard field
+## 5. Validate dashboard source fields
 
 Compact dashboard should show:
 
-- Version v0.4.4
+- Version v0.4.5
 - Market Mode
 - EMA Bias
 - HTF Context
-- Nearest active Relevant Level
+- Nearest Active Relevant
 - Last Relevant Event
 
-Nearest active Relevant Level should ignore broken/past levels. It should only consider active Relevant Reaction Lows below price and active Relevant Reaction Highs above price. If none exist, it should show `None`.
+`Nearest Active Relevant` should include side, price, and source, for example `Low 78695 · W Body` or `High 81930 · 4H`. `Last Relevant Event` should include source-aware SFP text, for example `SFP Low · W Body`, `SFP High · 4H`, or `SFP High · LTF` only when that source is allowed.
 
-## 6. Validate quiet label cleanup
+## 6. Validate broken relevant levels
 
-The chart should show only the relevant-level labels needed for this pass:
+After a Relevant Reaction Low breaks downward:
 
-- `SFP at Relevant Low`
-- `SFP at Relevant High`
+- Later candles do not show allowed `SFP Low · source` labels from that broken low.
 
-`Last Relevant Event` should be only `SFP at Relevant Low`, `SFP at Relevant High`, `Broken Relevant Low`, `Broken Relevant High`, or `None`.
+After a Relevant Reaction High breaks upward:
+
+- Later candles do not show allowed `SFP High · source` labels from that broken high.
 
 ## 7. Keep automation and extra modules out
 
-No live trading, exchange connection, API keys, webhook automation, server code, real bot execution, strategy orders, Entry / SL / TP0, TP1 / TP2 / TP3, runner logic, add-ons, re-entry, reversal engine, countertrend scalp mode, front-run reaction, reaction-near-level logic, Fibonacci, FVG, Volume Profile, CVD, AVWAP, or Moon cycle module should be added in v0.4.4.
+No live trading, exchange connection, API keys, webhook automation, server code, real bot execution, strategy orders, Entry / SL / TP / TP0, runner logic, add-ons, re-entry, reversal engine, countertrend scalp mode, front-run reaction, reaction-near-level logic, Fibonacci, FVG, Volume Profile, CVD, AVWAP, or Moon cycle module should be added in v0.4.5.
 
 ## 8. Future work
 
-Only after active Relevant High / Low SFP behavior is visually trusted should future versions revisit trade qualification, paper trading, testnet work, or advanced context modules.
+Only after source diagnostics show which level families produce useful SFPs should future versions revisit source defaults, trade qualification, paper trading, testnet work, or advanced context modules.

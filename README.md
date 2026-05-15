@@ -1,18 +1,49 @@
 # Range SFP Hedge Bot
 
-Version: **0.4.4**
+Version: **0.4.5**
 
-Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.4.4 narrows Relevant Reaction Level output so only true SFPs at active Relevant High / Low levels are actionable relevant-level events.
+Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.4.5 is a diagnostic release that keeps Relevant High / Low SFP logic strict while showing which source created each SFP level.
 
-## Main purpose of v0.4.4
+## Main purpose of v0.4.5
 
-Version 0.4.4 makes the relevant-level lifecycle strict:
+Version 0.4.5 helps identify which Relevant/SFP sources are useful and which ones are noise:
 
-- A **Relevant Reaction Low** can print `SFP at Relevant Low` only while it is active, unbroken, and swept/reclaimed by the current candle.
-- A **Relevant Reaction High** can print `SFP at Relevant High` only while it is active, unbroken, and swept/reclaimed by the current candle.
-- Generic relevant-level reaction labels are disabled from working logic.
-- Broken or past relevant levels cannot create SFP labels.
-- Clean breaks are checked only after SFP is checked first, so one level cannot print SFP and Broken on the same candle.
+- SFP labels include their source, such as `SFP High · 4H`, `SFP Low · W Body`, `SFP High · LTF`, or `SFP Low · Range`.
+- Dashboard `Nearest Active Relevant` shows side, price, and source, such as `Low 78695 · W Body`.
+- Dashboard `Last Relevant Event` uses source-aware text for SFPs, such as `SFP Low · W Body` or `SFP High · 4H`.
+- HTF and D/W/M body sources are enabled by default for SFP signals.
+- LTF, Range, and Body Cluster sources are still created for diagnostics but are disabled by default for active SFP signals.
+
+## Tracked Relevant/SFP sources
+
+Relevant levels store the source that produced them:
+
+- `1H Swing High / Low`
+- `4H Swing High / Low`
+- `8H Swing High / Low`
+- `12H Swing High / Low`
+- `1D Swing High / Low`
+- `Daily Body High / Low`
+- `Weekly Body High / Low`
+- `Monthly Body High / Low`
+- `LTF Swing High / Low`
+- `Range High / Low`
+- `Body High Cluster / Body Low Cluster`
+
+Short labels use compact source names: `1H`, `4H`, `8H`, `12H`, `1D`, `D Body`, `W Body`, `M Body`, `LTF`, `Range`, and `Body Cluster`.
+
+## Source filter defaults
+
+Defaults are intentionally clean:
+
+- `allowHtfSfpLevels = true`
+- `allowDwmBodySfpLevels = true`
+- `allowLtfSfpLevels = false`
+- `allowRangeSfpLevels = false`
+- `allowBodyClusterSfpLevels = false`
+- `showDisabledSfpSources = false`
+
+When disabled, LTF / Range / Body Cluster SFP candidates do **not** print active SFP labels and do **not** update `Last Relevant Event`. If `showDisabledSfpSources = true`, muted diagnostic labels can appear, such as `Disabled SFP High · LTF` or `Disabled SFP Low · Range`.
 
 ## Relevant SFP lifecycle
 
@@ -28,12 +59,7 @@ Active Relevant Reaction High:
 - Clean break: if no reclaim occurs and price closes above the buffered level, it becomes `Broken Relevant High`.
 - No touch or sweep means no relevant-level event.
 
-Broken/past relevant levels:
-
-- Are muted or hidden depending on `showPastRelevantLevels`.
-- Do not extend as active levels.
-- Do not create SFP labels.
-- Do not create actionable relevant-level events.
+Broken/past relevant levels do not create active SFP labels.
 
 ## Clean break defaults
 
@@ -45,44 +71,26 @@ Clean breaks use close-based buffered logic by default:
 
 Wick-through-and-reclaim candles are treated as SFPs first and do not break the relevant level on the same candle.
 
-## Quiet visual defaults
-
-Defaults are intentionally quiet:
-
-- `showRelevantReactionLevels = true`
-- `showRelevantSfpLabels = true`
-- `showDebugReactionLabels = false`
-- `showPastRelevantLevels = false`
-- `showPastSwingLevels = true`
-- `showMinorReactionLabels = false`
-- `showMicroSwingLabels = false`
-- `showDebugLabels = false`
-- `showStructureCandidates = false`
-- `showOrdinaryDwmHighLowLevels = false`
-- `relevantEventCooldownBars = 12`
-- `dashboardMode = Compact`
-
 ## Dashboard
 
 Compact dashboard shows:
 
-- Version: v0.4.4
+- Version: v0.4.5
 - Market Mode
 - EMA Bias
 - HTF Context
-- Nearest active Relevant Level
+- Nearest Active Relevant
 - Last Relevant Event
 
-`Last Relevant Event` is limited to `SFP at Relevant Low`, `SFP at Relevant High`, `Broken Relevant Low`, `Broken Relevant High`, or `None`.
+`Nearest Active Relevant` includes side, price, and source. `Last Relevant Event` includes the SFP side and source for allowed SFP sources.
 
-## What v0.4.4 deliberately does not do
+## What v0.4.5 deliberately does not do
 
 This version does **not** try to trade.
 
 - It does **not** draw Entry.
 - It does **not** draw SL.
-- It does **not** draw TP0.
-- It does **not** add TP1 / TP2 / TP3.
+- It does **not** draw TP or TP0.
 - It does **not** add runner logic.
 - It does **not** add add-ons.
 - It does **not** add re-entry logic.
