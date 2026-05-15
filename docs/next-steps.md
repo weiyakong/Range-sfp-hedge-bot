@@ -1,6 +1,6 @@
 # Next Steps
 
-Version: **0.2**
+Version: **0.3**
 
 This project should be tested slowly and visually before any automation is considered.
 
@@ -8,42 +8,53 @@ This project should be tested slowly and visually before any automation is consi
 
 Add the Pine Script indicator to a BTC chart in TradingView. Review multiple timeframes and different market conditions.
 
-## 2. Compare labels with manual analysis
+## 2. Use the v0.3 qualification order
 
-Do not trust the labels automatically. Compare each label with manual chart reading.
+Review setups in this order:
+
+1. Context first: Market Mode, EMA bias, impulse direction, and volatility.
+2. Decision zone second: D/W/M level, fresh swing level, or consolidation reaction zone.
+3. SFP/rejection third: sweep/reclaim or failed reclaim at the decision zone.
+4. TP0/RR check fourth: make sure TP0 at 2R is not blocked by the next meaningful reaction area.
+
+## 3. Compare labels with manual analysis
+
+Do not trust labels automatically. Compare each label and dashboard status with manual chart reading.
 
 Ask:
 
-- Was an important level swept?
-- Did price reclaim the level?
-- Was there visible rejection?
-- Did price cut straight through instead?
-- Was the market stuck in low-amplitude chop?
-- Was the candle marked as `Conflict`, `Expansion`, `Retest`, or `Re-sweep` instead of a primary SFP?
+- Is the dashboard showing `Trend`, `Range`, `Chop`, or `Expansion` correctly?
+- Is the setup suppressed during `Chop / No Trade`?
+- Is the signal with trend or countertrend?
+- If countertrend, is there strong rejection and structure weakness/strength?
 - Did the trigger-level line match the level you expected?
+- Is TP0 at 2R realistic before the next meaningful reaction area?
+- Was the candle marked `Ambiguous / No Trade`, `Countertrend / No Trade`, `Expansion / Wait`, or `No Trade / TP0 blocked`?
 
-## 3. Adjust settings
+## 4. Remember the SFP reclaim rule
+
+Version 0.3 does **not** require mandatory candle-close confirmation by default. The default logic allows an intrabar sweep and reclaim/current price returning back beyond the level. Pine Script uses the realtime bar's `close` value as current price.
+
+Only enable conservative close confirmation if you intentionally want a slower confirmation mode.
+
+## 5. Adjust settings
 
 Experiment with the indicator settings:
 
-- Swing length.
-- Daily, weekly, monthly, and swing display toggles.
-- Trigger-level line visibility.
-- Chop lookback and repeated-touch settings.
-- Expansion filter settings.
+- EMA and ADX market-mode settings.
+- ATR volatility and expansion settings.
+- Chop compression and repeated-touch settings.
 - Swing freshness and consumed-level settings.
 - Same-zone clustering settings.
+- Consolidation zone settings.
+- TP0/SL buffer and reaction-zone distance settings.
 
 The first values are only starting points.
 
-## 4. Add alerts later
+## 6. Future modules
 
-A later version may refine TradingView alerts after the visual logic is reviewed. Alerts should stay simple and easy to inspect.
+TP1, TP2, TP3, and Runner logic are future modules. FVG, Volume Profile, POC, VAH, VAL, CVD, Anchored VWAP, Fibonacci, and multiple-top/bottom RSI divergence are also planned future modules, not part of version 0.3.
 
-## 5. Add paper trading later
+## 7. Keep automation out for now
 
-Only after visual testing, the project may add a paper trading bot. Paper trading should be used to test rules without real funds.
-
-## 6. Use exchange testnet only after validation
-
-Exchange testnet support should come only after the indicator and paper trading logic are validated. Real trading and real exchange execution are not part of version 0.2.
+No live trading, exchange connection, API keys, webhook automation, server code, or real bot execution should be added in this version. Paper trading and exchange testnets should only be considered after visual validation.

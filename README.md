@@ -1,17 +1,40 @@
 # Range SFP Hedge Bot
 
-Version: **0.2**
+Version: **0.3**
 
-Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.2 provides a Pine Script v5 indicator for visually studying possible Swing Failure Pattern (SFP) reactions around important BTC levels.
+Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.3 provides a Pine Script v5 indicator for visually qualifying possible Swing Failure Pattern (SFP) setups around important BTC levels.
 
 ## What this project does
 
-- Adds a TradingView indicator for visual BTC chart analysis.
-- Marks previous daily, weekly, and monthly high/low levels as clean horizontal segments.
-- Marks simple swing highs and swing lows using pivot detection.
-- Shows short SFP labels such as `Bear SFP`, `Bull SFP`, `Retest`, `Re-sweep`, `Conflict`, `Expansion`, and `Chop`.
-- Draws short trigger-level lines so users can see exactly which level caused a label.
-- Filters confusing same-candle conflicts, large expansion candles, stale swing levels, and repeated same-zone SFPs.
+Version 0.3 is no longer meant to act like a noisy SFP label generator. It is a setup qualification tool:
+
+1. Context first.
+2. Decision zone second.
+3. SFP/rejection third.
+4. TP0 / reward-to-risk check fourth.
+
+The indicator helps visualize:
+
+- Previous daily, weekly, and monthly high/low levels as clean horizontal segments.
+- Fresh swing highs and swing lows using pivot detection.
+- Market Mode: `Trend`, `Range`, `Chop`, or `Expansion`.
+- EMA bias, volatility state, setup status, active zone, and TP0 status in a dashboard.
+- Strict `Chop / No Trade` filtering so SFPs inside compressed chop are suppressed.
+- `Ambiguous / No Trade` handling when both sides sweep and context is unclear.
+- `Countertrend / No Trade` handling in strong trends unless rejection and structure weakness/strength are present.
+- Entry, SL, and TP0 lines when a valid visual setup qualifies.
+
+## TP0 terminology
+
+`TP0` is the protection point at **2R** from the planned entry. At TP0, the future concept is to close 50% and protect the remaining position.
+
+TP1, TP2, TP3, and Runner logic are **not included yet**. They are planned future modules.
+
+## SFP reclaim logic
+
+Version 0.3 does **not** require mandatory candle-close confirmation by default. The default logic is based on an intrabar sweep and reclaim/current price returning back beyond the level. In Pine Script, the realtime bar's `close` value represents the current price.
+
+A conservative candle-close confirmation option exists in the indicator settings, but it is not the default.
 
 ## What this project does not do
 
@@ -22,18 +45,24 @@ This version is intentionally visual-only.
 - It does **not** use API keys.
 - It does **not** run a live trading bot.
 - It does **not** add webhook automation.
+- It does **not** add server code.
 - It does **not** provide financial advice.
 
-## Possible future direction
+## Planned future modules
 
-After the indicator is tested visually, future versions may add:
+Future versions may explore additional analysis modules after visual testing:
 
-- More refined TradingView alerts.
-- Webhook message design for paper trading only.
-- Paper trading tools.
+- TP1, TP2, TP3, and Runner handling.
+- FVG.
+- Volume Profile, POC, VAH, and VAL.
+- CVD.
+- Anchored VWAP.
+- Fibonacci.
+- Multiple-top/bottom RSI divergence.
+- Paper trading tools after validation.
 - Exchange testnet experiments only after validation.
 
-Real exchange execution is not part of version 0.2.
+Real exchange execution is not part of version 0.3.
 
 ## Risk warning
 
