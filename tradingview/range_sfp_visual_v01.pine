@@ -1,0 +1,686 @@
+//@version=5
+indicator("Range SFP Visual v0.3.3", overlay=true, max_labels_count=250, max_lines_count=500)
+
+// -----------------------------------------------------------------------------
+// Range SFP Visual v0.3.3
+// Visual-only TradingView indicator. No strategy orders, exchange connections,
+// API keys, live trading, webhook automation, server code, or bot execution.
+//
+// v0.3.3 fixes untapped D/W/M levels and anchors entries to the actual trigger:
+// 1) context first, 2) decision zone second, 3) SFP/rejection third,
+// 4) TP0 / 2R room check fourth, using untapped HTF levels plus Swing/Local trigger selection.
+// -----------------------------------------------------------------------------
+
+// === Display settings ===
+showDailyLevels = input.bool(true, "Show daily levels")
+showWeeklyLevels = input.bool(true, "Show weekly levels")
+showMonthlyLevels = input.bool(true, "Show monthly levels")
+showSwingLevels = input.bool(true, "Show swing levels")
+showSfpLabels = input.bool(true, "Show setup labels")
+showTriggerLevelLines = input.bool(true, "Show trigger level lines")
+showChopWarnings = input.bool(true, "Show chop warnings")
+showConflictLabels = input.bool(true, "Show ambiguous/conflict labels")
+showExpansionWarnings = input.bool(true, "Show expansion warnings")
+showDashboard = input.bool(true, "Show dashboard")
+showTradePlanLines = input.bool(true, "Show Entry / SL / TP0")
+showConsolidationZones = input.bool(true, "Show consolidation zones")
+showOnlyLatestSetup = input.bool(true, "Show only latest Entry / SL / TP0 plan")
+maxVisibleSetupLabels = input.int(5, "Max visible setup labels", minval=1, maxval=50)
+
+// === Core settings ===
+swingLength = input.int(5, "Swing pivot length", minval=1)
+useCloseConfirmation = input.bool(false, "Conservative: require candle close confirmation", tooltip="Default is off. SFP reclaim can be intrabar/current-price based; on a realtime bar, close represents the current price. Turn this on only for a more conservative closed-candle mode.")
+
+// Market mode settings: simple and transparent by design.
+emaFastLength = input.int(21, "Fast EMA length", minval=1)
+emaSlowLength = input.int(55, "Slow EMA length", minval=2)
+adxLength = input.int(14, "ADX length", minval=1)
+adxSmoothing = input.int(14, "ADX smoothing", minval=1)
+adxTrendThreshold = input.float(20.0, "ADX trend threshold", minval=1.0, step=0.5)
+emaSeparationAtr = input.float(0.35, "EMA separation ATR", minval=0.01, step=0.01)
+
+// Volatility / expansion / chop settings.
+atrLength = input.int(14, "ATR length", minval=1)
+atrBaselineLength = input.int(50, "ATR baseline length", minval=5)
+volExpansionMultiplier = input.float(1.4, "Volatility expansion multiplier", minval=0.1, step=0.1)
+maxSfpCandleAtrMultiplier = input.float(2.5, "Max SFP candle ATR multiplier", minval=0.1, step=0.1)
+enableExpansionFilter = input.bool(true, "Enable expansion filter")
+chopLookback = input.int(20, "Chop lookback candles", minval=5)
+chopRangeAtrMultiplier = input.float(1.2, "Chop range ATR multiplier", minval=0.1, step=0.1)
+touchZoneAtrMultiplier = input.float(0.25, "Repeated touch zone ATR multiplier", minval=0.05, step=0.05)
+minTouchesForChop = input.int(6, "Minimum repeated touches", minval=2)
+
+// Fresh swing settings. Fresh swing levels are recent pivots that have not been
+// consumed by too many touches, a close beyond the level, or an earlier SFP sweep.
+maxSwingLevelAgeBars = input.int(200, "Max swing level age bars", minval=1)
+maxTouchesBeforeConsumed = input.int(2, "Max touches before consumed", minval=1)
+invalidateSwingOnCloseBeyondLevel = input.bool(true, "Invalidate swing on close beyond level")
+consumeSwingAfterFirstSfp = input.bool(true, "Consume swing after first SFP")
+
+// Same-zone clustering: repeated SFPs near the same level are retests/re-sweeps,
+// not fresh primary setups.
+clusterLookbackBars = input.int(20, "Cluster lookback bars", minval=1)
+sameZoneAtrDistance = input.float(0.35, "Same zone ATR distance", minval=0.01, step=0.01)
+
+// Context and rejection settings.
+impulseLookback = input.int(8, "Recent impulse lookback", minval=2)
+impulseAtrMultiplier = input.float(1.5, "Impulse ATR multiplier", minval=0.1, step=0.1)
+strongRejectionWickRatio = input.float(1.2, "Strong rejection wick/body ratio", minval=0.1, step=0.1)
+slAtrBuffer = input.float(0.10, "SL buffer ATR", minval=0.0, step=0.01)
+reactionZoneAtrDistance = input.float(0.40, "Reaction zone ATR distance", minval=0.01, step=0.01)
+maxEntryDistanceFromTriggerR = input.float(0.35, "Max entry distance from trigger in R", minval=0.0, step=0.05, tooltip="If current price has already moved this far from the trigger/reclaim level, the setup is marked Late Entry / No Trade and no Entry / SL / TP0 plan is drawn.")
+maxEntryDelayBars = input.int(1, "Max entry delay bars", minval=0, tooltip="Entry must happen on the reclaim bar or very shortly after. Delayed retests are not new entries.")
+maxEntryDistanceFromTriggerUsd = input.float(50.0, "Max entry distance from trigger USD", minval=0.0, step=1.0, tooltip="BTC testing default. If planned entry is too far from the actual trigger/reclaim level, no Entry / SL / TP0 plan is drawn.")
+microStructureLookback = input.int(8, "Local liquidity lookback", minval=2, tooltip="Looks for fresh local highs/lows that may be the actual swept micro-structure trigger near a decision zone.")
+microTriggerNearZoneAtr = input.float(0.75, "Local trigger near-zone ATR", minval=0.05, step=0.05)
+
+// Basic consolidation reaction zones. These are not entries by themselves.
+consolidationLookback = input.int(10, "Consolidation lookback", minval=3)
+consolidationMaxAtrRange = input.float(1.5, "Max consolidation range ATR", minval=0.1, step=0.1)
+zoneMaxAgeBars = input.int(250, "Max consolidation zone age", minval=10)
+
+// === Core measurements ===
+atrValue = ta.atr(atrLength)
+atrBaseline = ta.sma(atrValue, atrBaselineLength)
+emaFast = ta.ema(close, emaFastLength)
+emaSlow = ta.ema(close, emaSlowLength)
+[plusDi, minusDi, adxValue] = ta.dmi(adxLength, adxSmoothing)
+
+bodySize = math.abs(close - open)
+upperWick = high - math.max(open, close)
+lowerWick = math.min(open, close) - low
+candleRange = high - low
+
+recentRange = ta.highest(high, chopLookback) - ta.lowest(low, chopLookback)
+zoneMidpoint = (ta.highest(high, chopLookback) + ta.lowest(low, chopLookback)) / 2.0
+touchDistance = atrValue * touchZoneAtrMultiplier
+repeatedTouches = 0
+for index = 0 to chopLookback - 1
+    candleTouchesZone = not na(touchDistance) and (math.abs(close[index] - zoneMidpoint) <= touchDistance or math.abs(high[index] - zoneMidpoint) <= touchDistance or math.abs(low[index] - zoneMidpoint) <= touchDistance)
+    repeatedTouches += candleTouchesZone ? 1 : 0
+
+rangeCompressed = not na(atrValue) and recentRange < atrValue * chopRangeAtrMultiplier
+compressedChop = rangeCompressed and repeatedTouches >= minTouchesForChop
+volatilityExpansion = enableExpansionFilter and not na(atrValue) and not na(atrBaseline) and atrValue > atrBaseline * volExpansionMultiplier
+largeCandle = enableExpansionFilter and not na(atrValue) and candleRange > atrValue * maxSfpCandleAtrMultiplier
+emaSeparation = not na(atrValue) and atrValue > 0.0 ? math.abs(emaFast - emaSlow) / atrValue : 0.0
+emaBias = emaFast > emaSlow and emaSeparation >= emaSeparationAtr ? "Bullish" : emaFast < emaSlow and emaSeparation >= emaSeparationAtr ? "Bearish" : "Neutral"
+strongTrend = adxValue >= adxTrendThreshold and emaSeparation >= emaSeparationAtr
+
+impulseMove = close - close[impulseLookback]
+recentImpulse = not na(atrValue) and impulseMove > atrValue * impulseAtrMultiplier ? "Bullish" : not na(atrValue) and impulseMove < -atrValue * impulseAtrMultiplier ? "Bearish" : "Neutral"
+
+marketMode = largeCandle or volatilityExpansion ? "Expansion" : compressedChop ? "Chop" : strongTrend ? "Trend" : "Range"
+volatilityText = largeCandle ? "Large candle" : volatilityExpansion ? "Expansion" : rangeCompressed ? "Compressed" : "Normal"
+
+// SFPs inside chop are not tradeable signals. In chop, the script suppresses
+// Bull/Bear SFP, Retest, and Re-sweep labels and shows only Chop / No Trade.
+strictChopNoTrade = marketMode == "Chop"
+
+// === Previous higher-timeframe levels ===
+// D/W/M mean previous Daily, Weekly, and Monthly highs/lows. They are decision
+// levels only; v0.3.3 uses them only while untapped and still requires context, rejection, early entry proximity, and TP0 room.
+previousDailyHigh = request.security(syminfo.tickerid, "D", high[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousDailyLow = request.security(syminfo.tickerid, "D", low[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousWeeklyHigh = request.security(syminfo.tickerid, "W", high[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousWeeklyLow = request.security(syminfo.tickerid, "W", low[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousMonthlyHigh = request.security(syminfo.tickerid, "M", high[1], barmerge.gaps_off, barmerge.lookahead_off)
+previousMonthlyLow = request.security(syminfo.tickerid, "M", low[1], barmerge.gaps_off, barmerge.lookahead_off)
+
+// Clean horizontal segments avoid vertical artifacts when higher-timeframe levels update.
+// D/W/M levels are previous-period levels only. Each one is valid only while
+// untapped; once price reaches it, it is consumed and no longer creates a fresh
+// D/W/M primary SFP. Later behavior is treated as retest/re-sweep context.
+var float activeDailyHigh = na
+var float activeDailyLow = na
+var float activeWeeklyHigh = na
+var float activeWeeklyLow = na
+var float activeMonthlyHigh = na
+var float activeMonthlyLow = na
+var bool dailyHighConsumed = true
+var bool dailyLowConsumed = true
+var bool weeklyHighConsumed = true
+var bool weeklyLowConsumed = true
+var bool monthlyHighConsumed = true
+var bool monthlyLowConsumed = true
+var line dailyHighLine = na
+var line dailyLowLine = na
+var line weeklyHighLine = na
+var line weeklyLowLine = na
+var line monthlyHighLine = na
+var line monthlyLowLine = na
+
+if not na(previousDailyHigh) and (na(activeDailyHigh) or previousDailyHigh != activeDailyHigh)
+    activeDailyHigh := previousDailyHigh
+    dailyHighConsumed := false
+    if showDailyLevels
+        dailyHighLine := line.new(bar_index, activeDailyHigh, bar_index + 1, activeDailyHigh, color=color.new(color.orange, 0), width=1)
+
+if not na(previousDailyLow) and (na(activeDailyLow) or previousDailyLow != activeDailyLow)
+    activeDailyLow := previousDailyLow
+    dailyLowConsumed := false
+    if showDailyLevels
+        dailyLowLine := line.new(bar_index, activeDailyLow, bar_index + 1, activeDailyLow, color=color.new(color.orange, 0), width=1)
+
+if not na(previousWeeklyHigh) and (na(activeWeeklyHigh) or previousWeeklyHigh != activeWeeklyHigh)
+    activeWeeklyHigh := previousWeeklyHigh
+    weeklyHighConsumed := false
+    if showWeeklyLevels
+        weeklyHighLine := line.new(bar_index, activeWeeklyHigh, bar_index + 1, activeWeeklyHigh, color=color.new(color.blue, 0), width=1)
+
+if not na(previousWeeklyLow) and (na(activeWeeklyLow) or previousWeeklyLow != activeWeeklyLow)
+    activeWeeklyLow := previousWeeklyLow
+    weeklyLowConsumed := false
+    if showWeeklyLevels
+        weeklyLowLine := line.new(bar_index, activeWeeklyLow, bar_index + 1, activeWeeklyLow, color=color.new(color.blue, 0), width=1)
+
+if not na(previousMonthlyHigh) and (na(activeMonthlyHigh) or previousMonthlyHigh != activeMonthlyHigh)
+    activeMonthlyHigh := previousMonthlyHigh
+    monthlyHighConsumed := false
+    if showMonthlyLevels
+        monthlyHighLine := line.new(bar_index, activeMonthlyHigh, bar_index + 1, activeMonthlyHigh, color=color.new(color.purple, 0), width=1)
+
+if not na(previousMonthlyLow) and (na(activeMonthlyLow) or previousMonthlyLow != activeMonthlyLow)
+    activeMonthlyLow := previousMonthlyLow
+    monthlyLowConsumed := false
+    if showMonthlyLevels
+        monthlyLowLine := line.new(bar_index, activeMonthlyLow, bar_index + 1, activeMonthlyLow, color=color.new(color.purple, 0), width=1)
+
+dailyHighValid = showDailyLevels and not dailyHighConsumed and not na(activeDailyHigh)
+dailyLowValid = showDailyLevels and not dailyLowConsumed and not na(activeDailyLow)
+weeklyHighValid = showWeeklyLevels and not weeklyHighConsumed and not na(activeWeeklyHigh)
+weeklyLowValid = showWeeklyLevels and not weeklyLowConsumed and not na(activeWeeklyLow)
+monthlyHighValid = showMonthlyLevels and not monthlyHighConsumed and not na(activeMonthlyHigh)
+monthlyLowValid = showMonthlyLevels and not monthlyLowConsumed and not na(activeMonthlyLow)
+
+if dailyHighValid and not na(dailyHighLine)
+    line.set_x2(dailyHighLine, bar_index + 1)
+if dailyLowValid and not na(dailyLowLine)
+    line.set_x2(dailyLowLine, bar_index + 1)
+if weeklyHighValid and not na(weeklyHighLine)
+    line.set_x2(weeklyHighLine, bar_index + 1)
+if weeklyLowValid and not na(weeklyLowLine)
+    line.set_x2(weeklyLowLine, bar_index + 1)
+if monthlyHighValid and not na(monthlyHighLine)
+    line.set_x2(monthlyHighLine, bar_index + 1)
+if monthlyLowValid and not na(monthlyLowLine)
+    line.set_x2(monthlyLowLine, bar_index + 1)
+
+// === Swing high / swing low freshness ===
+// A local swing formed inside chop is ignored. This prevents micro-range pivots
+// from becoming fake SFP levels.
+pivotHigh = ta.pivothigh(high, swingLength, swingLength)
+pivotLow = ta.pivotlow(low, swingLength, swingLength)
+
+var float lastSwingHigh = na
+var float lastSwingLow = na
+var int lastSwingHighBar = na
+var int lastSwingLowBar = na
+var int swingHighTouches = 0
+var int swingLowTouches = 0
+var bool swingHighConsumed = true
+var bool swingLowConsumed = true
+var line swingHighLine = na
+var line swingLowLine = na
+
+if not na(pivotHigh) and not strictChopNoTrade
+    lastSwingHigh := pivotHigh
+    lastSwingHighBar := bar_index - swingLength
+    swingHighTouches := 0
+    swingHighConsumed := false
+    if showSwingLevels
+        swingHighLine := line.new(lastSwingHighBar, lastSwingHigh, bar_index + 1, lastSwingHigh, color=color.new(color.red, 0), width=2)
+
+if not na(pivotLow) and not strictChopNoTrade
+    lastSwingLow := pivotLow
+    lastSwingLowBar := bar_index - swingLength
+    swingLowTouches := 0
+    swingLowConsumed := false
+    if showSwingLevels
+        swingLowLine := line.new(lastSwingLowBar, lastSwingLow, bar_index + 1, lastSwingLow, color=color.new(color.green, 0), width=2)
+
+if showSwingLevels and not na(swingHighLine) and not swingHighConsumed
+    line.set_x2(swingHighLine, bar_index + 1)
+
+if showSwingLevels and not na(swingLowLine) and not swingLowConsumed
+    line.set_x2(swingLowLine, bar_index + 1)
+
+swingHighAge = not na(lastSwingHighBar) ? bar_index - lastSwingHighBar : na
+swingLowAge = not na(lastSwingLowBar) ? bar_index - lastSwingLowBar : na
+swingHighFresh = not strictChopNoTrade and not na(lastSwingHigh) and not swingHighConsumed and swingHighAge <= maxSwingLevelAgeBars
+swingLowFresh = not strictChopNoTrade and not na(lastSwingLow) and not swingLowConsumed and swingLowAge <= maxSwingLevelAgeBars
+
+plotshape(showSwingLevels and not na(pivotHigh) and not strictChopNoTrade, title="Confirmed Swing High", style=shape.triangledown, location=location.abovebar, offset=-swingLength, color=color.new(color.red, 0), size=size.tiny, text="SH")
+plotshape(showSwingLevels and not na(pivotLow) and not strictChopNoTrade, title="Confirmed Swing Low", style=shape.triangleup, location=location.belowbar, offset=-swingLength, color=color.new(color.green, 0), size=size.tiny, text="SL")
+
+// === Basic consolidation reaction zones ===
+// After impulse + sideways consolidation, the consolidation top/bottom can become
+// a decision zone. These zones are not automatic entries. They can later become
+// TP1/TP2/TP3 style targets in future versions, but v0.3.3 only checks TP0 room.
+consolidationRange = ta.highest(high, consolidationLookback) - ta.lowest(low, consolidationLookback)
+isConsolidating = not na(atrValue) and consolidationRange <= atrValue * consolidationMaxAtrRange
+bullishImpulseBeforeConsolidation = close[consolidationLookback] - close[consolidationLookback + impulseLookback] > atrValue * impulseAtrMultiplier
+bearishImpulseBeforeConsolidation = close[consolidationLookback] - close[consolidationLookback + impulseLookback] < -atrValue * impulseAtrMultiplier
+
+var float longZoneBottom = na
+var float longZoneTop = na
+var int longZoneBar = na
+var float shortZoneTop = na
+var float shortZoneBottom = na
+var int shortZoneBar = na
+var line longZoneLine = na
+var line shortZoneLine = na
+
+if isConsolidating and bullishImpulseBeforeConsolidation and not strictChopNoTrade
+    longZoneBottom := ta.lowest(low, consolidationLookback)
+    longZoneTop := ta.highest(high, consolidationLookback)
+    longZoneBar := bar_index
+    if showConsolidationZones
+        longZoneLine := line.new(bar_index - consolidationLookback, longZoneBottom, bar_index + 1, longZoneBottom, color=color.new(color.green, 30), width=2)
+
+if isConsolidating and bearishImpulseBeforeConsolidation and not strictChopNoTrade
+    shortZoneTop := ta.highest(high, consolidationLookback)
+    shortZoneBottom := ta.lowest(low, consolidationLookback)
+    shortZoneBar := bar_index
+    if showConsolidationZones
+        shortZoneLine := line.new(bar_index - consolidationLookback, shortZoneTop, bar_index + 1, shortZoneTop, color=color.new(color.red, 30), width=2)
+
+longZoneActive = not na(longZoneBottom) and bar_index - longZoneBar <= zoneMaxAgeBars
+shortZoneActive = not na(shortZoneTop) and bar_index - shortZoneBar <= zoneMaxAgeBars
+nearLongZone = longZoneActive and not na(atrValue) and math.abs(close - longZoneBottom) <= atrValue * reactionZoneAtrDistance
+nearShortZone = shortZoneActive and not na(atrValue) and math.abs(close - shortZoneTop) <= atrValue * reactionZoneAtrDistance
+
+if showConsolidationZones and longZoneActive and not na(longZoneLine)
+    line.set_x2(longZoneLine, bar_index + 1)
+
+if showConsolidationZones and shortZoneActive and not na(shortZoneLine)
+    line.set_x2(shortZoneLine, bar_index + 1)
+
+// === SFP detection ===
+// Default reclaim is not mandatory candle-close confirmation. On realtime bars,
+// Pine's close value is the current price. Conservative closed-candle confirmation
+// is optional through the input above.
+confirmedOrLive = useCloseConfirmation ? barstate.isconfirmed : true
+bearishSweepReclaim(level) =>
+    sweepBars = ta.barssince(high > level)
+    not na(level) and not na(sweepBars) and sweepBars <= clusterLookbackBars and close < level and confirmedOrLive
+
+bullishSweepReclaim(level) =>
+    sweepBars = ta.barssince(low < level)
+    not na(level) and not na(sweepBars) and sweepBars <= clusterLookbackBars and close > level and confirmedOrLive
+
+// Local micro-structure can be the real SFP trigger when it sits near a larger
+// decision zone. v0.3.3 chooses the swept/reclaimed level closest to the reclaim
+// price instead of automatically preferring D/W/M levels.
+localLiquidityHigh = ta.highest(high[1], microStructureLookback)
+localLiquidityLow = ta.lowest(low[1], microStructureLookback)
+
+isNearBearDecisionZone(level) =>
+    not na(level) and not na(atrValue) and ((not na(activeDailyHigh) and math.abs(level - activeDailyHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(activeWeeklyHigh) and math.abs(level - activeWeeklyHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(activeMonthlyHigh) and math.abs(level - activeMonthlyHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(lastSwingHigh) and math.abs(level - lastSwingHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(shortZoneTop) and math.abs(level - shortZoneTop) <= atrValue * microTriggerNearZoneAtr))
+
+isNearBullDecisionZone(level) =>
+    not na(level) and not na(atrValue) and ((not na(activeDailyLow) and math.abs(level - activeDailyLow) <= atrValue * microTriggerNearZoneAtr) or (not na(activeWeeklyLow) and math.abs(level - activeWeeklyLow) <= atrValue * microTriggerNearZoneAtr) or (not na(activeMonthlyLow) and math.abs(level - activeMonthlyLow) <= atrValue * microTriggerNearZoneAtr) or (not na(lastSwingLow) and math.abs(level - lastSwingLow) <= atrValue * microTriggerNearZoneAtr) or (not na(longZoneBottom) and math.abs(level - longZoneBottom) <= atrValue * microTriggerNearZoneAtr))
+
+getBearLevel() =>
+    float level = na
+    string name = ""
+    if dailyHighValid and bearishSweepReclaim(activeDailyHigh)
+        level := activeDailyHigh
+        name := "D High"
+    if weeklyHighValid and bearishSweepReclaim(activeWeeklyHigh) and (na(level) or math.abs(activeWeeklyHigh - close) < math.abs(level - close))
+        level := activeWeeklyHigh
+        name := "W High"
+    if monthlyHighValid and bearishSweepReclaim(activeMonthlyHigh) and (na(level) or math.abs(activeMonthlyHigh - close) < math.abs(level - close))
+        level := activeMonthlyHigh
+        name := "M High"
+    if swingHighFresh and bearishSweepReclaim(lastSwingHigh) and (na(level) or math.abs(lastSwingHigh - close) < math.abs(level - close))
+        level := lastSwingHigh
+        name := "Swing High"
+    if shortZoneActive and bearishSweepReclaim(shortZoneTop) and (na(level) or math.abs(shortZoneTop - close) < math.abs(level - close))
+        level := shortZoneTop
+        name := "Consol Top"
+    if isNearBearDecisionZone(localLiquidityHigh) and not strictChopNoTrade and bearishSweepReclaim(localLiquidityHigh) and (na(level) or math.abs(localLiquidityHigh - close) < math.abs(level - close))
+        level := localLiquidityHigh
+        name := "Local High"
+    [level, name]
+
+getBullLevel() =>
+    float level = na
+    string name = ""
+    if dailyLowValid and bullishSweepReclaim(activeDailyLow)
+        level := activeDailyLow
+        name := "D Low"
+    if weeklyLowValid and bullishSweepReclaim(activeWeeklyLow) and (na(level) or math.abs(activeWeeklyLow - close) < math.abs(level - close))
+        level := activeWeeklyLow
+        name := "W Low"
+    if monthlyLowValid and bullishSweepReclaim(activeMonthlyLow) and (na(level) or math.abs(activeMonthlyLow - close) < math.abs(level - close))
+        level := activeMonthlyLow
+        name := "M Low"
+    if swingLowFresh and bullishSweepReclaim(lastSwingLow) and (na(level) or math.abs(lastSwingLow - close) < math.abs(level - close))
+        level := lastSwingLow
+        name := "Swing Low"
+    if longZoneActive and bullishSweepReclaim(longZoneBottom) and (na(level) or math.abs(longZoneBottom - close) < math.abs(level - close))
+        level := longZoneBottom
+        name := "Consol Bottom"
+    if isNearBullDecisionZone(localLiquidityLow) and not strictChopNoTrade and bullishSweepReclaim(localLiquidityLow) and (na(level) or math.abs(localLiquidityLow - close) < math.abs(level - close))
+        level := localLiquidityLow
+        name := "Local Low"
+    [level, name]
+
+[bearLevelRaw, bearSourceRaw] = getBearLevel()
+[bullLevelRaw, bullSourceRaw] = getBullLevel()
+rawBearishSfp = not strictChopNoTrade and not na(bearLevelRaw)
+rawBullishSfp = not strictChopNoTrade and not na(bullLevelRaw)
+
+// If both sides sweep in one candle, context decides if one side is meaningful.
+// If context is unclear, show Ambiguous / No Trade and suppress both directions.
+bothSidesTouched = rawBearishSfp and rawBullishSfp
+contextPrefersBull = emaBias == "Bullish" or recentImpulse == "Bullish" or nearLongZone
+contextPrefersBear = emaBias == "Bearish" or recentImpulse == "Bearish" or nearShortZone
+ambiguousNoTrade = bothSidesTouched and contextPrefersBull == contextPrefersBear
+resolvedBullishRaw = bothSidesTouched ? (contextPrefersBull and not contextPrefersBear) : rawBullishSfp
+resolvedBearishRaw = bothSidesTouched ? (contextPrefersBear and not contextPrefersBull) : rawBearishSfp
+
+bearLevel = resolvedBearishRaw ? bearLevelRaw : na
+bearSource = resolvedBearishRaw ? bearSourceRaw : ""
+bullLevel = resolvedBullishRaw ? bullLevelRaw : na
+bullSource = resolvedBullishRaw ? bullSourceRaw : ""
+
+// Countertrend filter. In a strong trend, countertrend SFPs need stronger wick
+// rejection and structure weakness/strength. Otherwise they are No Trade.
+bearStrongRejection = upperWick >= math.max(bodySize, syminfo.mintick) * strongRejectionWickRatio and close < open
+bullStrongRejection = lowerWick >= math.max(bodySize, syminfo.mintick) * strongRejectionWickRatio and close > open
+bearStructureWeakness = close < emaFast and close < low[1]
+bullStructureStrength = close > emaFast and close > high[1]
+bearCountertrendBlocked = resolvedBearishRaw and marketMode == "Trend" and emaBias == "Bullish" and not (bearStrongRejection and bearStructureWeakness)
+bullCountertrendBlocked = resolvedBullishRaw and marketMode == "Trend" and emaBias == "Bearish" and not (bullStrongRejection and bullStructureStrength)
+
+// Weakening push / exhaustion is a quality clue only. It is not required for an
+// entry and never uses future candles. It looks at the current reclaim bar and
+// already-known recent body/volume balance.
+bullBodyPressure = ta.sma(close > open ? bodySize : 0.0, 3)
+bearBodyPressure = ta.sma(close < open ? bodySize : 0.0, 3)
+volumeNotOverextended = volume <= ta.sma(volume, 10) * 1.2
+bearExhaustionClue = resolvedBearishRaw and (bearStrongRejection or bullBodyPressure <= bearBodyPressure or volumeNotOverextended)
+bullExhaustionClue = resolvedBullishRaw and (bullStrongRejection or bearBodyPressure <= bullBodyPressure or volumeNotOverextended)
+
+// Expansion filter stays from v0.2. Large expansion candles are a wait condition.
+expansionBearish = resolvedBearishRaw and largeCandle
+expansionBullish = resolvedBullishRaw and largeCandle
+
+// Same-zone clustering and simple invalidation awareness.
+var float lastPrimaryBearLevel = na
+var int lastPrimaryBearBar = na
+var bool lastBearInvalidated = false
+var float lastPrimaryBullLevel = na
+var int lastPrimaryBullBar = na
+var bool lastBullInvalidated = false
+
+if not na(lastPrimaryBearLevel) and close > lastPrimaryBearLevel
+    lastBearInvalidated := true
+
+if not na(lastPrimaryBullLevel) and close < lastPrimaryBullLevel
+    lastBullInvalidated := true
+
+sameBearCluster = resolvedBearishRaw and not na(atrValue) and not na(lastPrimaryBearLevel) and not lastBearInvalidated and bar_index - lastPrimaryBearBar <= clusterLookbackBars and math.abs(bearLevel - lastPrimaryBearLevel) <= atrValue * sameZoneAtrDistance
+sameBullCluster = resolvedBullishRaw and not na(atrValue) and not na(lastPrimaryBullLevel) and not lastBullInvalidated and bar_index - lastPrimaryBullBar <= clusterLookbackBars and math.abs(bullLevel - lastPrimaryBullLevel) <= atrValue * sameZoneAtrDistance
+
+// === TP0 / 2R protection check ===
+// TP0 is the protection point. This visual version plots TP0 at 2R for review.
+// A future execution bot should calculate the protection price so closing 50%
+// covers fees, remaining-position stop risk, and optional slippage buffer.
+// TP1/TP2/TP3/Runner are future profit-taking modules.
+nearestAbove(currentNearest, candidate, entryPrice) =>
+    not na(candidate) and candidate > entryPrice ? (na(currentNearest) ? candidate : math.min(currentNearest, candidate)) : currentNearest
+
+nearestBelow(currentNearest, candidate, entryPrice) =>
+    not na(candidate) and candidate < entryPrice ? (na(currentNearest) ? candidate : math.max(currentNearest, candidate)) : currentNearest
+
+// v0.3.3 fixes late entries by anchoring Entry to the original reclaim event.
+// Entry is at/just beyond the actual trigger level selected above, never at a
+// delayed retest price. TP0 is calculated from this early reclaim-level entry.
+bullEntryDelayBars = resolvedBullishRaw ? ta.barssince(low < bullLevel) : na
+bearEntryDelayBars = resolvedBearishRaw ? ta.barssince(high > bearLevel) : na
+bullEntry = resolvedBullishRaw ? bullLevel + syminfo.mintick : na
+bullSl = resolvedBullishRaw and not na(atrValue) ? low - atrValue * slAtrBuffer : na
+bullRisk = resolvedBullishRaw ? bullEntry - bullSl : na
+bullTp0 = resolvedBullishRaw ? bullEntry + bullRisk * 2.0 : na
+bearEntry = resolvedBearishRaw ? bearLevel - syminfo.mintick : na
+bearSl = resolvedBearishRaw and not na(atrValue) ? high + atrValue * slAtrBuffer : na
+bearRisk = resolvedBearishRaw ? bearSl - bearEntry : na
+bearTp0 = resolvedBearishRaw ? bearEntry - bearRisk * 2.0 : na
+bullEntryDistanceR = resolvedBullishRaw and bullRisk > syminfo.mintick ? math.max(0.0, close - bullEntry) / bullRisk : na
+bearEntryDistanceR = resolvedBearishRaw and bearRisk > syminfo.mintick ? math.max(0.0, bearEntry - close) / bearRisk : na
+bullEntryDistanceUsd = resolvedBullishRaw ? math.abs(close - bullLevel) : na
+bearEntryDistanceUsd = resolvedBearishRaw ? math.abs(close - bearLevel) : na
+bullLateByDistance = resolvedBullishRaw and ((not na(bullEntryDistanceR) and bullEntryDistanceR > maxEntryDistanceFromTriggerR) or (not na(bullEntryDistanceUsd) and bullEntryDistanceUsd > maxEntryDistanceFromTriggerUsd))
+bearLateByDistance = resolvedBearishRaw and ((not na(bearEntryDistanceR) and bearEntryDistanceR > maxEntryDistanceFromTriggerR) or (not na(bearEntryDistanceUsd) and bearEntryDistanceUsd > maxEntryDistanceFromTriggerUsd))
+bullLateByDelay = resolvedBullishRaw and not na(bullEntryDelayBars) and bullEntryDelayBars > maxEntryDelayBars
+bearLateByDelay = resolvedBearishRaw and not na(bearEntryDelayBars) and bearEntryDelayBars > maxEntryDelayBars
+bullLateEntry = bullLateByDistance or bullLateByDelay
+bearLateEntry = bearLateByDistance or bearLateByDelay
+bullMissedTooLate = bullLateByDelay
+bearMissedTooLate = bearLateByDelay
+
+float nearestBullReaction = na
+nearestBullReaction := dailyHighValid ? nearestAbove(nearestBullReaction, activeDailyHigh, bullEntry) : nearestBullReaction
+nearestBullReaction := weeklyHighValid ? nearestAbove(nearestBullReaction, activeWeeklyHigh, bullEntry) : nearestBullReaction
+nearestBullReaction := monthlyHighValid ? nearestAbove(nearestBullReaction, activeMonthlyHigh, bullEntry) : nearestBullReaction
+nearestBullReaction := nearestAbove(nearestBullReaction, lastSwingHigh, bullEntry)
+nearestBullReaction := nearestAbove(nearestBullReaction, shortZoneTop, bullEntry)
+
+float nearestBearReaction = na
+nearestBearReaction := dailyLowValid ? nearestBelow(nearestBearReaction, activeDailyLow, bearEntry) : nearestBearReaction
+nearestBearReaction := weeklyLowValid ? nearestBelow(nearestBearReaction, activeWeeklyLow, bearEntry) : nearestBearReaction
+nearestBearReaction := monthlyLowValid ? nearestBelow(nearestBearReaction, activeMonthlyLow, bearEntry) : nearestBearReaction
+nearestBearReaction := nearestBelow(nearestBearReaction, lastSwingLow, bearEntry)
+nearestBearReaction := nearestBelow(nearestBearReaction, longZoneBottom, bearEntry)
+
+bullTp0Blocked = resolvedBullishRaw and bullRisk > 0 and not na(nearestBullReaction) and nearestBullReaction < bullTp0
+bearTp0Blocked = resolvedBearishRaw and bearRisk > 0 and not na(nearestBearReaction) and nearestBearReaction > bearTp0
+bullPlanValid = resolvedBullishRaw and bullRisk > syminfo.mintick and not bullTp0Blocked and not bullLateEntry
+bearPlanValid = resolvedBearishRaw and bearRisk > syminfo.mintick and not bearTp0Blocked and not bearLateEntry
+
+primaryBearishSfp = bearPlanValid and not ambiguousNoTrade and not bearCountertrendBlocked and not largeCandle and not sameBearCluster
+primaryBullishSfp = bullPlanValid and not ambiguousNoTrade and not bullCountertrendBlocked and not largeCandle and not sameBullCluster
+retestBearishSfp = bearPlanValid and not ambiguousNoTrade and not bearCountertrendBlocked and not largeCandle and sameBearCluster
+retestBullishSfp = bullPlanValid and not ambiguousNoTrade and not bullCountertrendBlocked and not largeCandle and sameBullCluster
+
+// === Drawing helpers ===
+var label[] setupLabels = array.new<label>()
+var line[] activePlanLines = array.new<line>()
+var label[] activePlanLabels = array.new<label>()
+
+rememberSetupLabel(newLabel) =>
+    if not na(newLabel)
+        array.push(setupLabels, newLabel)
+        if array.size(setupLabels) > maxVisibleSetupLabels
+            label.delete(array.shift(setupLabels))
+
+clearLatestPlan() =>
+    if array.size(activePlanLines) > 0
+        for lineIndex = 0 to array.size(activePlanLines) - 1
+            line.delete(array.get(activePlanLines, lineIndex))
+    if array.size(activePlanLabels) > 0
+        for labelIndex = 0 to array.size(activePlanLabels) - 1
+            label.delete(array.get(activePlanLabels, labelIndex))
+    array.clear(activePlanLines)
+    array.clear(activePlanLabels)
+
+drawTrigger(level, sourceName, triggerColor) =>
+    if showTriggerLevelLines and not na(level)
+        line.new(math.max(0, bar_index - 3), level, bar_index + 3, level, color=triggerColor, width=2)
+        label.new(bar_index + 3, level, sourceName, style=label.style_label_left, color=color.new(triggerColor, 25), textcolor=color.white, size=size.tiny)
+
+drawPlan(entryPrice, slPrice, tp0Price, planColor) =>
+    if showTradePlanLines and not na(entryPrice) and not na(slPrice) and not na(tp0Price)
+        if showOnlyLatestSetup
+            clearLatestPlan()
+        entryLine = line.new(bar_index, entryPrice, bar_index + 8, entryPrice, color=color.new(color.white, 0), width=1)
+        slLine = line.new(bar_index, slPrice, bar_index + 8, slPrice, color=color.new(color.red, 0), width=1)
+        tp0Line = line.new(bar_index, tp0Price, bar_index + 8, tp0Price, color=planColor, width=2)
+        entryLabel = label.new(bar_index + 8, entryPrice, "Entry", style=label.style_label_left, color=color.new(color.white, 20), textcolor=color.black, size=size.tiny)
+        slLabel = label.new(bar_index + 8, slPrice, "SL", style=label.style_label_left, color=color.new(color.red, 20), textcolor=color.white, size=size.tiny)
+        tp0Label = label.new(bar_index + 8, tp0Price, "TP0 2R", style=label.style_label_left, color=color.new(planColor, 20), textcolor=color.white, size=size.tiny)
+        array.push(activePlanLines, entryLine)
+        array.push(activePlanLines, slLine)
+        array.push(activePlanLines, tp0Line)
+        array.push(activePlanLabels, entryLabel)
+        array.push(activePlanLabels, slLabel)
+        array.push(activePlanLabels, tp0Label)
+
+// === Final status and labels ===
+setupText = "None"
+statusText = "No Trade"
+tp0Text = "N/A"
+activeZoneText = nearLongZone ? "Long Zone / Consolidation Bottom" : nearShortZone ? "Short Zone / Consolidation Top" : "None"
+
+bgcolor(strictChopNoTrade ? color.new(color.gray, 88) : marketMode == "Expansion" ? color.new(color.orange, 90) : ambiguousNoTrade ? color.new(color.yellow, 90) : na, title="Mode background")
+
+if strictChopNoTrade
+    setupText := "Chop"
+    statusText := "Chop / No Trade"
+    tp0Text := "N/A"
+    if showChopWarnings and not strictChopNoTrade[1]
+        rememberSetupLabel(label.new(bar_index, high, "Chop\nNo Trade", style=label.style_label_down, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny))
+else if ambiguousNoTrade
+    setupText := "Ambiguous"
+    statusText := "Ambiguous / No Trade"
+    tp0Text := "N/A"
+    if showConflictLabels
+        rememberSetupLabel(label.new(bar_index, high, "Ambiguous\nNo Trade", style=label.style_label_down, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny))
+else if expansionBearish or expansionBullish
+    setupText := expansionBearish ? "Bear Sweep" : "Bull Sweep"
+    statusText := "Expansion / Wait"
+    tp0Text := "Wait"
+    if showExpansionWarnings
+        expansionLevel = expansionBearish ? bearLevelRaw : bullLevelRaw
+        expansionSource = expansionBearish ? bearSourceRaw : bullSourceRaw
+        rememberSetupLabel(label.new(bar_index, expansionBearish ? high : low, "Expansion\nWait", style=expansionBearish ? label.style_label_down : label.style_label_up, color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny))
+        drawTrigger(expansionLevel, expansionSource, color.new(color.orange, 0))
+else if bearCountertrendBlocked or bullCountertrendBlocked
+    setupText := bearCountertrendBlocked ? "Bear SFP" : "Bull SFP"
+    statusText := "Countertrend / No Trade"
+    tp0Text := "N/A"
+    if showSfpLabels
+        rememberSetupLabel(label.new(bar_index, bearCountertrendBlocked ? high : low, "Countertrend\nNo Trade", style=bearCountertrendBlocked ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny))
+else if bearLateEntry or bullLateEntry
+    setupText := bearLateEntry ? "Bear SFP" : "Bull SFP"
+    statusText := "Late Entry / No Trade"
+    tp0Text := "Missed"
+    if showSfpLabels
+        lateLevel = bearLateEntry ? bearLevel : bullLevel
+        lateSource = bearLateEntry ? bearSource : bullSource
+        rememberSetupLabel(label.new(bar_index, bearLateEntry ? high : low, "Missed\nToo Late", style=bearLateEntry ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny))
+        drawTrigger(lateLevel, lateSource, color.new(color.gray, 0))
+else if bearTp0Blocked or bullTp0Blocked
+    setupText := bearTp0Blocked ? "Bear SFP" : "Bull SFP"
+    statusText := "TP0 blocked"
+    tp0Text := "Blocked"
+    if showSfpLabels
+        blockedLevel = bearTp0Blocked ? bearLevel : bullLevel
+        blockedSource = bearTp0Blocked ? bearSource : bullSource
+        rememberSetupLabel(label.new(bar_index, bearTp0Blocked ? high : low, "No Trade\nTP0 blocked", style=bearTp0Blocked ? label.style_label_down : label.style_label_up, color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny))
+        drawTrigger(blockedLevel, blockedSource, color.new(color.orange, 0))
+else if primaryBearishSfp
+    setupText := "Bear SFP"
+    statusText := "Valid Setup"
+    tp0Text := "Clear"
+    if showSfpLabels
+        bearLabelText = "Bear SFP\n" + bearSource + (bearExhaustionClue ? "\nWeak push" : "")
+        rememberSetupLabel(label.new(bar_index, high, bearLabelText, style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.tiny))
+        drawTrigger(bearLevel, bearSource, color.new(color.red, 0))
+        drawPlan(bearEntry, bearSl, bearTp0, color.new(color.red, 0))
+    lastPrimaryBearLevel := bearLevel
+    lastPrimaryBearBar := bar_index
+    lastBearInvalidated := false
+else if primaryBullishSfp
+    setupText := "Bull SFP"
+    statusText := "Valid Setup"
+    tp0Text := "Clear"
+    if showSfpLabels
+        bullLabelText = "Bull SFP\n" + bullSource + (bullExhaustionClue ? "\nWeak push" : "")
+        rememberSetupLabel(label.new(bar_index, low, bullLabelText, style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white, size=size.tiny))
+        drawTrigger(bullLevel, bullSource, color.new(color.green, 0))
+        drawPlan(bullEntry, bullSl, bullTp0, color.new(color.green, 0))
+    lastPrimaryBullLevel := bullLevel
+    lastPrimaryBullBar := bar_index
+    lastBullInvalidated := false
+else if retestBearishSfp
+    setupText := "Re-sweep"
+    statusText := "Retest / No new entry"
+    tp0Text := "Cluster"
+    if showSfpLabels
+        rememberSetupLabel(label.new(bar_index, high, "Re-sweep\n" + bearSource, style=label.style_label_down, color=color.new(color.maroon, 0), textcolor=color.white, size=size.tiny))
+        drawTrigger(bearLevel, bearSource, color.new(color.maroon, 0))
+else if retestBullishSfp
+    setupText := "Retest"
+    statusText := "Retest / No new entry"
+    tp0Text := "Cluster"
+    if showSfpLabels
+        rememberSetupLabel(label.new(bar_index, low, "Retest\n" + bullSource, style=label.style_label_up, color=color.new(color.teal, 0), textcolor=color.white, size=size.tiny))
+        drawTrigger(bullLevel, bullSource, color.new(color.teal, 0))
+else if nearLongZone
+    setupText := "Long Zone"
+    statusText := "Watch"
+    tp0Text := "Need SFP"
+else if nearShortZone
+    setupText := "Short Zone"
+    statusText := "Watch"
+    tp0Text := "Need SFP"
+
+// Mark D/W/M levels consumed after signal checks, so the first sweep/reclaim can
+// be evaluated once but later touches cannot create new D/W/M primary entries.
+if dailyHighValid and high >= activeDailyHigh
+    dailyHighConsumed := true
+if dailyLowValid and low <= activeDailyLow
+    dailyLowConsumed := true
+if weeklyHighValid and high >= activeWeeklyHigh
+    weeklyHighConsumed := true
+if weeklyLowValid and low <= activeWeeklyLow
+    weeklyLowConsumed := true
+if monthlyHighValid and high >= activeMonthlyHigh
+    monthlyHighConsumed := true
+if monthlyLowValid and low <= activeMonthlyLow
+    monthlyLowConsumed := true
+
+// Consume or invalidate swing levels after signal checks.
+if swingHighFresh and high >= lastSwingHigh
+    swingHighTouches += 1
+
+if swingLowFresh and low <= lastSwingLow
+    swingLowTouches += 1
+
+if swingHighFresh and ((invalidateSwingOnCloseBeyondLevel and close > lastSwingHigh) or swingHighTouches > maxTouchesBeforeConsumed or swingHighAge > maxSwingLevelAgeBars or (consumeSwingAfterFirstSfp and bearishSweepReclaim(lastSwingHigh)))
+    swingHighConsumed := true
+
+if swingLowFresh and ((invalidateSwingOnCloseBeyondLevel and close < lastSwingLow) or swingLowTouches > maxTouchesBeforeConsumed or swingLowAge > maxSwingLevelAgeBars or (consumeSwingAfterFirstSfp and bullishSweepReclaim(lastSwingLow)))
+    swingLowConsumed := true
+
+// === Dashboard ===
+var table dashboard = table.new(position.top_right, 2, 8, border_width=1)
+if showDashboard and barstate.islast
+    table.cell(dashboard, 0, 0, "Version", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(dashboard, 1, 0, "v0.3.3", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(dashboard, 0, 1, "Market Mode", text_color=color.white)
+    table.cell(dashboard, 1, 1, marketMode, text_color=color.white)
+    table.cell(dashboard, 0, 2, "EMA Bias", text_color=color.white)
+    table.cell(dashboard, 1, 2, emaBias, text_color=color.white)
+    table.cell(dashboard, 0, 3, "Volatility", text_color=color.white)
+    table.cell(dashboard, 1, 3, volatilityText, text_color=color.white)
+    table.cell(dashboard, 0, 4, "Setup", text_color=color.white)
+    table.cell(dashboard, 1, 4, setupText, text_color=color.white)
+    table.cell(dashboard, 0, 5, "Status", text_color=color.white)
+    table.cell(dashboard, 1, 5, statusText, text_color=color.white)
+    table.cell(dashboard, 0, 6, "Nearest / Active Zone", text_color=color.white)
+    table.cell(dashboard, 1, 6, activeZoneText, text_color=color.white)
+    table.cell(dashboard, 0, 7, "TP0 status", text_color=color.white)
+    table.cell(dashboard, 1, 7, tp0Text, text_color=color.white)
+
+// Visual-only alert placeholders. No orders, no webhooks, no exchange commands.
+alertcondition(primaryBearishSfp, title="Bear SFP", message="Bear SFP visual setup on {{ticker}} {{interval}}.")
+alertcondition(primaryBullishSfp, title="Bull SFP", message="Bull SFP visual setup on {{ticker}} {{interval}}.")
+alertcondition(strictChopNoTrade, title="Chop No Trade", message="Chop / No Trade visual regime on {{ticker}} {{interval}}.")
+alertcondition(ambiguousNoTrade, title="Ambiguous No Trade", message="Ambiguous / No Trade visual condition on {{ticker}} {{interval}}.")
+alertcondition(bearTp0Blocked or bullTp0Blocked, title="TP0 Blocked", message="No Trade / TP0 blocked visual condition on {{ticker}} {{interval}}.")
+alertcondition(bearLateEntry or bullLateEntry, title="Late Entry No Trade", message="Late Entry / No Trade visual condition on {{ticker}} {{interval}}.")
