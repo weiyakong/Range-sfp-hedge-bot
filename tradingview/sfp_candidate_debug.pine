@@ -1,7 +1,8 @@
 //@version=6
-indicator("SFP Candidate Debug v0.2", overlay=true, max_lines_count=500, max_labels_count=200)
+indicator("SFP Candidate Debug v0.3", overlay=true, max_lines_count=500, max_labels_count=200)
 
 // Diagnostic only: raw swing -> Candidate after 700+ USD move -> sweep -> SFP confirmed / broken.
+// Candidate labels are drawn on the original raw swing bar, not on the confirmation bar.
 // No entries, SL, TP, strategy orders, webhooks, or live trading.
 
 showDashboard = input.bool(true, "Show dashboard")
@@ -30,6 +31,7 @@ var float[] rawPrice = array.new<float>()
 var bool[] rawIsHigh = array.new<bool>()
 var string[] rawSource = array.new<string>()
 var bool[] rawActive = array.new<bool>()
+var int[] rawBar = array.new<int>()
 
 var float[] candPrice = array.new<float>()
 var bool[] candIsHigh = array.new<bool>()
@@ -37,6 +39,7 @@ var string[] candSource = array.new<string>()
 var bool[] candActive = array.new<bool>()
 var bool[] candPendingSweep = array.new<bool>()
 var int[] candPendingBar = array.new<int>()
+var int[] candOriginBar = array.new<int>()
 var line[] candLine = array.new<line>()
 
 var label[] labels = array.new<label>()
@@ -58,8 +61,8 @@ rememberLabel(lb) =>
         if array.size(labels) > maxLabels
             label.delete(array.shift(labels))
 
-labelAt(price, labelText, isHigh, bg) =>
-    rememberLabel(label.new(bar_index, price, labelText, style=isHigh ? label.style_label_down : label.style_label_up, color=bg, textcolor=color.white, size=size.tiny))
+labelAt(x, y, labelText, isHigh, bg) =>
+    rememberLabel(label.new(x, y, labelText, style=isHigh ? label.style_label_down : label.style_label_up, color=bg, textcolor=color.white, size=size.tiny))
 
 rawMove(price, isHigh) =>
     isHigh ? price - low : high - price
@@ -71,28 +74,31 @@ hasDuplicateCandidate(price, isHigh) =>
             duplicate := duplicate or (array.get(candActive, i) and array.get(candIsHigh, i) == isHigh and math.abs(array.get(candPrice, i) - price) <= mergeUsd)
     duplicate
 
-addRawSwing(price, isHigh, src) =>
+addRawSwing(price, isHigh, src, originBar) =>
     if not na(price)
         array.push(rawPrice, price)
         array.push(rawIsHigh, isHigh)
         array.push(rawSource, src)
         array.push(rawActive, true)
+        array.push(rawBar, originBar)
         if array.size(rawPrice) > maxRawSwings
             array.shift(rawPrice)
             array.shift(rawIsHigh)
             array.shift(rawSource)
             array.shift(rawActive)
+            array.shift(rawBar)
 
-addCandidate(price, isHigh, src) =>
+addCandidate(price, isHigh, src, originBar) =>
     bool added = false
     if not hasDuplicateCandidate(price, isHigh)
-        ln = line.new(bar_index, price, bar_index + 1, price, color=levelColor(isHigh, true), width=2, extend=extend.right)
+        ln = line.new(originBar, price, bar_index + 1, price, color=levelColor(isHigh, true), width=2, extend=extend.right)
         array.push(candPrice, price)
         array.push(candIsHigh, isHigh)
         array.push(candSource, src)
         array.push(candActive, true)
         array.push(candPendingSweep, false)
         array.push(candPendingBar, na)
+        array.push(candOriginBar, originBar)
         array.push(candLine, ln)
         added := true
         if array.size(candPrice) > maxCandidates
@@ -104,6 +110,7 @@ addCandidate(price, isHigh, src) =>
             array.shift(candActive)
             array.shift(candPendingSweep)
             array.shift(candPendingBar)
+            array.shift(candOriginBar)
     added
 
 retireCandidate(i) =>
@@ -117,13 +124,12 @@ retireCandidate(i) =>
     if not showPastLevels
         line.delete(ln)
 
-// 1) Collect raw swings. They are internal only, not trading levels.
 currentHigh = useCurrentTfSwings ? ta.pivothigh(high, currentTfPivotLen, currentTfPivotLen) : na
 currentLow = useCurrentTfSwings ? ta.pivotlow(low, currentTfPivotLen, currentTfPivotLen) : na
 if not na(currentHigh)
-    addRawSwing(currentHigh, true, "current TF swing high")
+    addRawSwing(currentHigh, true, "current TF swing high", bar_index - currentTfPivotLen)
 if not na(currentLow)
-    addRawSwing(currentLow, false, "current TF swing low")
+    addRawSwing(currentLow, false, "current TF swing low", bar_index - currentTfPivotLen)
 
 htfPH(tf) => request.security(syminfo.tickerid, tf, ta.pivothigh(high, htfPivotLen, htfPivotLen), barmerge.gaps_off, barmerge.lookahead_off)
 htfPL(tf) => request.security(syminfo.tickerid, tf, ta.pivotlow(low, htfPivotLen, htfPivotLen), barmerge.gaps_off, barmerge.lookahead_off)
@@ -134,24 +140,24 @@ p1hL = use1HSwings ? htfPL("60") : na
 p4hH = use4HSwings ? htfPH("240") : na
 p4hL = use4HSwings ? htfPL("240") : na
 if newVal(p1hH)
-    addRawSwing(p1hH, true, "1H swing high")
+    addRawSwing(p1hH, true, "1H swing high", bar_index)
 if newVal(p1hL)
-    addRawSwing(p1hL, false, "1H swing low")
+    addRawSwing(p1hL, false, "1H swing low", bar_index)
 if newVal(p4hH)
-    addRawSwing(p4hH, true, "4H swing high")
+    addRawSwing(p4hH, true, "4H swing high", bar_index)
 if newVal(p4hL)
-    addRawSwing(p4hL, false, "4H swing low")
+    addRawSwing(p4hL, false, "4H swing low", bar_index)
 
-// 2) Raw swing becomes Candidate only after price moved 700+ USD away.
 if array.size(rawPrice) > 0
     for i = 0 to array.size(rawPrice) - 1
         if array.get(rawActive, i)
             rp = array.get(rawPrice, i)
             rh = array.get(rawIsHigh, i)
             rs = array.get(rawSource, i)
+            rb = array.get(rawBar, i)
             moveSize = rawMove(rp, rh)
             if moveSize >= minMoveUsd
-                wasAdded = addCandidate(rp, rh, rs)
+                wasAdded = addCandidate(rp, rh, rs, rb)
                 array.set(rawActive, i, false)
                 if wasAdded
                     lastStatus := rh ? "Candidate High" : "Candidate Low"
@@ -159,9 +165,8 @@ if array.size(rawPrice) > 0
                     lastPrice := rp
                     if showCandidateLabels
                         candidateText = (rh ? "Candidate High" : "Candidate Low") + " · " + sourceShort(rs) + " · +" + str.tostring(math.round(moveSize))
-                        labelAt(rp, candidateText, rh, color.new(levelColor(rh, true), 0))
+                        labelAt(rb, rp, candidateText, rh, color.new(levelColor(rh, true), 0))
 
-// 3) D/W/M body reference levels. Reference only, not Candidates.
 dHigh = useDwmBodyReference ? request.security(syminfo.tickerid, "D", math.max(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off) : na
 dLow = useDwmBodyReference ? request.security(syminfo.tickerid, "D", math.min(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off) : na
 wHigh = useDwmBodyReference ? request.security(syminfo.tickerid, "W", math.max(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off) : na
@@ -175,7 +180,6 @@ plot(wLow, "W Body Low reference", color=color.new(color.orange, 72), linewidth=
 plot(mHigh, "M Body High reference", color=color.new(color.white, 72), linewidth=1, style=plot.style_linebr)
 plot(mLow, "M Body Low reference", color=color.new(color.white, 72), linewidth=1, style=plot.style_linebr)
 
-// 4) Watch Candidates for sweep -> SFP confirmed / broken.
 if array.size(candPrice) > 0
     for i = 0 to array.size(candPrice) - 1
         if array.get(candActive, i)
@@ -197,22 +201,22 @@ if array.size(candPrice) > 0
                 lastSource := sourceShort(cs)
                 lastPrice := cp
                 if showSweepLabels
-                    labelAt(cp, ch ? "Swept Candidate High" : "Swept Candidate Low", ch, color.new(color.gray, 25))
+                    labelAt(bar_index, cp, ch ? "Swept Candidate High" : "Swept Candidate Low", ch, color.new(color.gray, 25))
             if sameBarSfp or nextBarSfp
                 lastStatus := ch ? "SFP High confirmed" : "SFP Low confirmed"
                 lastSource := sourceShort(cs)
                 lastPrice := cp
                 sfpEventThisBar := true
                 if showSfpLabels
-                    sfpText = (ch ? "SFP High confirmed" : "SFP Low confirmed") + " · " + sourceShort(cs)
-                    labelAt(cp, sfpText, ch, color.new(levelColor(ch, true), 0))
+                    sfpText = (ch ? "SFP High confirmed" : "SFP Low confirmed") + " · " + sourceShort(cs) + " · " + str.tostring(cp, format.mintick)
+                    labelAt(bar_index, cp, sfpText, ch, color.new(levelColor(ch, true), 0))
                 retireCandidate(i)
             else if cleanBreak and not sameBarSfp and not nextBarSfp
                 lastStatus := ch ? "Candidate High broken" : "Candidate Low broken"
                 lastSource := sourceShort(cs)
                 lastPrice := cp
                 if showBrokenLabels
-                    labelAt(cp, ch ? "Candidate High broken" : "Candidate Low broken", ch, color.new(color.red, 35))
+                    labelAt(bar_index, cp, ch ? "Candidate High broken" : "Candidate Low broken", ch, color.new(color.red, 35))
                 retireCandidate(i)
             else if pending and bar_index - pendingBar > maxImmediateReclaimBars
                 array.set(candPendingSweep, i, false)
@@ -234,7 +238,7 @@ var table dash = table.new(position.top_right, 2, 5, border_width=1)
 if showDashboard and barstate.islast
     table.clear(dash, 0, 0, 1, 4)
     table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.new(color.black, 0))
-    table.cell(dash, 1, 0, "Candidate Debug v0.2", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, "Candidate Debug v0.3", text_color=color.white, bgcolor=color.new(color.black, 0))
     table.cell(dash, 0, 1, "Nearest Candidate", text_color=color.white)
     table.cell(dash, 1, 1, nearest, text_color=color.white)
     table.cell(dash, 0, 2, "Last status", text_color=color.white)
