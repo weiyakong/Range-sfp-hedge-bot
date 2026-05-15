@@ -1,0 +1,230 @@
+//@version=6
+indicator("SFP Levels Promoted v0.1", overlay=true, max_lines_count=300, max_labels_count=80)
+
+showDashboard = input.bool(true, "Show dashboard")
+showSfpLabels = input.bool(true, "Show SFP labels")
+showPastLevels = input.bool(false, "Show past levels")
+use1H = input.bool(false, "Use 1H swings")
+use4H = input.bool(true, "Use 4H swings")
+use8H = input.bool(true, "Use 8H swings")
+use12H = input.bool(true, "Use 12H swings")
+use1D = input.bool(true, "Use 1D swings")
+useDwmBody = input.bool(false, "Use D/W/M body levels")
+useLtf = input.bool(false, "Use current-TF swings")
+htfPivotLen = input.int(3, "HTF pivot length", minval=2, maxval=20)
+ltfPivotLen = input.int(8, "Current-TF pivot length", minval=3, maxval=40)
+mergeUsd = input.float(180.0, "Merge nearby levels USD", minval=0.0, step=10.0)
+minMoveFromLevelUsd = input.float(650.0, "Minimum move away to promote level USD", minval=0.0, step=50.0)
+minMoveFromLevelAtr = input.float(3.0, "Minimum move away to promote level ATR", minval=0.0, step=0.25)
+breakBufferUsd = input.float(120.0, "Clean break buffer USD", minval=0.0, step=10.0)
+maxImmediateReclaimBars = input.int(1, "Immediate reclaim window bars", minval=0, maxval=2)
+eventCooldownBars = input.int(12, "Event cooldown bars", minval=1, maxval=100)
+atrLen = input.int(14, "ATR length", minval=1)
+maxLevels = input.int(60, "Max active levels", minval=10, maxval=200)
+maxLabels = input.int(40, "Max labels", minval=5, maxval=80)
+
+atrValue = ta.atr(atrLen)
+minMove = math.max(minMoveFromLevelUsd, not na(atrValue) ? atrValue * minMoveFromLevelAtr : 0.0)
+
+var float[] lvlPrice = array.new<float>()
+var bool[] lvlHigh = array.new<bool>()
+var bool[] lvlActive = array.new<bool>()
+var string[] lvlSource = array.new<string>()
+var line[] lvlLine = array.new<line>()
+var int[] lvlLastEvent = array.new<int>()
+var bool[] lvlPending = array.new<bool>()
+var int[] lvlPendingBar = array.new<int>()
+var label[] labels = array.new<label>()
+
+var string lastEvent = "None"
+var string lastSource = ""
+var float lastPrice = na
+bool sfpEvent = false
+
+srcShort(src) =>
+    str.contains(src, "1H") ? "1H" : str.contains(src, "4H") ? "4H" : str.contains(src, "8H") ? "8H" : str.contains(src, "12H") ? "12H" : str.contains(src, "1D") ? "1D" : str.contains(src, "Daily") ? "D Body" : str.contains(src, "Weekly") ? "W Body" : str.contains(src, "Monthly") ? "M Body" : str.contains(src, "LTF") ? "LTF" : src
+
+clr(isHigh, active) =>
+    base = isHigh ? color.rgb(255, 80, 130) : color.lime
+    active ? color.new(base, 0) : color.new(base, 85)
+
+rememberLabel(lb) =>
+    array.push(labels, lb)
+    if array.size(labels) > maxLabels
+        label.delete(array.shift(labels))
+
+moveAwayOk(price, isHigh) =>
+    away = isHigh ? price - low : high - price
+    away >= minMove
+
+addLevel(price, isHigh, src) =>
+    if not na(price) and moveAwayOk(price, isHigh)
+        bool duplicate = false
+        if array.size(lvlPrice) > 0
+            for i = 0 to array.size(lvlPrice) - 1
+                duplicate := duplicate or (array.get(lvlActive, i) and array.get(lvlHigh, i) == isHigh and math.abs(array.get(lvlPrice, i) - price) <= mergeUsd)
+        if not duplicate
+            l = line.new(bar_index, price, bar_index + 1, price, color=clr(isHigh, true), width=2, extend=extend.right)
+            array.push(lvlPrice, price)
+            array.push(lvlHigh, isHigh)
+            array.push(lvlActive, true)
+            array.push(lvlSource, src)
+            array.push(lvlLine, l)
+            array.push(lvlLastEvent, na)
+            array.push(lvlPending, false)
+            array.push(lvlPendingBar, na)
+            if array.size(lvlPrice) > maxLevels
+                old = array.shift(lvlLine)
+                line.delete(old)
+                array.shift(lvlPrice)
+                array.shift(lvlHigh)
+                array.shift(lvlActive)
+                array.shift(lvlSource)
+                array.shift(lvlLastEvent)
+                array.shift(lvlPending)
+                array.shift(lvlPendingBar)
+
+retireLevel(i) =>
+    array.set(lvlActive, i, false)
+    array.set(lvlPending, i, false)
+    l = array.get(lvlLine, i)
+    line.set_extend(l, extend.none)
+    line.set_x2(l, bar_index)
+    line.set_color(l, clr(array.get(lvlHigh, i), false))
+    line.set_width(l, 1)
+    if not showPastLevels
+        line.delete(l)
+
+plotSfp(isHigh, src) =>
+    if showSfpLabels
+        t = (isHigh ? "SFP High" : "SFP Low") + " · " + srcShort(src)
+        rememberLabel(label.new(bar_index, isHigh ? high : low, t, style=isHigh ? label.style_label_down : label.style_label_up, color=clr(isHigh, true), textcolor=color.white, size=size.tiny))
+
+htfPH(tf) => request.security(syminfo.tickerid, tf, ta.pivothigh(high, htfPivotLen, htfPivotLen), barmerge.gaps_off, barmerge.lookahead_off)
+htfPL(tf) => request.security(syminfo.tickerid, tf, ta.pivotlow(low, htfPivotLen, htfPivotLen), barmerge.gaps_off, barmerge.lookahead_off)
+newVal(x) => not na(x) and na(x[1])
+
+p1hH = use1H ? htfPH("60") : na
+p1hL = use1H ? htfPL("60") : na
+p4hH = use4H ? htfPH("240") : na
+p4hL = use4H ? htfPL("240") : na
+p8hH = use8H ? htfPH("480") : na
+p8hL = use8H ? htfPL("480") : na
+p12hH = use12H ? htfPH("720") : na
+p12hL = use12H ? htfPL("720") : na
+p1dH = use1D ? htfPH("D") : na
+p1dL = use1D ? htfPL("D") : na
+
+if newVal(p1hH)
+    addLevel(p1hH, true, "1H Swing High")
+if newVal(p1hL)
+    addLevel(p1hL, false, "1H Swing Low")
+if newVal(p4hH)
+    addLevel(p4hH, true, "4H Swing High")
+if newVal(p4hL)
+    addLevel(p4hL, false, "4H Swing Low")
+if newVal(p8hH)
+    addLevel(p8hH, true, "8H Swing High")
+if newVal(p8hL)
+    addLevel(p8hL, false, "8H Swing Low")
+if newVal(p12hH)
+    addLevel(p12hH, true, "12H Swing High")
+if newVal(p12hL)
+    addLevel(p12hL, false, "12H Swing Low")
+if newVal(p1dH)
+    addLevel(p1dH, true, "1D Swing High")
+if newVal(p1dL)
+    addLevel(p1dL, false, "1D Swing Low")
+
+if useDwmBody
+    dHigh = request.security(syminfo.tickerid, "D", math.max(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+    dLow = request.security(syminfo.tickerid, "D", math.min(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+    wHigh = request.security(syminfo.tickerid, "W", math.max(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+    wLow = request.security(syminfo.tickerid, "W", math.min(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+    mHigh = request.security(syminfo.tickerid, "M", math.max(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+    mLow = request.security(syminfo.tickerid, "M", math.min(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
+    if not na(dHigh) and ta.change(time("D")) != 0
+        addLevel(dHigh, true, "Daily Body High")
+    if not na(dLow) and ta.change(time("D")) != 0
+        addLevel(dLow, false, "Daily Body Low")
+    if not na(wHigh) and ta.change(time("W")) != 0
+        addLevel(wHigh, true, "Weekly Body High")
+    if not na(wLow) and ta.change(time("W")) != 0
+        addLevel(wLow, false, "Weekly Body Low")
+    if not na(mHigh) and ta.change(time("M")) != 0
+        addLevel(mHigh, true, "Monthly Body High")
+    if not na(mLow) and ta.change(time("M")) != 0
+        addLevel(mLow, false, "Monthly Body Low")
+
+if useLtf
+    ltfH = ta.pivothigh(high, ltfPivotLen, ltfPivotLen)
+    ltfL = ta.pivotlow(low, ltfPivotLen, ltfPivotLen)
+    if not na(ltfH)
+        addLevel(ltfH, true, "LTF Swing High")
+    if not na(ltfL)
+        addLevel(ltfL, false, "LTF Swing Low")
+
+if array.size(lvlPrice) > 0
+    for i = 0 to array.size(lvlPrice) - 1
+        if array.get(lvlActive, i)
+            p = array.get(lvlPrice, i)
+            isH = array.get(lvlHigh, i)
+            s = array.get(lvlSource, i)
+            line.set_x2(array.get(lvlLine, i), bar_index + 1)
+            lastBar = array.get(lvlLastEvent, i)
+            cooldown = na(lastBar) or bar_index - lastBar >= eventCooldownBars
+            pending = array.get(lvlPending, i)
+            pendingBar = array.get(lvlPendingBar, i)
+            sameBarSfp = isH ? high > p and close < p : low < p and close > p
+            nextBarSfp = pending and bar_index - pendingBar <= maxImmediateReclaimBars and (isH ? close < p : close > p)
+            cleanBreak = isH ? close > p + breakBufferUsd : close < p - breakBufferUsd
+            if isH and high > p and close >= p and not sameBarSfp
+                array.set(lvlPending, i, true)
+                array.set(lvlPendingBar, i, bar_index)
+            if not isH and low < p and close <= p and not sameBarSfp
+                array.set(lvlPending, i, true)
+                array.set(lvlPendingBar, i, bar_index)
+            if cooldown and (sameBarSfp or nextBarSfp)
+                lastEvent := isH ? "SFP High" : "SFP Low"
+                lastSource := srcShort(s)
+                lastPrice := p
+                sfpEvent := true
+                array.set(lvlLastEvent, i, bar_index)
+                array.set(lvlPending, i, false)
+                plotSfp(isH, s)
+            else if cleanBreak and not sameBarSfp and not nextBarSfp
+                lastEvent := isH ? "Broken High" : "Broken Low"
+                lastSource := srcShort(s)
+                lastPrice := p
+                retireLevel(i)
+            else if pending and bar_index - pendingBar > maxImmediateReclaimBars
+                array.set(lvlPending, i, false)
+
+nearest = "None"
+float nearestDist = na
+if array.size(lvlPrice) > 0
+    for i = 0 to array.size(lvlPrice) - 1
+        if array.get(lvlActive, i)
+            p = array.get(lvlPrice, i)
+            isH = array.get(lvlHigh, i)
+            validSide = isH ? p > close : p < close
+            dist = math.abs(close - p)
+            if validSide and (na(nearestDist) or dist < nearestDist)
+                nearestDist := dist
+                nearest := (isH ? "High " : "Low ") + str.tostring(p, format.mintick) + " · " + srcShort(array.get(lvlSource, i))
+
+var table dash = table.new(position.top_right, 2, 5, border_width=1)
+if showDashboard and barstate.islast
+    table.clear(dash, 0, 0, 1, 4)
+    table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, "Promoted v0.1", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 0, 1, "Nearest active", text_color=color.white)
+    table.cell(dash, 1, 1, nearest, text_color=color.white)
+    table.cell(dash, 0, 2, "Last event", text_color=color.white)
+    table.cell(dash, 1, 2, lastEvent, text_color=color.white)
+    table.cell(dash, 0, 3, "Source", text_color=color.white)
+    table.cell(dash, 1, 3, lastSource, text_color=color.white)
+    table.cell(dash, 0, 4, "Price", text_color=color.white)
+    table.cell(dash, 1, 4, na(lastPrice) ? "" : str.tostring(lastPrice, format.mintick), text_color=color.white)
+
+alertcondition(sfpEvent, title="SFP at active level", message="SFP at active SFP level on {{ticker}} {{interval}}.")
