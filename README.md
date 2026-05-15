@@ -1,51 +1,47 @@
 # Range SFP Hedge Bot
 
-Version: **0.3.6**
+Version: **0.3.7**
 
-Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.3.6 provides a Pine Script v5 indicator for visually qualifying possible Swing Failure Pattern (SFP) setups around important BTC levels.
+Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.3.7 stabilizes the Pine Script v5 indicator logic for visually qualifying possible Swing Failure Pattern (SFP) setups around important BTC levels before any automation is considered.
 
 ## What this project does
 
-Version 0.3.6 is a setup qualification and level-lifecycle visualization tool:
+Version 0.3.7 is a setup qualification and level-lifecycle visualization tool. Its decision pipeline is intentionally explicit:
 
-1. Context first.
-2. Decision zone second.
-3. SFP/rejection third.
-4. Entry diagnostics and TP0 / reward-to-risk check fourth.
+1. Detect active fresh levels.
+2. Validate and freeze real structure levels.
+3. Detect current-bar sweep/reclaim only against levels that already existed before the current candle.
+4. Classify setup direction.
+5. Apply market mode, trend, active scenario, and countertrend filters.
+6. Apply TP0 and late-entry filters.
+7. Set the final status.
+8. Draw Entry / SL / TP0 only when final status is `Valid Setup`.
+9. Otherwise draw only a compact diagnostic label when diagnostics are enabled.
 
 The indicator helps visualize:
 
 - Previous daily, weekly, and monthly wick high/low levels as clean horizontal segments.
-- Previous daily, weekly, and monthly **body-aligned** high/low levels as dotted context levels.
+- Previous daily, weekly, and monthly **body-aligned** high/low levels as dotted context levels, with Daily body levels in lime/light green, Weekly body levels in orange, and Monthly body levels configurable with white as the default.
 - Level lifecycle states: `Fresh`, `Touched`, and `Consumed`.
 - Fresh levels extending to the right until their first touch.
-- Consumed levels hidden by default, with an optional historical visual test mode that keeps muted consumed levels and lifecycle labels visible.
-- Live Structure High / Structure Low levels from prior bars, extended until touched.
+- Consumed levels hidden by default, with an optional capped historical visual test mode.
+- Validated/frozen Structure High / Structure Low levels only after repeated touches, consolidation boundaries, or confirmed swings.
+- Candidate rolling structure levels only in debug mode; candidates are not trade triggers until validated/frozen.
 - Fresh swing highs and swing lows using pivot detection.
 - Market Mode: `Trend`, `Range`, `Chop`, or `Expansion`.
-- EMA bias, volatility state, setup status, trigger source, trigger type, TP0 status, and entry diagnostics in a dashboard.
-- Strict `Chop / No Trade` filtering so SFPs inside compressed chop are suppressed.
-- `Ambiguous / No Trade` handling when both sides sweep and context is unclear.
-- `Countertrend / No Trade` handling in strong trends unless rejection and structure weakness/strength are present.
-- Entry, SL, and TP0 lines when a valid visual setup qualifies.
-- Late-entry protection so Entry / SL / TP0 are not drawn after price has moved too far from the reclaim level or too many bars have passed.
-- Event-based SFP detection: a new setup requires the current bar itself to sweep and reclaim the trigger level.
-- D/W/M levels are context-only by default with `useDwmAsPrimaryTriggers = false`; they can be enabled as primary triggers only while fresh and untapped.
-- Untapped D/W/M level tracking so previous daily/weekly/monthly levels are used only while fresh and are not repeatedly labeled after being consumed.
-- Structure High / Structure Low and Local High / Local Low trigger selection so current structure can be used instead of automatically preferring D/W/M levels.
-- Swing High / Swing Low trigger handling so SH/SL levels can produce valid SFP setups when they are the actual swept/reclaimed level.
-- Entry diagnostics that explain trigger side/source, distance from trigger, risk (`R`), delay, and the active blocker such as chop, expansion, countertrend, late entry, retest, or TP0 blocked.
+- Compact dashboard mode by default, plus an optional full debug dashboard.
+- Strict `Chop / No Trade`, `Countertrend / No Trade`, `Pullback / No new entry`, `Noise / No structure`, `Retest / No new entry`, `Late Entry / No Trade`, and `TP0 blocked` classification.
+- Active scenario classification: a valid Bear SFP locks a Short scenario, and a valid Bull SFP locks a Long scenario until invalidation.
+- Entry, SL, and TP0 lines only when the final status is exactly `Valid Setup`.
+- Event-based SFP detection: a new setup requires the current bar itself to sweep and reclaim an already-existing fresh trigger level.
+- D/W/M levels remain context-only by default with `useDwmAsPrimaryTriggers = false`.
 - Weakening-push / exhaustion clues shown as quality context only, without requiring them as a signal condition.
 
-## Level lifecycle model
+## Level and structure model
 
-Version 0.3.6 tracks each major visual level through a simple lifecycle:
+Version 0.3.7 does **not** treat every rolling high or low as structure. A Structure High / Structure Low must be frozen before it can be used as an SFP trigger. A structure candidate becomes valid only when it has sufficient quality, such as repeated high/body-high or low/body-low touches, a consolidation top/bottom, or a confirmed swing. The level must already exist before the sweep/reclaim candle.
 
-- `Fresh`: the level is active, eligible for visual context, and extends right.
-- `Touched`: the first price interaction has occurred.
-- `Consumed`: the level is no longer fresh and should not create repeated primary SFP labels.
-
-By default, consumed levels are hidden to reduce chart noise. Enable **Historical visual test mode** to keep consumed lines muted and print lifecycle labels while reviewing older chart sections.
+By default, consumed levels are hidden to reduce chart noise. Enable **Historical visual test mode** only when reviewing older chart sections; historical plans are capped by `maxHistoricalPlans` and still respect the final status gate.
 
 ## TP0 terminology
 
@@ -53,13 +49,13 @@ By default, consumed levels are hidden to reduce chart noise. Enable **Historica
 
 In a future execution bot, TP0 should be calculated as the protection price where closing 50% of the position covers full trading fees, the potential stop loss on the remaining position, and an optional slippage buffer. TP0 is not meant to be a normal profit target; it is the position protection point.
 
-TP1, TP2, TP3, and Runner logic are **not included yet**. They are planned future profit-taking modules.
+TP1, TP2, TP3, Runner logic, add-ons, reversals, re-entries, and countertrend scalp mode are **not included**.
 
 ## SFP reclaim logic
 
-Version 0.3.6 does **not** require mandatory candle-close confirmation by default. The default logic is based on an intrabar sweep and reclaim/current price returning back beyond the level. In Pine Script, the realtime bar's `close` value represents the current price.
+Version 0.3.7 does **not** require mandatory candle-close confirmation by default. The default logic is based on an intrabar sweep and reclaim/current price returning back beyond an already-existing fresh level. In Pine Script, the realtime bar's `close` value represents the current price.
 
-A conservative candle-close confirmation option exists in the indicator settings, but it is not the default. Version 0.3.6 also anchors planned entry at or just beyond the actual swept/reclaimed trigger level on the current event bar, including live Structure High/Low, Local High/Low, Swing High/Low, consolidation triggers, and optionally untapped D/W/M wick/body triggers when enabled. Old sweeps and later retests do not create new Entry / SL / TP0 plans.
+A conservative candle-close confirmation option exists in the indicator settings, but it is not the default. Old sweeps and later retests do not create new Entry / SL / TP0 plans.
 
 ## What this project does not do
 
@@ -78,6 +74,9 @@ This version is intentionally visual-only.
 Future versions may explore additional analysis modules after visual testing:
 
 - TP1, TP2, TP3, and Runner handling.
+- Add-on logic.
+- Reversal logic.
+- Countertrend scalp mode.
 - FVG.
 - Volume Profile, POC, VAH, and VAL.
 - CVD.
@@ -88,7 +87,7 @@ Future versions may explore additional analysis modules after visual testing:
 - Paper trading tools after validation.
 - Exchange testnet experiments only after validation.
 
-Real exchange execution is not part of version 0.3.6.
+Real exchange execution is not part of version 0.3.7.
 
 ## Risk warning
 
