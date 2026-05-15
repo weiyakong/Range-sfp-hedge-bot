@@ -1,12 +1,12 @@
 //@version=5
-indicator("Range SFP Visual v0.3.4", overlay=true, max_labels_count=250, max_lines_count=500)
+indicator("Range SFP Visual v0.3.5", overlay=true, max_labels_count=250, max_lines_count=500)
 
 // -----------------------------------------------------------------------------
-// Range SFP Visual v0.3.4
+// Range SFP Visual v0.3.5
 // Visual-only TradingView indicator. No strategy orders, exchange connections,
 // API keys, live trading, webhook automation, server code, or bot execution.
 //
-// v0.3.4 makes SFP detection event-based and keeps untapped D/W/M logic:
+// v0.3.5 makes D/W/M context-only by default and prioritizes current structure triggers:
 // 1) context first, 2) decision zone second, 3) SFP/rejection third,
 // 4) TP0 / 2R room check fourth, using current-bar sweep/reclaim events only.
 // -----------------------------------------------------------------------------
@@ -26,6 +26,7 @@ showTradePlanLines = input.bool(true, "Show Entry / SL / TP0")
 showConsolidationZones = input.bool(true, "Show consolidation zones")
 showOnlyLatestSetup = input.bool(true, "Show only latest Entry / SL / TP0 plan")
 maxVisibleSetupLabels = input.int(5, "Max visible setup labels", minval=1, maxval=50)
+useDwmAsPrimaryTriggers = input.bool(false, "Use D/W/M as primary triggers", tooltip="Default is false: D/W/M levels are background context only. If true, only fresh untapped D/W/M levels may create one primary SFP before being consumed.")
 
 // === Core settings ===
 swingLength = input.int(5, "Swing pivot length", minval=1)
@@ -72,6 +73,7 @@ maxEntryDistanceFromTriggerR = input.float(0.35, "Max entry distance from trigge
 maxEntryDelayBars = input.int(1, "Max entry delay bars", minval=0, tooltip="Entry must happen on the reclaim bar or very shortly after. Delayed retests are not new entries.")
 maxEntryDistanceFromTriggerUsd = input.float(50.0, "Max entry distance from trigger USD", minval=0.0, step=1.0, tooltip="BTC testing default. If planned entry is too far from the actual trigger/reclaim level, no Entry / SL / TP0 plan is drawn.")
 localTriggerLookback = input.int(8, "Local trigger lookback", minval=2, tooltip="Uses previous bars only: Local High = highest high of prior N bars, Local Low = lowest low of prior N bars.")
+structureLookback = input.int(20, "Structure lookback", minval=5, tooltip="Simple recent structure high/low from previous bars, excluding the current bar.")
 microTriggerNearZoneAtr = input.float(0.75, "Local trigger near-zone ATR", minval=0.05, step=0.05)
 
 // Basic consolidation reaction zones. These are not entries by themselves.
@@ -119,7 +121,7 @@ strictChopNoTrade = marketMode == "Chop"
 
 // === Previous higher-timeframe levels ===
 // D/W/M mean previous Daily, Weekly, and Monthly highs/lows. They are decision
-// levels only; v0.3.4 uses them only while untapped and still requires context, rejection, early entry proximity, and TP0 room.
+// levels only; v0.3.5 treats them as context by default and uses them as triggers only while untapped when enabled and still requires context, rejection, early entry proximity, and TP0 room.
 previousDailyHigh = request.security(syminfo.tickerid, "D", high[1], barmerge.gaps_off, barmerge.lookahead_off)
 previousDailyLow = request.security(syminfo.tickerid, "D", low[1], barmerge.gaps_off, barmerge.lookahead_off)
 previousWeeklyHigh = request.security(syminfo.tickerid, "W", high[1], barmerge.gaps_off, barmerge.lookahead_off)
@@ -256,7 +258,7 @@ plotshape(showSwingLevels and not na(pivotLow) and not strictChopNoTrade, title=
 // === Basic consolidation reaction zones ===
 // After impulse + sideways consolidation, the consolidation top/bottom can become
 // a decision zone. These zones are not automatic entries. They can later become
-// TP1/TP2/TP3 style targets in future versions, but v0.3.4 only checks TP0 room.
+// TP1/TP2/TP3 style targets in future versions, but v0.3.5 only checks TP0 room.
 consolidationRange = ta.highest(high, consolidationLookback) - ta.lowest(low, consolidationLookback)
 isConsolidating = not na(atrValue) and consolidationRange <= atrValue * consolidationMaxAtrRange
 bullishImpulseBeforeConsolidation = close[consolidationLookback] - close[consolidationLookback + impulseLookback] > atrValue * impulseAtrMultiplier
@@ -308,10 +310,12 @@ bullishSweepReclaim(level) =>
     not na(level) and low < level and close > level and confirmedOrLive
 
 // Local micro-structure can be the real SFP trigger when it sits near a larger
-// decision zone. v0.3.4 chooses the current-bar swept/reclaimed level closest to the reclaim
-// price instead of automatically preferring D/W/M levels.
+// decision zone. v0.3.5 chooses current-bar swept/reclaimed structure/local
+// triggers first, instead of automatically preferring D/W/M levels.
 localLiquidityHigh = ta.highest(high[1], localTriggerLookback)
 localLiquidityLow = ta.lowest(low[1], localTriggerLookback)
+structureHigh = math.max(ta.highest(high[1], structureLookback), ta.highest(close[1], structureLookback))
+structureLow = math.min(ta.lowest(low[1], structureLookback), ta.lowest(close[1], structureLookback))
 triggerPriorityTolerance = not na(atrValue) ? atrValue * 0.05 : 0.0
 
 isNearBearDecisionZone(level) =>
@@ -323,51 +327,73 @@ isNearBullDecisionZone(level) =>
 getBearLevel() =>
     float level = na
     string name = ""
-    if dailyHighValid and bearishSweepReclaim(activeDailyHigh)
-        level := activeDailyHigh
-        name := "D High"
-    if weeklyHighValid and bearishSweepReclaim(activeWeeklyHigh) and (na(level) or math.abs(activeWeeklyHigh - close) + triggerPriorityTolerance < math.abs(level - close))
-        level := activeWeeklyHigh
-        name := "W High"
-    if monthlyHighValid and bearishSweepReclaim(activeMonthlyHigh) and (na(level) or math.abs(activeMonthlyHigh - close) + triggerPriorityTolerance < math.abs(level - close))
-        level := activeMonthlyHigh
-        name := "M High"
-    if shortZoneActive and bearishSweepReclaim(shortZoneTop) and (na(level) or math.abs(shortZoneTop - close) + triggerPriorityTolerance < math.abs(level - close))
-        level := shortZoneTop
-        name := "Consol Top"
-    if swingHighFresh and bearishSweepReclaim(lastSwingHigh) and (na(level) or math.abs(lastSwingHigh - close) + triggerPriorityTolerance < math.abs(level - close))
-        level := lastSwingHigh
-        name := "Swing High"
+    string kind = "None"
+    if not strictChopNoTrade and bearishSweepReclaim(structureHigh)
+        level := structureHigh
+        name := "Structure High"
+        kind := "Structure"
     if isNearBearDecisionZone(localLiquidityHigh) and not strictChopNoTrade and bearishSweepReclaim(localLiquidityHigh) and (na(level) or math.abs(localLiquidityHigh - close) + triggerPriorityTolerance < math.abs(level - close))
         level := localLiquidityHigh
         name := "Local High"
-    [level, name]
+        kind := "Local"
+    if na(level) and swingHighFresh and bearishSweepReclaim(lastSwingHigh)
+        level := lastSwingHigh
+        name := "Swing High"
+        kind := "Swing"
+    if na(level) and shortZoneActive and bearishSweepReclaim(shortZoneTop)
+        level := shortZoneTop
+        name := "Consol Top"
+        kind := "Consolidation"
+    if na(level) and useDwmAsPrimaryTriggers and dailyHighValid and bearishSweepReclaim(activeDailyHigh)
+        level := activeDailyHigh
+        name := "D High"
+        kind := "D/W/M"
+    if na(level) and useDwmAsPrimaryTriggers and weeklyHighValid and bearishSweepReclaim(activeWeeklyHigh)
+        level := activeWeeklyHigh
+        name := "W High"
+        kind := "D/W/M"
+    if na(level) and useDwmAsPrimaryTriggers and monthlyHighValid and bearishSweepReclaim(activeMonthlyHigh)
+        level := activeMonthlyHigh
+        name := "M High"
+        kind := "D/W/M"
+    [level, name, kind]
 
 getBullLevel() =>
     float level = na
     string name = ""
-    if dailyLowValid and bullishSweepReclaim(activeDailyLow)
-        level := activeDailyLow
-        name := "D Low"
-    if weeklyLowValid and bullishSweepReclaim(activeWeeklyLow) and (na(level) or math.abs(activeWeeklyLow - close) + triggerPriorityTolerance < math.abs(level - close))
-        level := activeWeeklyLow
-        name := "W Low"
-    if monthlyLowValid and bullishSweepReclaim(activeMonthlyLow) and (na(level) or math.abs(activeMonthlyLow - close) + triggerPriorityTolerance < math.abs(level - close))
-        level := activeMonthlyLow
-        name := "M Low"
-    if longZoneActive and bullishSweepReclaim(longZoneBottom) and (na(level) or math.abs(longZoneBottom - close) + triggerPriorityTolerance < math.abs(level - close))
-        level := longZoneBottom
-        name := "Consol Bottom"
-    if swingLowFresh and bullishSweepReclaim(lastSwingLow) and (na(level) or math.abs(lastSwingLow - close) + triggerPriorityTolerance < math.abs(level - close))
-        level := lastSwingLow
-        name := "Swing Low"
+    string kind = "None"
+    if not strictChopNoTrade and bullishSweepReclaim(structureLow)
+        level := structureLow
+        name := "Structure Low"
+        kind := "Structure"
     if isNearBullDecisionZone(localLiquidityLow) and not strictChopNoTrade and bullishSweepReclaim(localLiquidityLow) and (na(level) or math.abs(localLiquidityLow - close) + triggerPriorityTolerance < math.abs(level - close))
         level := localLiquidityLow
         name := "Local Low"
-    [level, name]
+        kind := "Local"
+    if na(level) and swingLowFresh and bullishSweepReclaim(lastSwingLow)
+        level := lastSwingLow
+        name := "Swing Low"
+        kind := "Swing"
+    if na(level) and longZoneActive and bullishSweepReclaim(longZoneBottom)
+        level := longZoneBottom
+        name := "Consol Bottom"
+        kind := "Consolidation"
+    if na(level) and useDwmAsPrimaryTriggers and dailyLowValid and bullishSweepReclaim(activeDailyLow)
+        level := activeDailyLow
+        name := "D Low"
+        kind := "D/W/M"
+    if na(level) and useDwmAsPrimaryTriggers and weeklyLowValid and bullishSweepReclaim(activeWeeklyLow)
+        level := activeWeeklyLow
+        name := "W Low"
+        kind := "D/W/M"
+    if na(level) and useDwmAsPrimaryTriggers and monthlyLowValid and bullishSweepReclaim(activeMonthlyLow)
+        level := activeMonthlyLow
+        name := "M Low"
+        kind := "D/W/M"
+    [level, name, kind]
 
-[bearLevelRaw, bearSourceRaw] = getBearLevel()
-[bullLevelRaw, bullSourceRaw] = getBullLevel()
+[bearLevelRaw, bearSourceRaw, bearKindRaw] = getBearLevel()
+[bullLevelRaw, bullSourceRaw, bullKindRaw] = getBullLevel()
 rawBearishSfp = not strictChopNoTrade and not na(bearLevelRaw)
 rawBullishSfp = not strictChopNoTrade and not na(bullLevelRaw)
 
@@ -382,8 +408,10 @@ resolvedBearishRaw = bothSidesTouched ? (contextPrefersBear and not contextPrefe
 
 bearLevel = resolvedBearishRaw ? bearLevelRaw : na
 bearSource = resolvedBearishRaw ? bearSourceRaw : ""
+bearKind = resolvedBearishRaw ? bearKindRaw : "None"
 bullLevel = resolvedBullishRaw ? bullLevelRaw : na
 bullSource = resolvedBullishRaw ? bullSourceRaw : ""
+bullKind = resolvedBullishRaw ? bullKindRaw : "None"
 
 // Countertrend filter. In a strong trend, countertrend SFPs need stronger wick
 // rejection and structure weakness/strength. Otherwise they are No Trade.
@@ -435,7 +463,7 @@ nearestAbove(currentNearest, candidate, entryPrice) =>
 nearestBelow(currentNearest, candidate, entryPrice) =>
     not na(candidate) and candidate < entryPrice ? (na(currentNearest) ? candidate : math.max(currentNearest, candidate)) : currentNearest
 
-// v0.3.4 is event-based: Entry is drawn only when the current bar itself sweeps
+// v0.3.5 is event-based: Entry is drawn only when the current bar itself sweeps
 // and reclaims the selected trigger level. Old sweeps and later retests never
 // create a new Entry / SL / TP0 plan.
 bullEntryDelayBars = resolvedBullishRaw ? 0 : na
@@ -452,8 +480,8 @@ bullEntryDistanceR = resolvedBullishRaw and bullRisk > syminfo.mintick ? math.ma
 bearEntryDistanceR = resolvedBearishRaw and bearRisk > syminfo.mintick ? math.max(0.0, bearEntry - close) / bearRisk : na
 bullEntryDistanceUsd = resolvedBullishRaw ? math.abs(close - bullLevel) : na
 bearEntryDistanceUsd = resolvedBearishRaw ? math.abs(close - bearLevel) : na
-bullLateByDistance = resolvedBullishRaw and ((not na(bullEntryDistanceR) and bullEntryDistanceR > maxEntryDistanceFromTriggerR) or (not na(bullEntryDistanceUsd) and bullEntryDistanceUsd > maxEntryDistanceFromTriggerUsd))
-bearLateByDistance = resolvedBearishRaw and ((not na(bearEntryDistanceR) and bearEntryDistanceR > maxEntryDistanceFromTriggerR) or (not na(bearEntryDistanceUsd) and bearEntryDistanceUsd > maxEntryDistanceFromTriggerUsd))
+bullLateByDistance = false
+bearLateByDistance = false
 bullLateByDelay = resolvedBullishRaw and not na(bullEntryDelayBars) and bullEntryDelayBars > maxEntryDelayBars
 bearLateByDelay = resolvedBearishRaw and not na(bearEntryDelayBars) and bearEntryDelayBars > maxEntryDelayBars
 bullLateEntry = bullLateByDistance or bullLateByDelay
@@ -509,7 +537,7 @@ clearLatestPlan() =>
 drawTrigger(level, sourceName, triggerColor) =>
     if showTriggerLevelLines and not na(level)
         line.new(math.max(0, bar_index - 3), level, bar_index + 3, level, color=triggerColor, width=2)
-        label.new(bar_index + 3, level, sourceName, style=label.style_label_left, color=color.new(triggerColor, 25), textcolor=color.white, size=size.tiny)
+        // Source is shown in the dashboard to avoid repeated D/W/M labels on chart.
 
 drawPlan(entryPrice, slPrice, tp0Price, planColor) =>
     if showTradePlanLines and not na(entryPrice) and not na(slPrice) and not na(tp0Price)
@@ -533,6 +561,8 @@ setupText = "None"
 statusText = "No Trade"
 tp0Text = "N/A"
 activeZoneText = nearLongZone ? "Long Zone / Consolidation Bottom" : nearShortZone ? "Short Zone / Consolidation Top" : "None"
+triggerSourceText = resolvedBearishRaw ? bearSource : resolvedBullishRaw ? bullSource : useDwmAsPrimaryTriggers ? "None" : "D/W/M: context only"
+triggerTypeText = resolvedBearishRaw ? bearKind : resolvedBullishRaw ? bullKind : "None"
 
 bgcolor(strictChopNoTrade ? color.new(color.gray, 88) : marketMode == "Expansion" ? color.new(color.orange, 90) : ambiguousNoTrade ? color.new(color.yellow, 90) : na, title="Mode background")
 
@@ -586,7 +616,7 @@ else if primaryBearishSfp
     statusText := "Valid Setup"
     tp0Text := "Clear"
     if showSfpLabels
-        bearLabelText = "Bear SFP\n" + bearSource + (bearExhaustionClue ? "\nWeak push" : "")
+        bearLabelText = "Bear SFP" + (bearExhaustionClue ? "\nWeak push" : "")
         rememberSetupLabel(label.new(bar_index, high, bearLabelText, style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.tiny))
         drawTrigger(bearLevel, bearSource, color.new(color.red, 0))
         drawPlan(bearEntry, bearSl, bearTp0, color.new(color.red, 0))
@@ -598,7 +628,7 @@ else if primaryBullishSfp
     statusText := "Valid Setup"
     tp0Text := "Clear"
     if showSfpLabels
-        bullLabelText = "Bull SFP\n" + bullSource + (bullExhaustionClue ? "\nWeak push" : "")
+        bullLabelText = "Bull SFP" + (bullExhaustionClue ? "\nWeak push" : "")
         rememberSetupLabel(label.new(bar_index, low, bullLabelText, style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white, size=size.tiny))
         drawTrigger(bullLevel, bullSource, color.new(color.green, 0))
         drawPlan(bullEntry, bullSl, bullTp0, color.new(color.green, 0))
@@ -610,14 +640,14 @@ else if retestBearishSfp
     statusText := "Retest / No new entry"
     tp0Text := "Cluster"
     if showSfpLabels
-        rememberSetupLabel(label.new(bar_index, high, "Re-sweep\n" + bearSource, style=label.style_label_down, color=color.new(color.maroon, 0), textcolor=color.white, size=size.tiny))
+        rememberSetupLabel(label.new(bar_index, high, "Re-sweep", style=label.style_label_down, color=color.new(color.maroon, 0), textcolor=color.white, size=size.tiny))
         drawTrigger(bearLevel, bearSource, color.new(color.maroon, 0))
 else if retestBullishSfp
     setupText := "Retest"
     statusText := "Retest / No new entry"
     tp0Text := "Cluster"
     if showSfpLabels
-        rememberSetupLabel(label.new(bar_index, low, "Retest\n" + bullSource, style=label.style_label_up, color=color.new(color.teal, 0), textcolor=color.white, size=size.tiny))
+        rememberSetupLabel(label.new(bar_index, low, "Retest", style=label.style_label_up, color=color.new(color.teal, 0), textcolor=color.white, size=size.tiny))
         drawTrigger(bullLevel, bullSource, color.new(color.teal, 0))
 else if nearLongZone
     setupText := "Long Zone"
@@ -660,19 +690,19 @@ if swingLowFresh and ((invalidateSwingOnCloseBeyondLevel and close < lastSwingLo
 var table dashboard = table.new(position.top_right, 2, 8, border_width=1)
 if showDashboard and barstate.islast
     table.cell(dashboard, 0, 0, "Version", bgcolor=color.new(color.black, 0), text_color=color.white)
-    table.cell(dashboard, 1, 0, "v0.3.4", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(dashboard, 1, 0, "v0.3.5", bgcolor=color.new(color.black, 0), text_color=color.white)
     table.cell(dashboard, 0, 1, "Market Mode", text_color=color.white)
     table.cell(dashboard, 1, 1, marketMode, text_color=color.white)
     table.cell(dashboard, 0, 2, "EMA Bias", text_color=color.white)
     table.cell(dashboard, 1, 2, emaBias, text_color=color.white)
-    table.cell(dashboard, 0, 3, "Volatility", text_color=color.white)
-    table.cell(dashboard, 1, 3, volatilityText, text_color=color.white)
-    table.cell(dashboard, 0, 4, "Setup", text_color=color.white)
-    table.cell(dashboard, 1, 4, setupText, text_color=color.white)
-    table.cell(dashboard, 0, 5, "Status", text_color=color.white)
-    table.cell(dashboard, 1, 5, statusText, text_color=color.white)
-    table.cell(dashboard, 0, 6, "Nearest / Active Zone", text_color=color.white)
-    table.cell(dashboard, 1, 6, activeZoneText, text_color=color.white)
+    table.cell(dashboard, 0, 3, "Setup", text_color=color.white)
+    table.cell(dashboard, 1, 3, setupText, text_color=color.white)
+    table.cell(dashboard, 0, 4, "Status", text_color=color.white)
+    table.cell(dashboard, 1, 4, statusText, text_color=color.white)
+    table.cell(dashboard, 0, 5, "Trigger source", text_color=color.white)
+    table.cell(dashboard, 1, 5, triggerSourceText, text_color=color.white)
+    table.cell(dashboard, 0, 6, "Trigger level type", text_color=color.white)
+    table.cell(dashboard, 1, 6, triggerTypeText, text_color=color.white)
     table.cell(dashboard, 0, 7, "TP0 status", text_color=color.white)
     table.cell(dashboard, 1, 7, tp0Text, text_color=color.white)
 
