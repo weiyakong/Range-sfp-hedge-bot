@@ -1,162 +1,93 @@
 //@version=5
-indicator("Range SFP Visual v0.3.7", overlay=true, max_labels_count=350, max_lines_count=500)
+indicator("Range SFP Visual v0.3.8", overlay=true, max_labels_count=180, max_lines_count=500)
 
 // -----------------------------------------------------------------------------
-// Range SFP Visual v0.3.7
+// Range SFP Visual v0.3.8
 // Visual-only TradingView indicator. No strategy orders, exchange connections,
 // API keys, live trading, webhook automation, server code, or bot execution.
 //
-// v0.3.7 stabilizes final-status gating, countertrend blocking, scenario
-// classification, frozen/validated structure triggers, compact diagnostics,
-// and compact dashboard modes while remaining visual-only.
+// v0.3.8 intentionally stops generating trade plans. It is a clean structure,
+// swing, D/W/M body-level, retest, and SFP-candidate visualizer for validating
+// whether the script sees the same levels a human sees.
 // -----------------------------------------------------------------------------
 
 // === Display settings ===
-showDailyLevels = input.bool(true, "Show daily levels")
-showWeeklyLevels = input.bool(true, "Show weekly levels")
-showMonthlyLevels = input.bool(true, "Show monthly levels")
-showSwingLevels = input.bool(true, "Show swing levels")
-showSfpLabels = input.bool(true, "Show setup labels")
-showTriggerLevelLines = input.bool(true, "Show trigger level lines")
-showChopWarnings = input.bool(true, "Show chop warnings")
-showConflictLabels = input.bool(true, "Show ambiguous/conflict labels")
-showExpansionWarnings = input.bool(true, "Show expansion warnings")
 dashboardMode = input.string("Compact", "Dashboard mode", options=["Off", "Compact", "Full"])
-showTradePlanLines = input.bool(true, "Show Entry / SL / TP0")
-showConsolidationZones = input.bool(true, "Show consolidation zones")
-showOnlyLatestSetup = input.bool(true, "Show only latest Entry / SL / TP0 plan")
-maxVisibleSetupLabels = input.int(5, "Max visible setup labels", minval=1, maxval=50)
-useDwmAsPrimaryTriggers = input.bool(false, "Use D/W/M as primary triggers", tooltip="Default is false: D/W/M levels are background context only. If true, only fresh untapped D/W/M levels may create one primary SFP before being consumed.")
-showBodyAlignedDwmLevels = input.bool(true, "Show D/W/M body-aligned levels", tooltip="Plots previous-period body highs/lows from daily, weekly, and monthly candles as additional context levels.")
-showLiveStructureLevels = input.bool(true, "Show frozen structure levels", tooltip="Plots only validated/frozen Structure High/Low levels and extends them until touched.")
-hideConsumedLevels = input.bool(true, "Hide consumed levels by default", tooltip="Fresh levels extend right until first touch. When enabled, touched/consumed levels are hidden unless historical visual test mode is on.")
-historicalVisualTestMode = input.bool(false, "Historical visual test mode", tooltip="Keeps consumed levels visible in muted colors and prints compact lifecycle / diagnostic labels for visual backtesting.")
-maxHistoricalPlans = input.int(20, "Max historical plans", minval=1, maxval=100)
-showEntryDiagnostics = input.bool(false, "Show entry diagnostics", tooltip="Shows compact chart labels explaining why a setup was valid or blocked.")
-showStructureCandidates = input.bool(false, "Show structure candidates", tooltip="Debug only. Candidate rolling levels are muted and never become triggers unless validated/frozen.")
+showSwingLevels = input.bool(true, "Show fresh swing levels")
+showStructureLevels = input.bool(true, "Show validated structure levels")
+showBodyAlignedDwmLevels = input.bool(true, "Show D/W/M body-aligned levels")
+showOrdinaryDwmHighLowLevels = input.bool(false, "Show ordinary D/W/M high/low levels", tooltip="Context-only. Off by default to reduce clutter.")
+showConsumedLevels = input.bool(false, "Show consumed levels", tooltip="Default is false. If enabled, consumed levels stay visible in very muted colors.")
+historicalVisualTestMode = input.bool(false, "Historical visual test mode", tooltip="Default is false. Keeps only compact historical structure/SFP candidate labels; no trade plans are drawn.")
+showStructureCandidates = input.bool(false, "Show structure candidates", tooltip="Debug only. Candidate rolling levels are muted and are not final levels until validated/frozen.")
+showEntryDiagnostics = input.bool(false, "Show compact diagnostics", tooltip="Default is false. v0.3.8 uses compact structure diagnostics only; it does not show entry diagnostics or trade plans.")
+showContextLabels = input.bool(true, "Show context labels")
+showSfpCandidateLabels = input.bool(true, "Show SFP candidate labels")
+maxVisibleLabels = input.int(30, "Max visible labels", minval=1, maxval=100)
 monthlyBodyLevelColor = input.color(color.white, "Monthly body-aligned color")
 
 // === Core settings ===
-swingLength = input.int(5, "Swing pivot length", minval=1)
-useCloseConfirmation = input.bool(false, "Conservative: require candle close confirmation", tooltip="Default is off. SFP reclaim can be intrabar/current-price based; on a realtime bar, close represents the current price. Turn this on only for a more conservative closed-candle mode.")
+swingLength = input.int(5, "Swing pivot length", minval=2)
+minSwingProminenceAtr = input.float(0.60, "Min swing prominence ATR", minval=0.0, step=0.05)
+structureLookback = input.int(24, "Structure lookback", minval=12, tooltip="Candidate window for validated/frozen structure levels. Rolling highs/lows are candidates only.")
+minStructureBars = input.int(12, "Min structure bars", minval=2)
+minStructureTouches = input.int(2, "Min structure touches", minval=2)
+structureToleranceUsd = input.float(75.0, "Structure tolerance USD", minval=0.0, step=1.0)
+consolidationLookback = input.int(10, "Consolidation lookback", minval=3)
+consolidationMaxAtrRange = input.float(1.5, "Max consolidation range ATR", minval=0.1, step=0.1)
+levelCooldownBars = input.int(8, "Min bars between similar level labels", minval=1)
 
-// Market mode settings: simple and transparent by design.
+// Market-mode settings remain context-only.
 emaFastLength = input.int(21, "Fast EMA length", minval=1)
 emaSlowLength = input.int(55, "Slow EMA length", minval=2)
 adxLength = input.int(14, "ADX length", minval=1)
 adxSmoothing = input.int(14, "ADX smoothing", minval=1)
 adxTrendThreshold = input.float(20.0, "ADX trend threshold", minval=1.0, step=0.5)
 emaSeparationAtr = input.float(0.35, "EMA separation ATR", minval=0.01, step=0.01)
-
-// Volatility / expansion / chop settings.
 atrLength = input.int(14, "ATR length", minval=1)
 atrBaselineLength = input.int(50, "ATR baseline length", minval=5)
 volExpansionMultiplier = input.float(1.4, "Volatility expansion multiplier", minval=0.1, step=0.1)
-maxSfpCandleAtrMultiplier = input.float(2.5, "Max SFP candle ATR multiplier", minval=0.1, step=0.1)
-enableExpansionFilter = input.bool(true, "Enable expansion filter")
-chopLookback = input.int(20, "Chop lookback candles", minval=5)
-chopRangeAtrMultiplier = input.float(1.2, "Chop range ATR multiplier", minval=0.1, step=0.1)
-touchZoneAtrMultiplier = input.float(0.25, "Repeated touch zone ATR multiplier", minval=0.05, step=0.05)
-minTouchesForChop = input.int(6, "Minimum repeated touches", minval=2)
 
-// Fresh swing settings. Fresh swing levels are recent pivots that have not been
-// consumed by too many touches, a close beyond the level, or an earlier SFP sweep.
-maxSwingLevelAgeBars = input.int(200, "Max swing level age bars", minval=1)
-maxTouchesBeforeConsumed = input.int(2, "Max touches before consumed", minval=1)
-invalidateSwingOnCloseBeyondLevel = input.bool(true, "Invalidate swing on close beyond level")
-consumeSwingAfterFirstSfp = input.bool(true, "Consume swing after first SFP")
-
-// Same-zone clustering: repeated SFPs near the same level are retests/re-sweeps,
-// not fresh primary setups.
-clusterLookbackBars = input.int(20, "Cluster lookback bars", minval=1)
-sameZoneAtrDistance = input.float(0.35, "Same zone ATR distance", minval=0.01, step=0.01)
-
-// Context and rejection settings.
-impulseLookback = input.int(8, "Recent impulse lookback", minval=2)
-impulseAtrMultiplier = input.float(1.5, "Impulse ATR multiplier", minval=0.1, step=0.1)
-strongRejectionWickRatio = input.float(1.2, "Strong rejection wick/body ratio", minval=0.1, step=0.1)
-slAtrBuffer = input.float(0.10, "SL buffer ATR", minval=0.0, step=0.01)
-reactionZoneAtrDistance = input.float(0.40, "Reaction zone ATR distance", minval=0.01, step=0.01)
-maxEntryDistanceFromTriggerR = input.float(0.35, "Max entry distance from trigger in R", minval=0.0, step=0.05, tooltip="If current price has already moved this far from the trigger/reclaim level, the setup is marked Late Entry / No Trade and no Entry / SL / TP0 plan is drawn.")
-maxEntryDelayBars = input.int(1, "Max entry delay bars", minval=0, tooltip="Entry must happen on the reclaim bar or very shortly after. Delayed retests are not new entries.")
-maxEntryDistanceFromTriggerUsd = input.float(50.0, "Max entry distance from trigger USD", minval=0.0, step=1.0, tooltip="BTC testing default. If planned entry is too far from the actual trigger/reclaim level, no Entry / SL / TP0 plan is drawn.")
-localTriggerLookback = input.int(8, "Local trigger lookback", minval=2, tooltip="Uses previous bars only: Local High = highest high of prior N bars, Local Low = lowest low of prior N bars.")
-structureLookback = input.int(24, "Structure lookback", minval=5, tooltip="Candidate window for validated/frozen structure levels. Rolling highs/lows are candidates only, not triggers by themselves.")
-minStructureBars = input.int(8, "Min structure bars", minval=2)
-minStructureTouches = input.int(2, "Min structure touches", minval=2)
-structureToleranceUsd = input.float(75.0, "Structure tolerance USD", minval=0.0, step=1.0)
-microTriggerNearZoneAtr = input.float(0.75, "Local trigger near-zone ATR", minval=0.05, step=0.05)
-
-// Basic consolidation reaction zones. These are not entries by themselves.
-consolidationLookback = input.int(10, "Consolidation lookback", minval=3)
-consolidationMaxAtrRange = input.float(1.5, "Max consolidation range ATR", minval=0.1, step=0.1)
-zoneMaxAgeBars = input.int(250, "Max consolidation zone age", minval=10)
-
-// === Core measurements ===
+// === Measurements ===
 atrValue = ta.atr(atrLength)
 atrBaseline = ta.sma(atrValue, atrBaselineLength)
 emaFast = ta.ema(close, emaFastLength)
 emaSlow = ta.ema(close, emaSlowLength)
 [plusDi, minusDi, adxValue] = ta.dmi(adxLength, adxSmoothing)
-
-bodySize = math.abs(close - open)
 bodyHigh = math.max(open, close)
 bodyLow = math.min(open, close)
-upperWick = high - math.max(open, close)
-lowerWick = math.min(open, close) - low
-candleRange = high - low
-
-recentRange = ta.highest(high, chopLookback) - ta.lowest(low, chopLookback)
-zoneMidpoint = (ta.highest(high, chopLookback) + ta.lowest(low, chopLookback)) / 2.0
-touchDistance = atrValue * touchZoneAtrMultiplier
-repeatedTouches = 0
-for index = 0 to chopLookback - 1
-    candleTouchesZone = not na(touchDistance) and (math.abs(close[index] - zoneMidpoint) <= touchDistance or math.abs(high[index] - zoneMidpoint) <= touchDistance or math.abs(low[index] - zoneMidpoint) <= touchDistance)
-    repeatedTouches += candleTouchesZone ? 1 : 0
-
-rangeCompressed = not na(atrValue) and recentRange < atrValue * chopRangeAtrMultiplier
-compressedChop = rangeCompressed and repeatedTouches >= minTouchesForChop
-volatilityExpansion = enableExpansionFilter and not na(atrValue) and not na(atrBaseline) and atrValue > atrBaseline * volExpansionMultiplier
-largeCandle = enableExpansionFilter and not na(atrValue) and candleRange > atrValue * maxSfpCandleAtrMultiplier
+structureTolerance = structureToleranceUsd > 0.0 ? structureToleranceUsd : (not na(atrValue) ? atrValue * 0.25 : syminfo.mintick)
 emaSeparation = not na(atrValue) and atrValue > 0.0 ? math.abs(emaFast - emaSlow) / atrValue : 0.0
 emaBias = emaFast > emaSlow and emaSeparation >= emaSeparationAtr ? "Bullish" : emaFast < emaSlow and emaSeparation >= emaSeparationAtr ? "Bearish" : "Neutral"
 strongTrend = adxValue >= adxTrendThreshold and emaSeparation >= emaSeparationAtr
+volatilityExpansion = not na(atrValue) and not na(atrBaseline) and atrValue > atrBaseline * volExpansionMultiplier
+marketMode = volatilityExpansion ? "Expansion" : strongTrend ? "Trend" : "Range"
 
-impulseMove = close - close[impulseLookback]
-recentImpulse = not na(atrValue) and impulseMove > atrValue * impulseAtrMultiplier ? "Bullish" : not na(atrValue) and impulseMove < -atrValue * impulseAtrMultiplier ? "Bearish" : "Neutral"
-
-marketMode = largeCandle or volatilityExpansion ? "Expansion" : compressedChop ? "Chop" : strongTrend ? "Trend" : "Range"
-volatilityText = largeCandle ? "Large candle" : volatilityExpansion ? "Expansion" : rangeCompressed ? "Compressed" : "Normal"
-
-// SFPs inside chop are not tradeable signals. In chop, the script suppresses
-// Bull/Bear SFP, Retest, and Re-sweep labels and shows only Chop / No Trade.
-strictChopNoTrade = marketMode == "Chop"
-
-// === Level lifecycle helpers ===
 LEVEL_FRESH = "Fresh"
-LEVEL_TOUCHED = "Touched"
 LEVEL_CONSUMED = "Consumed"
 
-consumedLineVisible() =>
-    historicalVisualTestMode or not hideConsumedLevels
+levelColor(baseColor, isFresh) =>
+    isFresh ? color.new(baseColor, 0) : color.new(baseColor, 86)
 
-levelColor(baseColor, state) =>
-    state == LEVEL_FRESH ? color.new(baseColor, 0) : state == LEVEL_TOUCHED ? color.new(baseColor, 50) : color.new(baseColor, 82)
+bodyColorDaily = color.lime
+bodyColorWeekly = color.orange
+bodyColorMonthly = monthlyBodyLevelColor
 
-finishLifecycleLine(levelLine, touchedBar, baseColor) =>
+var label[] visualLabels = array.new<label>()
+rememberLabel(newLabel) =>
+    if not na(newLabel)
+        array.push(visualLabels, newLabel)
+        if array.size(visualLabels) > maxVisibleLabels
+            label.delete(array.shift(visualLabels))
+
+consumeLine(levelLine, baseColor) =>
     if not na(levelLine)
-        line.set_x2(levelLine, touchedBar)
-        line.set_color(levelLine, levelColor(baseColor, LEVEL_CONSUMED))
-        if hideConsumedLevels and not historicalVisualTestMode
+        line.set_x2(levelLine, bar_index)
+        line.set_color(levelLine, color.new(baseColor, 86))
+        if not showConsumedLevels
             line.delete(levelLine)
 
-historicalLifecycleLabel(levelPrice, labelText, labelColor, isHighSide) =>
-    if historicalVisualTestMode and not na(levelPrice)
-        label.new(bar_index, levelPrice, labelText, style=isHighSide ? label.style_label_down : label.style_label_up, color=color.new(labelColor, 15), textcolor=color.white, size=size.tiny)
-
 // === Previous higher-timeframe levels ===
-// D/W/M mean previous Daily, Weekly, and Monthly highs/lows. They are decision
-// levels only; v0.3.7 treats them as context by default and uses them as triggers only while untapped when enabled and still requires context, rejection, early entry proximity, and TP0 room.
 previousDailyHigh = request.security(syminfo.tickerid, "D", high[1], barmerge.gaps_off, barmerge.lookahead_off)
 previousDailyLow = request.security(syminfo.tickerid, "D", low[1], barmerge.gaps_off, barmerge.lookahead_off)
 previousDailyBodyHigh = request.security(syminfo.tickerid, "D", math.max(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
@@ -170,310 +101,180 @@ previousMonthlyLow = request.security(syminfo.tickerid, "M", low[1], barmerge.ga
 previousMonthlyBodyHigh = request.security(syminfo.tickerid, "M", math.max(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
 previousMonthlyBodyLow = request.security(syminfo.tickerid, "M", math.min(open[1], close[1]), barmerge.gaps_off, barmerge.lookahead_off)
 
-// Clean horizontal segments avoid vertical artifacts when higher-timeframe levels update.
-// Every level has a lifecycle: Fresh while extending right, Touched on the first
-// interaction, and Consumed after the first touch/sweep. Consumed lines are hidden
-// by default and retained only when requested or when historical visual test mode is on.
-var float activeDailyHigh = na
-var float activeDailyLow = na
+// Body-aligned D/W/M levels are primary visual context in v0.3.8.
 var float activeDailyBodyHigh = na
 var float activeDailyBodyLow = na
-var float activeWeeklyHigh = na
-var float activeWeeklyLow = na
 var float activeWeeklyBodyHigh = na
 var float activeWeeklyBodyLow = na
-var float activeMonthlyHigh = na
-var float activeMonthlyLow = na
 var float activeMonthlyBodyHigh = na
 var float activeMonthlyBodyLow = na
-var string dailyHighState = LEVEL_CONSUMED
-var string dailyLowState = LEVEL_CONSUMED
-var string dailyBodyHighState = LEVEL_CONSUMED
-var string dailyBodyLowState = LEVEL_CONSUMED
-var string weeklyHighState = LEVEL_CONSUMED
-var string weeklyLowState = LEVEL_CONSUMED
-var string weeklyBodyHighState = LEVEL_CONSUMED
-var string weeklyBodyLowState = LEVEL_CONSUMED
-var string monthlyHighState = LEVEL_CONSUMED
-var string monthlyLowState = LEVEL_CONSUMED
-var string monthlyBodyHighState = LEVEL_CONSUMED
-var string monthlyBodyLowState = LEVEL_CONSUMED
-var line dailyHighLine = na
-var line dailyLowLine = na
+var bool dailyBodyHighFresh = false
+var bool dailyBodyLowFresh = false
+var bool weeklyBodyHighFresh = false
+var bool weeklyBodyLowFresh = false
+var bool monthlyBodyHighFresh = false
+var bool monthlyBodyLowFresh = false
 var line dailyBodyHighLine = na
 var line dailyBodyLowLine = na
-var line weeklyHighLine = na
-var line weeklyLowLine = na
 var line weeklyBodyHighLine = na
 var line weeklyBodyLowLine = na
-var line monthlyHighLine = na
-var line monthlyLowLine = na
 var line monthlyBodyHighLine = na
 var line monthlyBodyLowLine = na
 
-if not na(previousDailyHigh) and (na(activeDailyHigh) or previousDailyHigh != activeDailyHigh)
-    activeDailyHigh := previousDailyHigh
-    dailyHighState := LEVEL_FRESH
-    if showDailyLevels
-        dailyHighLine := line.new(bar_index, activeDailyHigh, bar_index + 1, activeDailyHigh, color=levelColor(color.orange, dailyHighState), width=1)
-
-if not na(previousDailyLow) and (na(activeDailyLow) or previousDailyLow != activeDailyLow)
-    activeDailyLow := previousDailyLow
-    dailyLowState := LEVEL_FRESH
-    if showDailyLevels
-        dailyLowLine := line.new(bar_index, activeDailyLow, bar_index + 1, activeDailyLow, color=levelColor(color.orange, dailyLowState), width=1)
-
-if not na(previousDailyBodyHigh) and (na(activeDailyBodyHigh) or previousDailyBodyHigh != activeDailyBodyHigh)
+if showBodyAlignedDwmLevels and not na(previousDailyBodyHigh) and (na(activeDailyBodyHigh) or previousDailyBodyHigh != activeDailyBodyHigh)
     activeDailyBodyHigh := previousDailyBodyHigh
-    dailyBodyHighState := LEVEL_FRESH
-    if showDailyLevels and showBodyAlignedDwmLevels
-        dailyBodyHighLine := line.new(bar_index, activeDailyBodyHigh, bar_index + 1, activeDailyBodyHigh, color=color.new(color.lime, 25), width=1, style=line.style_dotted)
-
-if not na(previousDailyBodyLow) and (na(activeDailyBodyLow) or previousDailyBodyLow != activeDailyBodyLow)
+    dailyBodyHighFresh := true
+    dailyBodyHighLine := line.new(bar_index, activeDailyBodyHigh, bar_index + 1, activeDailyBodyHigh, color=color.new(bodyColorDaily, 15), width=1, style=line.style_dotted)
+if showBodyAlignedDwmLevels and not na(previousDailyBodyLow) and (na(activeDailyBodyLow) or previousDailyBodyLow != activeDailyBodyLow)
     activeDailyBodyLow := previousDailyBodyLow
-    dailyBodyLowState := LEVEL_FRESH
-    if showDailyLevels and showBodyAlignedDwmLevels
-        dailyBodyLowLine := line.new(bar_index, activeDailyBodyLow, bar_index + 1, activeDailyBodyLow, color=color.new(color.lime, 25), width=1, style=line.style_dotted)
-
-if not na(previousWeeklyHigh) and (na(activeWeeklyHigh) or previousWeeklyHigh != activeWeeklyHigh)
-    activeWeeklyHigh := previousWeeklyHigh
-    weeklyHighState := LEVEL_FRESH
-    if showWeeklyLevels
-        weeklyHighLine := line.new(bar_index, activeWeeklyHigh, bar_index + 1, activeWeeklyHigh, color=levelColor(color.blue, weeklyHighState), width=1)
-
-if not na(previousWeeklyLow) and (na(activeWeeklyLow) or previousWeeklyLow != activeWeeklyLow)
-    activeWeeklyLow := previousWeeklyLow
-    weeklyLowState := LEVEL_FRESH
-    if showWeeklyLevels
-        weeklyLowLine := line.new(bar_index, activeWeeklyLow, bar_index + 1, activeWeeklyLow, color=levelColor(color.blue, weeklyLowState), width=1)
-
-if not na(previousWeeklyBodyHigh) and (na(activeWeeklyBodyHigh) or previousWeeklyBodyHigh != activeWeeklyBodyHigh)
+    dailyBodyLowFresh := true
+    dailyBodyLowLine := line.new(bar_index, activeDailyBodyLow, bar_index + 1, activeDailyBodyLow, color=color.new(bodyColorDaily, 15), width=1, style=line.style_dotted)
+if showBodyAlignedDwmLevels and not na(previousWeeklyBodyHigh) and (na(activeWeeklyBodyHigh) or previousWeeklyBodyHigh != activeWeeklyBodyHigh)
     activeWeeklyBodyHigh := previousWeeklyBodyHigh
-    weeklyBodyHighState := LEVEL_FRESH
-    if showWeeklyLevels and showBodyAlignedDwmLevels
-        weeklyBodyHighLine := line.new(bar_index, activeWeeklyBodyHigh, bar_index + 1, activeWeeklyBodyHigh, color=color.new(color.orange, 25), width=1, style=line.style_dotted)
-
-if not na(previousWeeklyBodyLow) and (na(activeWeeklyBodyLow) or previousWeeklyBodyLow != activeWeeklyBodyLow)
+    weeklyBodyHighFresh := true
+    weeklyBodyHighLine := line.new(bar_index, activeWeeklyBodyHigh, bar_index + 1, activeWeeklyBodyHigh, color=color.new(bodyColorWeekly, 15), width=1, style=line.style_dotted)
+if showBodyAlignedDwmLevels and not na(previousWeeklyBodyLow) and (na(activeWeeklyBodyLow) or previousWeeklyBodyLow != activeWeeklyBodyLow)
     activeWeeklyBodyLow := previousWeeklyBodyLow
-    weeklyBodyLowState := LEVEL_FRESH
-    if showWeeklyLevels and showBodyAlignedDwmLevels
-        weeklyBodyLowLine := line.new(bar_index, activeWeeklyBodyLow, bar_index + 1, activeWeeklyBodyLow, color=color.new(color.orange, 25), width=1, style=line.style_dotted)
-
-if not na(previousMonthlyHigh) and (na(activeMonthlyHigh) or previousMonthlyHigh != activeMonthlyHigh)
-    activeMonthlyHigh := previousMonthlyHigh
-    monthlyHighState := LEVEL_FRESH
-    if showMonthlyLevels
-        monthlyHighLine := line.new(bar_index, activeMonthlyHigh, bar_index + 1, activeMonthlyHigh, color=levelColor(color.purple, monthlyHighState), width=1)
-
-if not na(previousMonthlyLow) and (na(activeMonthlyLow) or previousMonthlyLow != activeMonthlyLow)
-    activeMonthlyLow := previousMonthlyLow
-    monthlyLowState := LEVEL_FRESH
-    if showMonthlyLevels
-        monthlyLowLine := line.new(bar_index, activeMonthlyLow, bar_index + 1, activeMonthlyLow, color=levelColor(color.purple, monthlyLowState), width=1)
-
-if not na(previousMonthlyBodyHigh) and (na(activeMonthlyBodyHigh) or previousMonthlyBodyHigh != activeMonthlyBodyHigh)
+    weeklyBodyLowFresh := true
+    weeklyBodyLowLine := line.new(bar_index, activeWeeklyBodyLow, bar_index + 1, activeWeeklyBodyLow, color=color.new(bodyColorWeekly, 15), width=1, style=line.style_dotted)
+if showBodyAlignedDwmLevels and not na(previousMonthlyBodyHigh) and (na(activeMonthlyBodyHigh) or previousMonthlyBodyHigh != activeMonthlyBodyHigh)
     activeMonthlyBodyHigh := previousMonthlyBodyHigh
-    monthlyBodyHighState := LEVEL_FRESH
-    if showMonthlyLevels and showBodyAlignedDwmLevels
-        monthlyBodyHighLine := line.new(bar_index, activeMonthlyBodyHigh, bar_index + 1, activeMonthlyBodyHigh, color=color.new(monthlyBodyLevelColor, 25), width=1, style=line.style_dotted)
-
-if not na(previousMonthlyBodyLow) and (na(activeMonthlyBodyLow) or previousMonthlyBodyLow != activeMonthlyBodyLow)
+    monthlyBodyHighFresh := true
+    monthlyBodyHighLine := line.new(bar_index, activeMonthlyBodyHigh, bar_index + 1, activeMonthlyBodyHigh, color=color.new(bodyColorMonthly, 15), width=1, style=line.style_dotted)
+if showBodyAlignedDwmLevels and not na(previousMonthlyBodyLow) and (na(activeMonthlyBodyLow) or previousMonthlyBodyLow != activeMonthlyBodyLow)
     activeMonthlyBodyLow := previousMonthlyBodyLow
-    monthlyBodyLowState := LEVEL_FRESH
-    if showMonthlyLevels and showBodyAlignedDwmLevels
-        monthlyBodyLowLine := line.new(bar_index, activeMonthlyBodyLow, bar_index + 1, activeMonthlyBodyLow, color=color.new(monthlyBodyLevelColor, 25), width=1, style=line.style_dotted)
+    monthlyBodyLowFresh := true
+    monthlyBodyLowLine := line.new(bar_index, activeMonthlyBodyLow, bar_index + 1, activeMonthlyBodyLow, color=color.new(bodyColorMonthly, 15), width=1, style=line.style_dotted)
 
-dailyHighValid = showDailyLevels and dailyHighState == LEVEL_FRESH and not na(activeDailyHigh)
-dailyLowValid = showDailyLevels and dailyLowState == LEVEL_FRESH and not na(activeDailyLow)
-dailyBodyHighValid = showDailyLevels and showBodyAlignedDwmLevels and dailyBodyHighState == LEVEL_FRESH and not na(activeDailyBodyHigh)
-dailyBodyLowValid = showDailyLevels and showBodyAlignedDwmLevels and dailyBodyLowState == LEVEL_FRESH and not na(activeDailyBodyLow)
-weeklyHighValid = showWeeklyLevels and weeklyHighState == LEVEL_FRESH and not na(activeWeeklyHigh)
-weeklyLowValid = showWeeklyLevels and weeklyLowState == LEVEL_FRESH and not na(activeWeeklyLow)
-weeklyBodyHighValid = showWeeklyLevels and showBodyAlignedDwmLevels and weeklyBodyHighState == LEVEL_FRESH and not na(activeWeeklyBodyHigh)
-weeklyBodyLowValid = showWeeklyLevels and showBodyAlignedDwmLevels and weeklyBodyLowState == LEVEL_FRESH and not na(activeWeeklyBodyLow)
-monthlyHighValid = showMonthlyLevels and monthlyHighState == LEVEL_FRESH and not na(activeMonthlyHigh)
-monthlyLowValid = showMonthlyLevels and monthlyLowState == LEVEL_FRESH and not na(activeMonthlyLow)
-monthlyBodyHighValid = showMonthlyLevels and showBodyAlignedDwmLevels and monthlyBodyHighState == LEVEL_FRESH and not na(activeMonthlyBodyHigh)
-monthlyBodyLowValid = showMonthlyLevels and showBodyAlignedDwmLevels and monthlyBodyLowState == LEVEL_FRESH and not na(activeMonthlyBodyLow)
-
-if dailyHighValid and not na(dailyHighLine)
-    line.set_x2(dailyHighLine, bar_index + 1)
-if dailyLowValid and not na(dailyLowLine)
-    line.set_x2(dailyLowLine, bar_index + 1)
-if dailyBodyHighValid and not na(dailyBodyHighLine)
+if dailyBodyHighFresh and not na(dailyBodyHighLine)
     line.set_x2(dailyBodyHighLine, bar_index + 1)
-if dailyBodyLowValid and not na(dailyBodyLowLine)
+if dailyBodyLowFresh and not na(dailyBodyLowLine)
     line.set_x2(dailyBodyLowLine, bar_index + 1)
-if weeklyHighValid and not na(weeklyHighLine)
-    line.set_x2(weeklyHighLine, bar_index + 1)
-if weeklyLowValid and not na(weeklyLowLine)
-    line.set_x2(weeklyLowLine, bar_index + 1)
-if weeklyBodyHighValid and not na(weeklyBodyHighLine)
+if weeklyBodyHighFresh and not na(weeklyBodyHighLine)
     line.set_x2(weeklyBodyHighLine, bar_index + 1)
-if weeklyBodyLowValid and not na(weeklyBodyLowLine)
+if weeklyBodyLowFresh and not na(weeklyBodyLowLine)
     line.set_x2(weeklyBodyLowLine, bar_index + 1)
-if monthlyHighValid and not na(monthlyHighLine)
-    line.set_x2(monthlyHighLine, bar_index + 1)
-if monthlyLowValid and not na(monthlyLowLine)
-    line.set_x2(monthlyLowLine, bar_index + 1)
-if monthlyBodyHighValid and not na(monthlyBodyHighLine)
+if monthlyBodyHighFresh and not na(monthlyBodyHighLine)
     line.set_x2(monthlyBodyHighLine, bar_index + 1)
-if monthlyBodyLowValid and not na(monthlyBodyLowLine)
+if monthlyBodyLowFresh and not na(monthlyBodyLowLine)
     line.set_x2(monthlyBodyLowLine, bar_index + 1)
 
-// === Swing high / swing low freshness ===
-// A local swing formed inside chop is ignored. This prevents micro-range pivots
-// from becoming fake SFP levels.
+if dailyBodyHighFresh and high >= activeDailyBodyHigh
+    dailyBodyHighFresh := false
+    consumeLine(dailyBodyHighLine, bodyColorDaily)
+if dailyBodyLowFresh and low <= activeDailyBodyLow
+    dailyBodyLowFresh := false
+    consumeLine(dailyBodyLowLine, bodyColorDaily)
+if weeklyBodyHighFresh and high >= activeWeeklyBodyHigh
+    weeklyBodyHighFresh := false
+    consumeLine(weeklyBodyHighLine, bodyColorWeekly)
+if weeklyBodyLowFresh and low <= activeWeeklyBodyLow
+    weeklyBodyLowFresh := false
+    consumeLine(weeklyBodyLowLine, bodyColorWeekly)
+if monthlyBodyHighFresh and high >= activeMonthlyBodyHigh
+    monthlyBodyHighFresh := false
+    consumeLine(monthlyBodyHighLine, bodyColorMonthly)
+if monthlyBodyLowFresh and low <= activeMonthlyBodyLow
+    monthlyBodyLowFresh := false
+    consumeLine(monthlyBodyLowLine, bodyColorMonthly)
+
+// Optional ordinary D/W/M wick levels. Context only; off by default.
+plot(showOrdinaryDwmHighLowLevels ? previousDailyHigh : na, "Previous Daily High", color=color.new(color.gray, 50), style=plot.style_linebr)
+plot(showOrdinaryDwmHighLowLevels ? previousDailyLow : na, "Previous Daily Low", color=color.new(color.gray, 50), style=plot.style_linebr)
+plot(showOrdinaryDwmHighLowLevels ? previousWeeklyHigh : na, "Previous Weekly High", color=color.new(color.blue, 55), style=plot.style_linebr)
+plot(showOrdinaryDwmHighLowLevels ? previousWeeklyLow : na, "Previous Weekly Low", color=color.new(color.blue, 55), style=plot.style_linebr)
+plot(showOrdinaryDwmHighLowLevels ? previousMonthlyHigh : na, "Previous Monthly High", color=color.new(color.purple, 55), style=plot.style_linebr)
+plot(showOrdinaryDwmHighLowLevels ? previousMonthlyLow : na, "Previous Monthly Low", color=color.new(color.purple, 55), style=plot.style_linebr)
+
+// === Fresh swing levels ===
 pivotHigh = ta.pivothigh(high, swingLength, swingLength)
 pivotLow = ta.pivotlow(low, swingLength, swingLength)
+pivotHighBar = bar_index - swingLength
+pivotLowBar = bar_index - swingLength
+pivotWindowLow = ta.lowest(low, swingLength * 2 + 1)
+pivotWindowHigh = ta.highest(high, swingLength * 2 + 1)
+pivotHighProminent = not na(pivotHigh) and not na(atrValue[swingLength]) and (pivotHigh - pivotWindowLow[swingLength]) >= atrValue[swingLength] * minSwingProminenceAtr
+pivotLowProminent = not na(pivotLow) and not na(atrValue[swingLength]) and (pivotWindowHigh[swingLength] - pivotLow) >= atrValue[swingLength] * minSwingProminenceAtr
 
-var float lastSwingHigh = na
-var float lastSwingLow = na
-var int lastSwingHighBar = na
-var int lastSwingLowBar = na
-var int swingHighTouches = 0
-var int swingLowTouches = 0
-var bool swingHighConsumed = true
-var bool swingLowConsumed = true
+var float activeSwingHigh = na
+var float activeSwingLow = na
+var int activeSwingHighBar = na
+var int activeSwingLowBar = na
+var int activeSwingHighCreatedBar = na
+var int activeSwingLowCreatedBar = na
+var bool swingHighFresh = false
+var bool swingLowFresh = false
 var line swingHighLine = na
 var line swingLowLine = na
 
-if not na(pivotHigh) and not strictChopNoTrade
-    lastSwingHigh := pivotHigh
-    lastSwingHighBar := bar_index - swingLength
-    swingHighTouches := 0
-    swingHighConsumed := false
-    if showSwingLevels
-        swingHighLine := line.new(lastSwingHighBar, lastSwingHigh, bar_index + 1, lastSwingHigh, color=color.new(color.red, 0), width=2)
+if showSwingLevels and pivotHighProminent
+    activeSwingHigh := pivotHigh
+    activeSwingHighBar := pivotHighBar
+    activeSwingHighCreatedBar := bar_index
+    swingHighFresh := true
+    swingHighLine := line.new(activeSwingHighBar, activeSwingHigh, bar_index + 1, activeSwingHigh, color=color.new(color.red, 0), width=2)
+    if showContextLabels
+        rememberLabel(label.new(activeSwingHighBar, activeSwingHigh, "Swing High", style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=size.tiny))
 
-if not na(pivotLow) and not strictChopNoTrade
-    lastSwingLow := pivotLow
-    lastSwingLowBar := bar_index - swingLength
-    swingLowTouches := 0
-    swingLowConsumed := false
-    if showSwingLevels
-        swingLowLine := line.new(lastSwingLowBar, lastSwingLow, bar_index + 1, lastSwingLow, color=color.new(color.green, 0), width=2)
+if showSwingLevels and pivotLowProminent
+    activeSwingLow := pivotLow
+    activeSwingLowBar := pivotLowBar
+    activeSwingLowCreatedBar := bar_index
+    swingLowFresh := true
+    swingLowLine := line.new(activeSwingLowBar, activeSwingLow, bar_index + 1, activeSwingLow, color=color.new(color.green, 0), width=2)
+    if showContextLabels
+        rememberLabel(label.new(activeSwingLowBar, activeSwingLow, "Swing Low", style=label.style_label_up, color=color.new(color.green, 20), textcolor=color.white, size=size.tiny))
 
-if showSwingLevels and not na(swingHighLine) and not swingHighConsumed
+if swingHighFresh and not na(swingHighLine)
     line.set_x2(swingHighLine, bar_index + 1)
-
-if showSwingLevels and not na(swingLowLine) and not swingLowConsumed
+if swingLowFresh and not na(swingLowLine)
     line.set_x2(swingLowLine, bar_index + 1)
 
-swingHighAge = not na(lastSwingHighBar) ? bar_index - lastSwingHighBar : na
-swingLowAge = not na(lastSwingLowBar) ? bar_index - lastSwingLowBar : na
-swingHighFresh = not strictChopNoTrade and not na(lastSwingHigh) and not swingHighConsumed and swingHighAge <= maxSwingLevelAgeBars
-swingLowFresh = not strictChopNoTrade and not na(lastSwingLow) and not swingLowConsumed and swingLowAge <= maxSwingLevelAgeBars
-
-plotshape(showSwingLevels and not na(pivotHigh) and not strictChopNoTrade, title="Confirmed Swing High", style=shape.triangledown, location=location.abovebar, offset=-swingLength, color=color.new(color.red, 0), size=size.tiny, text="SH")
-plotshape(showSwingLevels and not na(pivotLow) and not strictChopNoTrade, title="Confirmed Swing Low", style=shape.triangleup, location=location.belowbar, offset=-swingLength, color=color.new(color.green, 0), size=size.tiny, text="SL")
-
-// === Basic consolidation reaction zones ===
-// After impulse + sideways consolidation, the consolidation top/bottom can become
-// a decision zone. These zones are not automatic entries. They can later become
-// TP1/TP2/TP3 style targets in future versions, but v0.3.7 only checks TP0 room.
-consolidationRange = ta.highest(high, consolidationLookback) - ta.lowest(low, consolidationLookback)
-isConsolidating = not na(atrValue) and consolidationRange <= atrValue * consolidationMaxAtrRange
-bullishImpulseBeforeConsolidation = close[consolidationLookback] - close[consolidationLookback + impulseLookback] > atrValue * impulseAtrMultiplier
-bearishImpulseBeforeConsolidation = close[consolidationLookback] - close[consolidationLookback + impulseLookback] < -atrValue * impulseAtrMultiplier
-
-var float longZoneBottom = na
-var float longZoneTop = na
-var int longZoneBar = na
-var float shortZoneTop = na
-var float shortZoneBottom = na
-var int shortZoneBar = na
-var line longZoneLine = na
-var line shortZoneLine = na
-
-if isConsolidating and bullishImpulseBeforeConsolidation and not strictChopNoTrade
-    longZoneBottom := ta.lowest(low, consolidationLookback)
-    longZoneTop := ta.highest(high, consolidationLookback)
-    longZoneBar := bar_index
-    if showConsolidationZones
-        longZoneLine := line.new(bar_index - consolidationLookback, longZoneBottom, bar_index + 1, longZoneBottom, color=color.new(color.green, 30), width=2)
-
-if isConsolidating and bearishImpulseBeforeConsolidation and not strictChopNoTrade
-    shortZoneTop := ta.highest(high, consolidationLookback)
-    shortZoneBottom := ta.lowest(low, consolidationLookback)
-    shortZoneBar := bar_index
-    if showConsolidationZones
-        shortZoneLine := line.new(bar_index - consolidationLookback, shortZoneTop, bar_index + 1, shortZoneTop, color=color.new(color.red, 30), width=2)
-
-longZoneActive = not na(longZoneBottom) and bar_index - longZoneBar <= zoneMaxAgeBars
-shortZoneActive = not na(shortZoneTop) and bar_index - shortZoneBar <= zoneMaxAgeBars
-nearLongZone = longZoneActive and not na(atrValue) and math.abs(close - longZoneBottom) <= atrValue * reactionZoneAtrDistance
-nearShortZone = shortZoneActive and not na(atrValue) and math.abs(close - shortZoneTop) <= atrValue * reactionZoneAtrDistance
-
-if showConsolidationZones and longZoneActive and not na(longZoneLine)
-    line.set_x2(longZoneLine, bar_index + 1)
-
-if showConsolidationZones and shortZoneActive and not na(shortZoneLine)
-    line.set_x2(shortZoneLine, bar_index + 1)
-
-// === SFP detection ===
-// Default reclaim is not mandatory candle-close confirmation. On realtime bars,
-// Pine's close value is the current price. Conservative closed-candle confirmation
-// is optional through the input above.
-confirmedOrLive = useCloseConfirmation ? barstate.isconfirmed : true
-bearishSweepReclaim(level) =>
-    not na(level) and high > level and close < level and confirmedOrLive
-
-bullishSweepReclaim(level) =>
-    not na(level) and low < level and close > level and confirmedOrLive
-
-// Rolling highs/lows are candidates only. v0.3.7 freezes a Structure High/Low
-// only after the level already has quality: repeated touches/body reactions,
-// a consolidation boundary, or a confirmed swing. A newly frozen level cannot
-// be swept for an SFP on the same bar.
-localLiquidityHigh = ta.highest(high[1], localTriggerLookback)
-localLiquidityLow = ta.lowest(low[1], localTriggerLookback)
+// === Validated/frozen local structure levels ===
 structureHighCandidate = math.max(ta.highest(high[1], structureLookback), ta.highest(bodyHigh[1], structureLookback))
 structureLowCandidate = math.min(ta.lowest(low[1], structureLookback), ta.lowest(bodyLow[1], structureLookback))
-triggerPriorityTolerance = not na(atrValue) ? atrValue * 0.05 : 0.0
-structureTolerance = structureToleranceUsd > 0.0 ? structureToleranceUsd : (not na(atrValue) ? atrValue * 0.25 : syminfo.mintick)
 
-countStructureHighTouches(level) =>
+countHighTouches(level) =>
     int touches = 0
     if not na(level)
-        for structureIndex = 1 to structureLookback
-            touches += (math.abs(high[structureIndex] - level) <= structureTolerance or math.abs(bodyHigh[structureIndex] - level) <= structureTolerance) ? 1 : 0
+        for i = 1 to structureLookback
+            touches += (math.abs(high[i] - level) <= structureTolerance or math.abs(bodyHigh[i] - level) <= structureTolerance) ? 1 : 0
     touches
 
-countStructureLowTouches(level) =>
+countLowTouches(level) =>
     int touches = 0
     if not na(level)
-        for structureIndex = 1 to structureLookback
-            touches += (math.abs(low[structureIndex] - level) <= structureTolerance or math.abs(bodyLow[structureIndex] - level) <= structureTolerance) ? 1 : 0
+        for i = 1 to structureLookback
+            touches += (math.abs(low[i] - level) <= structureTolerance or math.abs(bodyLow[i] - level) <= structureTolerance) ? 1 : 0
     touches
 
-structureHighTouchCount = countStructureHighTouches(structureHighCandidate)
-structureLowTouchCount = countStructureLowTouches(structureLowCandidate)
-structureHighFromTouches = structureHighTouchCount >= minStructureTouches
-structureLowFromTouches = structureLowTouchCount >= minStructureTouches
-structureHighFromSwing = not na(lastSwingHigh) and not na(lastSwingHighBar) and bar_index - lastSwingHighBar >= minStructureBars and math.abs(lastSwingHigh - structureHighCandidate) <= structureTolerance
-structureLowFromSwing = not na(lastSwingLow) and not na(lastSwingLowBar) and bar_index - lastSwingLowBar >= minStructureBars and math.abs(lastSwingLow - structureLowCandidate) <= structureTolerance
-structureHighFromConsolidation = shortZoneActive and not na(shortZoneTop) and math.abs(shortZoneTop - structureHighCandidate) <= structureTolerance
-structureLowFromConsolidation = longZoneActive and not na(longZoneBottom) and math.abs(longZoneBottom - structureLowCandidate) <= structureTolerance
+consolidationRange = ta.highest(high, consolidationLookback) - ta.lowest(low, consolidationLookback)
+isConsolidating = not na(atrValue) and consolidationRange <= atrValue * consolidationMaxAtrRange
+consolidationTop = ta.highest(high, consolidationLookback)
+consolidationBottom = ta.lowest(low, consolidationLookback)
+structureHighTouches = countHighTouches(structureHighCandidate)
+structureLowTouches = countLowTouches(structureLowCandidate)
 structureCandidateHasAge = not na(close[minStructureBars])
-validStructureHighCandidate = structureCandidateHasAge and not strictChopNoTrade and not na(structureHighCandidate) and (structureHighFromTouches or structureHighFromSwing or structureHighFromConsolidation)
-validStructureLowCandidate = structureCandidateHasAge and not strictChopNoTrade and not na(structureLowCandidate) and (structureLowFromTouches or structureLowFromSwing or structureLowFromConsolidation)
+structureHighFromTouches = structureHighTouches >= minStructureTouches
+structureLowFromTouches = structureLowTouches >= minStructureTouches
+structureHighFromSwing = swingHighFresh and not na(activeSwingHigh) and not na(activeSwingHighBar) and bar_index - activeSwingHighBar >= minStructureBars and math.abs(activeSwingHigh - structureHighCandidate) <= structureTolerance
+structureLowFromSwing = swingLowFresh and not na(activeSwingLow) and not na(activeSwingLowBar) and bar_index - activeSwingLowBar >= minStructureBars and math.abs(activeSwingLow - structureLowCandidate) <= structureTolerance
+structureHighFromConsolidation = isConsolidating and math.abs(consolidationTop - structureHighCandidate) <= structureTolerance
+structureLowFromConsolidation = isConsolidating and math.abs(consolidationBottom - structureLowCandidate) <= structureTolerance
+validStructureHighCandidate = structureCandidateHasAge and (structureHighFromTouches or structureHighFromSwing or structureHighFromConsolidation)
+validStructureLowCandidate = structureCandidateHasAge and (structureLowFromTouches or structureLowFromSwing or structureLowFromConsolidation)
 
 var float activeStructureHigh = na
 var float activeStructureLow = na
 var int activeStructureHighBar = na
 var int activeStructureLowBar = na
-var string structureHighState = LEVEL_CONSUMED
-var string structureLowState = LEVEL_CONSUMED
+var bool structureHighFresh = false
+var bool structureLowFresh = false
 var line structureHighLine = na
 var line structureLowLine = na
 var line structureHighCandidateLine = na
 var line structureLowCandidateLine = na
-
-structureHighFresh = not strictChopNoTrade and not na(activeStructureHigh) and structureHighState == LEVEL_FRESH
-structureLowFresh = not strictChopNoTrade and not na(activeStructureLow) and structureLowState == LEVEL_FRESH
-structureHighCreatedThisBar = false
-structureLowCreatedThisBar = false
+var string lastStructureEvent = "None"
 
 if showStructureCandidates and not na(structureHighCandidate)
     if na(structureHighCandidateLine)
@@ -481,14 +282,12 @@ if showStructureCandidates and not na(structureHighCandidate)
     else
         line.set_xy1(structureHighCandidateLine, math.max(0, bar_index - structureLookback), structureHighCandidate)
         line.set_xy2(structureHighCandidateLine, bar_index + 1, structureHighCandidate)
-
 if showStructureCandidates and not na(structureLowCandidate)
     if na(structureLowCandidateLine)
         structureLowCandidateLine := line.new(math.max(0, bar_index - structureLookback), structureLowCandidate, bar_index + 1, structureLowCandidate, color=color.new(color.green, 88), width=1, style=line.style_dotted)
     else
         line.set_xy1(structureLowCandidateLine, math.max(0, bar_index - structureLookback), structureLowCandidate)
         line.set_xy2(structureLowCandidateLine, bar_index + 1, structureLowCandidate)
-
 if not showStructureCandidates
     if not na(structureHighCandidateLine)
         line.delete(structureHighCandidateLine)
@@ -497,563 +296,155 @@ if not showStructureCandidates
         line.delete(structureLowCandidateLine)
         structureLowCandidateLine := na
 
-if validStructureHighCandidate and not structureHighFresh
-    activeStructureHigh := structureHighFromConsolidation ? shortZoneTop : structureHighFromSwing ? lastSwingHigh : structureHighCandidate
+if showStructureLevels and validStructureHighCandidate and not structureHighFresh
+    activeStructureHigh := structureHighFromConsolidation ? consolidationTop : structureHighFromSwing ? activeSwingHigh : structureHighCandidate
     activeStructureHighBar := bar_index
-    structureHighState := LEVEL_FRESH
-    structureHighCreatedThisBar := true
-    if showLiveStructureLevels
-        structureHighLine := line.new(math.max(0, bar_index - structureLookback), activeStructureHigh, bar_index + 1, activeStructureHigh, color=color.new(color.red, 20), width=2)
+    structureHighFresh := true
+    structureHighLine := line.new(math.max(0, bar_index - structureLookback), activeStructureHigh, bar_index + 1, activeStructureHigh, color=color.new(color.red, 20), width=2)
+    lastStructureEvent := "Structure High frozen"
+    if showContextLabels
+        rememberLabel(label.new(bar_index, activeStructureHigh, "Structure High", style=label.style_label_down, color=color.new(color.red, 10), textcolor=color.white, size=size.tiny))
 
-if validStructureLowCandidate and not structureLowFresh
-    activeStructureLow := structureLowFromConsolidation ? longZoneBottom : structureLowFromSwing ? lastSwingLow : structureLowCandidate
+if showStructureLevels and validStructureLowCandidate and not structureLowFresh
+    activeStructureLow := structureLowFromConsolidation ? consolidationBottom : structureLowFromSwing ? activeSwingLow : structureLowCandidate
     activeStructureLowBar := bar_index
-    structureLowState := LEVEL_FRESH
-    structureLowCreatedThisBar := true
-    if showLiveStructureLevels
-        structureLowLine := line.new(math.max(0, bar_index - structureLookback), activeStructureLow, bar_index + 1, activeStructureLow, color=color.new(color.green, 20), width=2)
+    structureLowFresh := true
+    structureLowLine := line.new(math.max(0, bar_index - structureLookback), activeStructureLow, bar_index + 1, activeStructureLow, color=color.new(color.green, 20), width=2)
+    lastStructureEvent := "Structure Low frozen"
+    if showContextLabels
+        rememberLabel(label.new(bar_index, activeStructureLow, "Structure Low", style=label.style_label_up, color=color.new(color.green, 10), textcolor=color.white, size=size.tiny))
 
-structureHighEligible = structureHighFresh and not na(activeStructureHighBar) and bar_index > activeStructureHighBar
-structureLowEligible = structureLowFresh and not na(activeStructureLowBar) and bar_index > activeStructureLowBar
-
-if showLiveStructureLevels and structureHighFresh and not na(structureHighLine)
+if structureHighFresh and not na(structureHighLine)
     line.set_x2(structureHighLine, bar_index + 1)
-if showLiveStructureLevels and structureLowFresh and not na(structureLowLine)
+if structureLowFresh and not na(structureLowLine)
     line.set_x2(structureLowLine, bar_index + 1)
 
-isNearBearDecisionZone(level) =>
-    not na(level) and not na(atrValue) and ((not na(activeDailyHigh) and math.abs(level - activeDailyHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(activeDailyBodyHigh) and math.abs(level - activeDailyBodyHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(activeWeeklyHigh) and math.abs(level - activeWeeklyHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(activeWeeklyBodyHigh) and math.abs(level - activeWeeklyBodyHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(activeMonthlyHigh) and math.abs(level - activeMonthlyHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(activeMonthlyBodyHigh) and math.abs(level - activeMonthlyBodyHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(lastSwingHigh) and math.abs(level - lastSwingHigh) <= atrValue * microTriggerNearZoneAtr) or (not na(shortZoneTop) and math.abs(level - shortZoneTop) <= atrValue * microTriggerNearZoneAtr))
+// === Candidate SFPs and context labels only; no entries/plans ===
+bearStructureSfpCandidate = structureHighFresh and not na(activeStructureHighBar) and bar_index > activeStructureHighBar and high > activeStructureHigh and close < activeStructureHigh
+bullStructureSfpCandidate = structureLowFresh and not na(activeStructureLowBar) and bar_index > activeStructureLowBar and low < activeStructureLow and close > activeStructureLow
+bearSwingSfpCandidate = swingHighFresh and not na(activeSwingHighCreatedBar) and bar_index > activeSwingHighCreatedBar and high > activeSwingHigh and close < activeSwingHigh
+bullSwingSfpCandidate = swingLowFresh and not na(activeSwingLowCreatedBar) and bar_index > activeSwingLowCreatedBar and low < activeSwingLow and close > activeSwingLow
+bearSfpCandidate = bearStructureSfpCandidate or bearSwingSfpCandidate
+bullSfpCandidate = bullStructureSfpCandidate or bullSwingSfpCandidate
 
-isNearBullDecisionZone(level) =>
-    not na(level) and not na(atrValue) and ((not na(activeDailyLow) and math.abs(level - activeDailyLow) <= atrValue * microTriggerNearZoneAtr) or (not na(activeDailyBodyLow) and math.abs(level - activeDailyBodyLow) <= atrValue * microTriggerNearZoneAtr) or (not na(activeWeeklyLow) and math.abs(level - activeWeeklyLow) <= atrValue * microTriggerNearZoneAtr) or (not na(activeWeeklyBodyLow) and math.abs(level - activeWeeklyBodyLow) <= atrValue * microTriggerNearZoneAtr) or (not na(activeMonthlyLow) and math.abs(level - activeMonthlyLow) <= atrValue * microTriggerNearZoneAtr) or (not na(activeMonthlyBodyLow) and math.abs(level - activeMonthlyBodyLow) <= atrValue * microTriggerNearZoneAtr) or (not na(lastSwingLow) and math.abs(level - lastSwingLow) <= atrValue * microTriggerNearZoneAtr) or (not na(longZoneBottom) and math.abs(level - longZoneBottom) <= atrValue * microTriggerNearZoneAtr))
-
-getBearLevel() =>
-    float level = na
-    string name = ""
-    string kind = "None"
-    if structureHighEligible and bearishSweepReclaim(activeStructureHigh)
-        level := activeStructureHigh
-        name := "Structure High"
-        kind := "Structure"
-    if na(level) and swingHighFresh and bearishSweepReclaim(lastSwingHigh)
-        level := lastSwingHigh
-        name := "Swing High"
-        kind := "Swing"
-    if na(level) and shortZoneActive and bearishSweepReclaim(shortZoneTop)
-        level := shortZoneTop
-        name := "Consol Top"
-        kind := "Consolidation"
-    if na(level) and useDwmAsPrimaryTriggers and dailyHighValid and bearishSweepReclaim(activeDailyHigh)
-        level := activeDailyHigh
-        name := "D High"
-        kind := "D/W/M"
-    if na(level) and useDwmAsPrimaryTriggers and dailyBodyHighValid and bearishSweepReclaim(activeDailyBodyHigh)
-        level := activeDailyBodyHigh
-        name := "D Body High"
-        kind := "D/W/M Body"
-    if na(level) and useDwmAsPrimaryTriggers and weeklyHighValid and bearishSweepReclaim(activeWeeklyHigh)
-        level := activeWeeklyHigh
-        name := "W High"
-        kind := "D/W/M"
-    if na(level) and useDwmAsPrimaryTriggers and weeklyBodyHighValid and bearishSweepReclaim(activeWeeklyBodyHigh)
-        level := activeWeeklyBodyHigh
-        name := "W Body High"
-        kind := "D/W/M Body"
-    if na(level) and useDwmAsPrimaryTriggers and monthlyHighValid and bearishSweepReclaim(activeMonthlyHigh)
-        level := activeMonthlyHigh
-        name := "M High"
-        kind := "D/W/M"
-    if na(level) and useDwmAsPrimaryTriggers and monthlyBodyHighValid and bearishSweepReclaim(activeMonthlyBodyHigh)
-        level := activeMonthlyBodyHigh
-        name := "M Body High"
-        kind := "D/W/M Body"
-    [level, name, kind]
-
-getBullLevel() =>
-    float level = na
-    string name = ""
-    string kind = "None"
-    if structureLowEligible and bullishSweepReclaim(activeStructureLow)
-        level := activeStructureLow
-        name := "Structure Low"
-        kind := "Structure"
-    if na(level) and swingLowFresh and bullishSweepReclaim(lastSwingLow)
-        level := lastSwingLow
-        name := "Swing Low"
-        kind := "Swing"
-    if na(level) and longZoneActive and bullishSweepReclaim(longZoneBottom)
-        level := longZoneBottom
-        name := "Consol Bottom"
-        kind := "Consolidation"
-    if na(level) and useDwmAsPrimaryTriggers and dailyLowValid and bullishSweepReclaim(activeDailyLow)
-        level := activeDailyLow
-        name := "D Low"
-        kind := "D/W/M"
-    if na(level) and useDwmAsPrimaryTriggers and dailyBodyLowValid and bullishSweepReclaim(activeDailyBodyLow)
-        level := activeDailyBodyLow
-        name := "D Body Low"
-        kind := "D/W/M Body"
-    if na(level) and useDwmAsPrimaryTriggers and weeklyLowValid and bullishSweepReclaim(activeWeeklyLow)
-        level := activeWeeklyLow
-        name := "W Low"
-        kind := "D/W/M"
-    if na(level) and useDwmAsPrimaryTriggers and weeklyBodyLowValid and bullishSweepReclaim(activeWeeklyBodyLow)
-        level := activeWeeklyBodyLow
-        name := "W Body Low"
-        kind := "D/W/M Body"
-    if na(level) and useDwmAsPrimaryTriggers and monthlyLowValid and bullishSweepReclaim(activeMonthlyLow)
-        level := activeMonthlyLow
-        name := "M Low"
-        kind := "D/W/M"
-    if na(level) and useDwmAsPrimaryTriggers and monthlyBodyLowValid and bullishSweepReclaim(activeMonthlyBodyLow)
-        level := activeMonthlyBodyLow
-        name := "M Body Low"
-        kind := "D/W/M Body"
-    [level, name, kind]
-
-[bearLevelRaw, bearSourceRaw, bearKindRaw] = getBearLevel()
-[bullLevelRaw, bullSourceRaw, bullKindRaw] = getBullLevel()
-rawBearishSfp = not strictChopNoTrade and not na(bearLevelRaw)
-rawBullishSfp = not strictChopNoTrade and not na(bullLevelRaw)
-
-// If both sides sweep in one candle, context decides if one side is meaningful.
-// If context is unclear, show Ambiguous / No Trade and suppress both directions.
-bothSidesTouched = rawBearishSfp and rawBullishSfp
-contextPrefersBull = emaBias == "Bullish" or recentImpulse == "Bullish" or nearLongZone
-contextPrefersBear = emaBias == "Bearish" or recentImpulse == "Bearish" or nearShortZone
-ambiguousNoTrade = bothSidesTouched and contextPrefersBull == contextPrefersBear
-resolvedBullishRaw = bothSidesTouched ? (contextPrefersBull and not contextPrefersBear) : rawBullishSfp
-resolvedBearishRaw = bothSidesTouched ? (contextPrefersBear and not contextPrefersBull) : rawBearishSfp
-
-bearLevel = resolvedBearishRaw ? bearLevelRaw : na
-bearSource = resolvedBearishRaw ? bearSourceRaw : ""
-bearKind = resolvedBearishRaw ? bearKindRaw : "None"
-bullLevel = resolvedBullishRaw ? bullLevelRaw : na
-bullSource = resolvedBullishRaw ? bullSourceRaw : ""
-bullKind = resolvedBullishRaw ? bullKindRaw : "None"
-
-// Countertrend filter. v0.3.7 blocks all countertrend entries in Trend mode.
-// Countertrend scalp logic is intentionally deferred to a future version.
-bearStrongRejection = upperWick >= math.max(bodySize, syminfo.mintick) * strongRejectionWickRatio and close < open
-bullStrongRejection = lowerWick >= math.max(bodySize, syminfo.mintick) * strongRejectionWickRatio and close > open
-bearStructureWeakness = close < emaFast and close < low[1]
-bullStructureStrength = close > emaFast and close > high[1]
-bearCountertrendBlocked = resolvedBearishRaw and marketMode == "Trend" and emaBias == "Bullish"
-bullCountertrendBlocked = resolvedBullishRaw and marketMode == "Trend" and emaBias == "Bearish"
-
-// Weakening push / exhaustion is a quality clue only. It is not required for an
-// entry and never uses future candles. It looks at the current reclaim bar and
-// already-known recent body/volume balance.
-bullBodyPressure = ta.sma(close > open ? bodySize : 0.0, 3)
-bearBodyPressure = ta.sma(close < open ? bodySize : 0.0, 3)
-volumeNotOverextended = volume <= ta.sma(volume, 10) * 1.2
-bearExhaustionClue = resolvedBearishRaw and (bearStrongRejection or bullBodyPressure <= bearBodyPressure or volumeNotOverextended)
-bullExhaustionClue = resolvedBullishRaw and (bullStrongRejection or bearBodyPressure <= bullBodyPressure or volumeNotOverextended)
-
-// Expansion filter stays from v0.2. Large expansion candles are a wait condition.
-expansionBearish = resolvedBearishRaw and largeCandle
-expansionBullish = resolvedBullishRaw and largeCandle
-
-// Same-zone clustering and simple invalidation awareness.
-var float lastPrimaryBearLevel = na
-var int lastPrimaryBearBar = na
-var bool lastBearInvalidated = false
-var float lastPrimaryBullLevel = na
-var int lastPrimaryBullBar = na
-var bool lastBullInvalidated = false
-
-if not na(lastPrimaryBearLevel) and close > lastPrimaryBearLevel
-    lastBearInvalidated := true
-
-if not na(lastPrimaryBullLevel) and close < lastPrimaryBullLevel
-    lastBullInvalidated := true
-
-sameBearCluster = resolvedBearishRaw and not na(atrValue) and not na(lastPrimaryBearLevel) and not lastBearInvalidated and bar_index - lastPrimaryBearBar <= clusterLookbackBars and math.abs(bearLevel - lastPrimaryBearLevel) <= atrValue * sameZoneAtrDistance
-sameBullCluster = resolvedBullishRaw and not na(atrValue) and not na(lastPrimaryBullLevel) and not lastBullInvalidated and bar_index - lastPrimaryBullBar <= clusterLookbackBars and math.abs(bullLevel - lastPrimaryBullLevel) <= atrValue * sameZoneAtrDistance
-weakBearStructureSweep = not rawBearishSfp and not strictChopNoTrade and not na(structureHighCandidate) and bearishSweepReclaim(structureHighCandidate)
-weakBullStructureSweep = not rawBullishSfp and not strictChopNoTrade and not na(structureLowCandidate) and bullishSweepReclaim(structureLowCandidate)
-noiseNoStructure = weakBearStructureSweep or weakBullStructureSweep
-
-// Active scenario lock. This classifies opposite-direction reactions as pullbacks
-// until the original scenario is invalidated. It does not add runners, add-ons,
-// re-entries, reversals, or position management.
 var string activeScenario = "None"
-var float activeScenarioTrigger = na
-var float activeScenarioExtreme = na
-activeShortInvalidated = activeScenario == "Short" and ((not na(activeScenarioTrigger) and close > activeScenarioTrigger) or (not na(activeScenarioExtreme) and close > activeScenarioExtreme) or (structureHighFresh and not na(activeStructureHigh) and close > activeStructureHigh))
-activeLongInvalidated = activeScenario == "Long" and ((not na(activeScenarioTrigger) and close < activeScenarioTrigger) or (not na(activeScenarioExtreme) and close < activeScenarioExtreme) or (structureLowFresh and not na(activeStructureLow) and close < activeStructureLow))
-if activeShortInvalidated or activeLongInvalidated
-    activeScenario := "None"
-    activeScenarioTrigger := na
-    activeScenarioExtreme := na
+if bearSfpCandidate
+    activeScenario := "Short watch"
+    lastStructureEvent := "Bear SFP candidate"
+    if showSfpCandidateLabels
+        rememberLabel(label.new(bar_index, high, "Bear SFP\ncandidate\nStructure reaction", style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.tiny))
+if bullSfpCandidate
+    activeScenario := "Long watch"
+    lastStructureEvent := "Bull SFP candidate"
+    if showSfpCandidateLabels
+        rememberLabel(label.new(bar_index, low, "Bull SFP\ncandidate\nStructure reaction", style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white, size=size.tiny))
 
-bullPullbackNoEntry = resolvedBullishRaw and activeScenario == "Short"
-bearPullbackNoEntry = resolvedBearishRaw and activeScenario == "Long"
+// Mark SFP/touch levels consumed after candidate labels are created.
+if structureHighFresh and not na(activeStructureHighBar) and bar_index > activeStructureHighBar and high >= activeStructureHigh
+    structureHighFresh := false
+    consumeLine(structureHighLine, color.red)
+if structureLowFresh and not na(activeStructureLowBar) and bar_index > activeStructureLowBar and low <= activeStructureLow
+    structureLowFresh := false
+    consumeLine(structureLowLine, color.green)
+if swingHighFresh and not na(activeSwingHighCreatedBar) and bar_index > activeSwingHighCreatedBar and high >= activeSwingHigh
+    swingHighFresh := false
+    consumeLine(swingHighLine, color.red)
+if swingLowFresh and not na(activeSwingLowCreatedBar) and bar_index > activeSwingLowCreatedBar and low <= activeSwingLow
+    swingLowFresh := false
+    consumeLine(swingLowLine, color.green)
 
-// === TP0 / 2R protection check ===
-// TP0 is the protection point. This visual version plots TP0 at 2R for review.
-// A future execution bot should calculate the protection price so closing 50%
-// covers fees, remaining-position stop risk, and optional slippage buffer.
-// TP1/TP2/TP3/Runner are future profit-taking modules.
-nearestAbove(currentNearest, candidate, entryPrice) =>
-    not na(candidate) and candidate > entryPrice ? (na(currentNearest) ? candidate : math.min(currentNearest, candidate)) : currentNearest
+var int lastContextLabelBar = na
+canPrintContextLabel = showContextLabels and (na(lastContextLabelBar) or bar_index - lastContextLabelBar >= levelCooldownBars)
+lowerHighContext = canPrintContextLabel and structureHighFresh and not na(activeStructureHigh) and high < activeStructureHigh and high >= activeStructureHigh - structureTolerance and close < open
+higherLowContext = canPrintContextLabel and structureLowFresh and not na(activeStructureLow) and low > activeStructureLow and low <= activeStructureLow + structureTolerance and close > open
+retestHighContext = canPrintContextLabel and structureHighFresh and not na(activeStructureHigh) and math.abs(high - activeStructureHigh) <= structureTolerance and close < activeStructureHigh
+retestLowContext = canPrintContextLabel and structureLowFresh and not na(activeStructureLow) and math.abs(low - activeStructureLow) <= structureTolerance and close > activeStructureLow
 
-nearestBelow(currentNearest, candidate, entryPrice) =>
-    not na(candidate) and candidate < entryPrice ? (na(currentNearest) ? candidate : math.max(currentNearest, candidate)) : currentNearest
+if lowerHighContext
+    lastContextLabelBar := bar_index
+    lastStructureEvent := "Lower High"
+    rememberLabel(label.new(bar_index, high, "Lower High\nPossible continuation", style=label.style_label_down, color=color.new(color.orange, 10), textcolor=color.white, size=size.tiny))
+else if higherLowContext
+    lastContextLabelBar := bar_index
+    lastStructureEvent := "Higher Low"
+    rememberLabel(label.new(bar_index, low, "Higher Low\nPossible continuation", style=label.style_label_up, color=color.new(color.teal, 10), textcolor=color.white, size=size.tiny))
+else if retestHighContext
+    lastContextLabelBar := bar_index
+    lastStructureEvent := "Retest"
+    rememberLabel(label.new(bar_index, high, "Retest", style=label.style_label_down, color=color.new(color.gray, 10), textcolor=color.white, size=size.tiny))
+else if retestLowContext
+    lastContextLabelBar := bar_index
+    lastStructureEvent := "Retest"
+    rememberLabel(label.new(bar_index, low, "Retest", style=label.style_label_up, color=color.new(color.gray, 10), textcolor=color.white, size=size.tiny))
 
-// v0.3.7 is event-based: Entry is drawn only when the current bar itself sweeps
-// and reclaims the selected trigger level. Old sweeps and later retests never
-// create a new Entry / SL / TP0 plan.
-bullEntryDelayBars = resolvedBullishRaw ? 0 : na
-bearEntryDelayBars = resolvedBearishRaw ? 0 : na
-bullEntry = resolvedBullishRaw ? bullLevel + syminfo.mintick : na
-bullSl = resolvedBullishRaw and not na(atrValue) ? low - atrValue * slAtrBuffer : na
-bullRisk = resolvedBullishRaw ? bullEntry - bullSl : na
-bullTp0 = resolvedBullishRaw ? bullEntry + bullRisk * 2.0 : na
-bearEntry = resolvedBearishRaw ? bearLevel - syminfo.mintick : na
-bearSl = resolvedBearishRaw and not na(atrValue) ? high + atrValue * slAtrBuffer : na
-bearRisk = resolvedBearishRaw ? bearSl - bearEntry : na
-bearTp0 = resolvedBearishRaw ? bearEntry - bearRisk * 2.0 : na
-bullEntryDistanceR = resolvedBullishRaw and bullRisk > syminfo.mintick ? math.max(0.0, close - bullEntry) / bullRisk : na
-bearEntryDistanceR = resolvedBearishRaw and bearRisk > syminfo.mintick ? math.max(0.0, bearEntry - close) / bearRisk : na
-bullEntryDistanceUsd = resolvedBullishRaw ? math.abs(close - bullLevel) : na
-bearEntryDistanceUsd = resolvedBearishRaw ? math.abs(close - bearLevel) : na
-bullLateByDistance = resolvedBullishRaw and ((not na(bullEntryDistanceR) and bullEntryDistanceR > maxEntryDistanceFromTriggerR) or (not na(bullEntryDistanceUsd) and bullEntryDistanceUsd > maxEntryDistanceFromTriggerUsd))
-bearLateByDistance = resolvedBearishRaw and ((not na(bearEntryDistanceR) and bearEntryDistanceR > maxEntryDistanceFromTriggerR) or (not na(bearEntryDistanceUsd) and bearEntryDistanceUsd > maxEntryDistanceFromTriggerUsd))
-bullLateByDelay = resolvedBullishRaw and not na(bullEntryDelayBars) and bullEntryDelayBars > maxEntryDelayBars
-bearLateByDelay = resolvedBearishRaw and not na(bearEntryDelayBars) and bearEntryDelayBars > maxEntryDelayBars
-bullLateEntry = bullLateByDistance or bullLateByDelay
-bearLateEntry = bearLateByDistance or bearLateByDelay
-bullMissedTooLate = bullLateByDelay
-bearMissedTooLate = bearLateByDelay
+if showEntryDiagnostics and (bearSfpCandidate or bullSfpCandidate)
+    rememberLabel(label.new(bar_index, bearSfpCandidate ? high : low, "Structure reaction", style=bearSfpCandidate ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 20), textcolor=color.white, size=size.tiny))
 
-float nearestBullReaction = na
-nearestBullReaction := dailyHighValid ? nearestAbove(nearestBullReaction, activeDailyHigh, bullEntry) : nearestBullReaction
-nearestBullReaction := dailyBodyHighValid ? nearestAbove(nearestBullReaction, activeDailyBodyHigh, bullEntry) : nearestBullReaction
-nearestBullReaction := weeklyHighValid ? nearestAbove(nearestBullReaction, activeWeeklyHigh, bullEntry) : nearestBullReaction
-nearestBullReaction := weeklyBodyHighValid ? nearestAbove(nearestBullReaction, activeWeeklyBodyHigh, bullEntry) : nearestBullReaction
-nearestBullReaction := monthlyHighValid ? nearestAbove(nearestBullReaction, activeMonthlyHigh, bullEntry) : nearestBullReaction
-nearestBullReaction := monthlyBodyHighValid ? nearestAbove(nearestBullReaction, activeMonthlyBodyHigh, bullEntry) : nearestBullReaction
-nearestBullReaction := structureHighFresh ? nearestAbove(nearestBullReaction, activeStructureHigh, bullEntry) : nearestBullReaction
-nearestBullReaction := nearestAbove(nearestBullReaction, lastSwingHigh, bullEntry)
-nearestBullReaction := nearestAbove(nearestBullReaction, shortZoneTop, bullEntry)
+nearestFreshLevelText() =>
+    float nearestDistance = na
+    string nearestName = "None"
+    if dailyBodyHighFresh and not na(activeDailyBodyHigh)
+        nearestDistance := math.abs(close - activeDailyBodyHigh)
+        nearestName := "D Body High"
+    if dailyBodyLowFresh and not na(activeDailyBodyLow) and (na(nearestDistance) or math.abs(close - activeDailyBodyLow) < nearestDistance)
+        nearestDistance := math.abs(close - activeDailyBodyLow)
+        nearestName := "D Body Low"
+    if weeklyBodyHighFresh and not na(activeWeeklyBodyHigh) and (na(nearestDistance) or math.abs(close - activeWeeklyBodyHigh) < nearestDistance)
+        nearestDistance := math.abs(close - activeWeeklyBodyHigh)
+        nearestName := "W Body High"
+    if weeklyBodyLowFresh and not na(activeWeeklyBodyLow) and (na(nearestDistance) or math.abs(close - activeWeeklyBodyLow) < nearestDistance)
+        nearestDistance := math.abs(close - activeWeeklyBodyLow)
+        nearestName := "W Body Low"
+    if monthlyBodyHighFresh and not na(activeMonthlyBodyHigh) and (na(nearestDistance) or math.abs(close - activeMonthlyBodyHigh) < nearestDistance)
+        nearestDistance := math.abs(close - activeMonthlyBodyHigh)
+        nearestName := "M Body High"
+    if monthlyBodyLowFresh and not na(activeMonthlyBodyLow) and (na(nearestDistance) or math.abs(close - activeMonthlyBodyLow) < nearestDistance)
+        nearestDistance := math.abs(close - activeMonthlyBodyLow)
+        nearestName := "M Body Low"
+    if structureHighFresh and not na(activeStructureHigh) and (na(nearestDistance) or math.abs(close - activeStructureHigh) < nearestDistance)
+        nearestDistance := math.abs(close - activeStructureHigh)
+        nearestName := "Structure High"
+    if structureLowFresh and not na(activeStructureLow) and (na(nearestDistance) or math.abs(close - activeStructureLow) < nearestDistance)
+        nearestDistance := math.abs(close - activeStructureLow)
+        nearestName := "Structure Low"
+    if swingHighFresh and not na(activeSwingHigh) and (na(nearestDistance) or math.abs(close - activeSwingHigh) < nearestDistance)
+        nearestDistance := math.abs(close - activeSwingHigh)
+        nearestName := "Swing High"
+    if swingLowFresh and not na(activeSwingLow) and (na(nearestDistance) or math.abs(close - activeSwingLow) < nearestDistance)
+        nearestDistance := math.abs(close - activeSwingLow)
+        nearestName := "Swing Low"
+    nearestName
 
-float nearestBearReaction = na
-nearestBearReaction := dailyLowValid ? nearestBelow(nearestBearReaction, activeDailyLow, bearEntry) : nearestBearReaction
-nearestBearReaction := dailyBodyLowValid ? nearestBelow(nearestBearReaction, activeDailyBodyLow, bearEntry) : nearestBearReaction
-nearestBearReaction := weeklyLowValid ? nearestBelow(nearestBearReaction, activeWeeklyLow, bearEntry) : nearestBearReaction
-nearestBearReaction := weeklyBodyLowValid ? nearestBelow(nearestBearReaction, activeWeeklyBodyLow, bearEntry) : nearestBearReaction
-nearestBearReaction := monthlyLowValid ? nearestBelow(nearestBearReaction, activeMonthlyLow, bearEntry) : nearestBearReaction
-nearestBearReaction := monthlyBodyLowValid ? nearestBelow(nearestBearReaction, activeMonthlyBodyLow, bearEntry) : nearestBearReaction
-nearestBearReaction := structureLowFresh ? nearestBelow(nearestBearReaction, activeStructureLow, bearEntry) : nearestBearReaction
-nearestBearReaction := nearestBelow(nearestBearReaction, lastSwingLow, bearEntry)
-nearestBearReaction := nearestBelow(nearestBearReaction, longZoneBottom, bearEntry)
-
-bullTp0Blocked = resolvedBullishRaw and bullRisk > 0 and not na(nearestBullReaction) and nearestBullReaction < bullTp0
-bearTp0Blocked = resolvedBearishRaw and bearRisk > 0 and not na(nearestBearReaction) and nearestBearReaction > bearTp0
-bullPlanValid = resolvedBullishRaw and bullRisk > syminfo.mintick and not bullTp0Blocked and not bullLateEntry
-bearPlanValid = resolvedBearishRaw and bearRisk > syminfo.mintick and not bearTp0Blocked and not bearLateEntry
-
-primaryBearishSfp = bearPlanValid and not ambiguousNoTrade and not bearCountertrendBlocked and not largeCandle and not sameBearCluster and not bearPullbackNoEntry and not noiseNoStructure
-primaryBullishSfp = bullPlanValid and not ambiguousNoTrade and not bullCountertrendBlocked and not largeCandle and not sameBullCluster and not bullPullbackNoEntry and not noiseNoStructure
-retestBearishSfp = bearPlanValid and not ambiguousNoTrade and not bearCountertrendBlocked and not largeCandle and sameBearCluster and not bearPullbackNoEntry
-retestBullishSfp = bullPlanValid and not ambiguousNoTrade and not bullCountertrendBlocked and not largeCandle and sameBullCluster and not bullPullbackNoEntry
-
-activeDiagnosticSide = resolvedBearishRaw ? "Bear" : resolvedBullishRaw ? "Bull" : "None"
-activeDiagnosticSource = resolvedBearishRaw ? bearSource : resolvedBullishRaw ? bullSource : "None"
-activeDiagnosticDistance = resolvedBearishRaw ? bearEntryDistanceUsd : resolvedBullishRaw ? bullEntryDistanceUsd : na
-activeDiagnosticR = resolvedBearishRaw ? bearRisk : resolvedBullishRaw ? bullRisk : na
-activeDiagnosticDelay = resolvedBearishRaw ? bearEntryDelayBars : resolvedBullishRaw ? bullEntryDelayBars : na
-activeDiagnosticBlocker = strictChopNoTrade ? "Chop" : noiseNoStructure ? "No structure" : ambiguousNoTrade ? "Ambiguous" : largeCandle ? "Expansion" : bearPullbackNoEntry or bullPullbackNoEntry ? "Pullback" : bearCountertrendBlocked or bullCountertrendBlocked ? "Countertrend" : bearLateEntry or bullLateEntry ? "Late" : bearTp0Blocked or bullTp0Blocked ? "TP0" : sameBearCluster or sameBullCluster ? "Retest" : primaryBearishSfp or primaryBullishSfp ? "Valid" : "None"
-entryDiagnosticText = activeDiagnosticBlocker == "Valid" ? "Valid" : activeDiagnosticBlocker == "No structure" ? "Blocked: No structure" : activeDiagnosticBlocker == "TP0" ? "Blocked: TP0" : activeDiagnosticBlocker == "Retest" ? "Blocked: Retest" : activeDiagnosticBlocker == "Chop" ? "Blocked: Chop" : activeDiagnosticBlocker == "Late" ? "Blocked: Late" : activeDiagnosticBlocker == "Countertrend" ? "Blocked: Countertrend" : activeDiagnosticBlocker == "Pullback" ? "Pullback / No new entry" : activeDiagnosticBlocker == "Expansion" ? "Blocked: Expansion" : activeDiagnosticBlocker == "Ambiguous" ? "Blocked: Ambiguous" : noiseNoStructure ? "Noise" : "No active SFP"
-
-// === Drawing helpers ===
-var label[] setupLabels = array.new<label>()
-var line[] activePlanLines = array.new<line>()
-var label[] activePlanLabels = array.new<label>()
-
-rememberSetupLabel(newLabel) =>
-    if not na(newLabel)
-        array.push(setupLabels, newLabel)
-        if array.size(setupLabels) > maxVisibleSetupLabels
-            label.delete(array.shift(setupLabels))
-
-clearLatestPlan() =>
-    if array.size(activePlanLines) > 0
-        for lineIndex = 0 to array.size(activePlanLines) - 1
-            line.delete(array.get(activePlanLines, lineIndex))
-    if array.size(activePlanLabels) > 0
-        for labelIndex = 0 to array.size(activePlanLabels) - 1
-            label.delete(array.get(activePlanLabels, labelIndex))
-    array.clear(activePlanLines)
-    array.clear(activePlanLabels)
-
-drawTrigger(level, sourceName, triggerColor) =>
-    if showTriggerLevelLines and not na(level)
-        line.new(math.max(0, bar_index - 3), level, bar_index + 3, level, color=triggerColor, width=2)
-        // Source is shown in the dashboard to avoid repeated D/W/M labels on chart.
-
-drawPlan(entryPrice, slPrice, tp0Price, planColor) =>
-    if showTradePlanLines and not na(entryPrice) and not na(slPrice) and not na(tp0Price)
-        if showOnlyLatestSetup and not historicalVisualTestMode
-            clearLatestPlan()
-        entryLine = line.new(bar_index, entryPrice, bar_index + 8, entryPrice, color=color.new(color.white, 0), width=1)
-        slLine = line.new(bar_index, slPrice, bar_index + 8, slPrice, color=color.new(color.red, 0), width=1)
-        tp0Line = line.new(bar_index, tp0Price, bar_index + 8, tp0Price, color=planColor, width=2)
-        entryLabel = label.new(bar_index + 8, entryPrice, "Entry", style=label.style_label_left, color=color.new(color.white, 20), textcolor=color.black, size=size.tiny)
-        slLabel = label.new(bar_index + 8, slPrice, "SL", style=label.style_label_left, color=color.new(color.red, 20), textcolor=color.white, size=size.tiny)
-        tp0Label = label.new(bar_index + 8, tp0Price, "TP0 2R", style=label.style_label_left, color=color.new(planColor, 20), textcolor=color.white, size=size.tiny)
-        array.push(activePlanLines, entryLine)
-        array.push(activePlanLines, slLine)
-        array.push(activePlanLines, tp0Line)
-        array.push(activePlanLabels, entryLabel)
-        array.push(activePlanLabels, slLabel)
-        array.push(activePlanLabels, tp0Label)
-        if (historicalVisualTestMode or not showOnlyLatestSetup) and array.size(activePlanLines) > maxHistoricalPlans * 3
-            for pruneIndex = 0 to 2
-                line.delete(array.shift(activePlanLines))
-                label.delete(array.shift(activePlanLabels))
-
-drawEntryDiagnostic(price, isHighSide, diagColor) =>
-    if showEntryDiagnostics and (historicalVisualTestMode or barstate.islast) and activeDiagnosticSide != "None"
-        rememberSetupLabel(label.new(bar_index, price, entryDiagnosticText, style=isHighSide ? label.style_label_down : label.style_label_up, color=color.new(diagColor, 10), textcolor=color.white, size=size.tiny))
-
-// === Final status and labels ===
-setupText = "None"
-statusText = "No Trade"
-tp0Text = "N/A"
-activeZoneText = nearLongZone ? "Long Zone / Consolidation Bottom" : nearShortZone ? "Short Zone / Consolidation Top" : "None"
-triggerSourceText = resolvedBearishRaw ? bearSource : resolvedBullishRaw ? bullSource : useDwmAsPrimaryTriggers ? "None" : "D/W/M: context only"
-triggerTypeText = resolvedBearishRaw ? bearKind : resolvedBullishRaw ? bullKind : "None"
-
-bgcolor(strictChopNoTrade ? color.new(color.gray, 88) : marketMode == "Expansion" ? color.new(color.orange, 90) : ambiguousNoTrade ? color.new(color.yellow, 90) : na, title="Mode background")
-
-if strictChopNoTrade
-    setupText := "Chop"
-    statusText := "Chop / No Trade"
-    tp0Text := "N/A"
-    if showChopWarnings and not strictChopNoTrade[1]
-        rememberSetupLabel(label.new(bar_index, high, "Chop\nNo Trade", style=label.style_label_down, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny))
-else if ambiguousNoTrade
-    setupText := "Ambiguous"
-    statusText := "Ambiguous / No Trade"
-    tp0Text := "N/A"
-    if showConflictLabels
-        rememberSetupLabel(label.new(bar_index, high, "Ambiguous\nNo Trade", style=label.style_label_down, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny))
-else if noiseNoStructure
-    setupText := weakBearStructureSweep ? "Bear Sweep" : "Bull Sweep"
-    statusText := "Noise / No structure"
-    tp0Text := "N/A"
-    if showEntryDiagnostics
-        rememberSetupLabel(label.new(bar_index, weakBearStructureSweep ? high : low, "Noise", style=weakBearStructureSweep ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 20), textcolor=color.white, size=size.tiny))
-else if expansionBearish or expansionBullish
-    setupText := expansionBearish ? "Bear Sweep" : "Bull Sweep"
-    statusText := "Expansion / Wait"
-    tp0Text := "Wait"
-    if showExpansionWarnings
-        expansionLevel = expansionBearish ? bearLevelRaw : bullLevelRaw
-        expansionSource = expansionBearish ? bearSourceRaw : bullSourceRaw
-        rememberSetupLabel(label.new(bar_index, expansionBearish ? high : low, "Expansion\nWait", style=expansionBearish ? label.style_label_down : label.style_label_up, color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny))
-        drawTrigger(expansionLevel, expansionSource, color.new(color.orange, 0))
-else if bearPullbackNoEntry or bullPullbackNoEntry
-    setupText := bearPullbackNoEntry ? "Bear Pullback" : "Bull Pullback"
-    statusText := bearPullbackNoEntry ? "Pullback / No new short" : "Pullback / No new long"
-    tp0Text := "N/A"
-    if showEntryDiagnostics
-        rememberSetupLabel(label.new(bar_index, bearPullbackNoEntry ? high : low, "Pullback", style=bearPullbackNoEntry ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny))
-else if bearCountertrendBlocked or bullCountertrendBlocked
-    setupText := bearCountertrendBlocked ? "Bear SFP" : "Bull SFP"
-    statusText := "Countertrend / No Trade"
-    tp0Text := "N/A"
-    if showSfpLabels
-        rememberSetupLabel(label.new(bar_index, bearCountertrendBlocked ? high : low, "Countertrend\nNo Trade", style=bearCountertrendBlocked ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny))
-else if bearLateEntry or bullLateEntry
-    setupText := bearLateEntry ? "Bear SFP" : "Bull SFP"
-    statusText := "Late Entry / No Trade"
-    tp0Text := "Missed"
-    if showSfpLabels
-        lateLevel = bearLateEntry ? bearLevel : bullLevel
-        lateSource = bearLateEntry ? bearSource : bullSource
-        rememberSetupLabel(label.new(bar_index, bearLateEntry ? high : low, "Missed\nToo Late", style=bearLateEntry ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny))
-        drawTrigger(lateLevel, lateSource, color.new(color.gray, 0))
-else if bearTp0Blocked or bullTp0Blocked
-    setupText := bearTp0Blocked ? "Bear SFP" : "Bull SFP"
-    statusText := "TP0 blocked"
-    tp0Text := "Blocked"
-    if showSfpLabels
-        blockedLevel = bearTp0Blocked ? bearLevel : bullLevel
-        blockedSource = bearTp0Blocked ? bearSource : bullSource
-        rememberSetupLabel(label.new(bar_index, bearTp0Blocked ? high : low, "No Trade\nTP0 blocked", style=bearTp0Blocked ? label.style_label_down : label.style_label_up, color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny))
-        drawTrigger(blockedLevel, blockedSource, color.new(color.orange, 0))
-else if primaryBearishSfp
-    setupText := "Bear SFP"
-    statusText := "Valid Setup"
-    tp0Text := "Clear"
-    if showSfpLabels
-        bearLabelText = "Bear SFP" + (bearExhaustionClue ? "\nWeak push" : "")
-        rememberSetupLabel(label.new(bar_index, high, bearLabelText, style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.tiny))
-        drawTrigger(bearLevel, bearSource, color.new(color.red, 0))
-        drawPlan(bearEntry, bearSl, bearTp0, color.new(color.red, 0))
-    lastPrimaryBearLevel := bearLevel
-    lastPrimaryBearBar := bar_index
-    lastBearInvalidated := false
-    activeScenario := "Short"
-    activeScenarioTrigger := bearLevel
-    activeScenarioExtreme := bearSl
-else if primaryBullishSfp
-    setupText := "Bull SFP"
-    statusText := "Valid Setup"
-    tp0Text := "Clear"
-    if showSfpLabels
-        bullLabelText = "Bull SFP" + (bullExhaustionClue ? "\nWeak push" : "")
-        rememberSetupLabel(label.new(bar_index, low, bullLabelText, style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white, size=size.tiny))
-        drawTrigger(bullLevel, bullSource, color.new(color.green, 0))
-        drawPlan(bullEntry, bullSl, bullTp0, color.new(color.green, 0))
-    lastPrimaryBullLevel := bullLevel
-    lastPrimaryBullBar := bar_index
-    lastBullInvalidated := false
-    activeScenario := "Long"
-    activeScenarioTrigger := bullLevel
-    activeScenarioExtreme := bullSl
-else if retestBearishSfp
-    setupText := "Re-sweep"
-    statusText := "Retest / No new entry"
-    tp0Text := "Cluster"
-    if showSfpLabels
-        rememberSetupLabel(label.new(bar_index, high, "Re-sweep", style=label.style_label_down, color=color.new(color.maroon, 0), textcolor=color.white, size=size.tiny))
-        drawTrigger(bearLevel, bearSource, color.new(color.maroon, 0))
-else if retestBullishSfp
-    setupText := "Retest"
-    statusText := "Retest / No new entry"
-    tp0Text := "Cluster"
-    if showSfpLabels
-        rememberSetupLabel(label.new(bar_index, low, "Retest", style=label.style_label_up, color=color.new(color.teal, 0), textcolor=color.white, size=size.tiny))
-        drawTrigger(bullLevel, bullSource, color.new(color.teal, 0))
-else if nearLongZone
-    setupText := "Long Zone"
-    statusText := "Watch"
-    tp0Text := "Need SFP"
-else if nearShortZone
-    setupText := "Short Zone"
-    statusText := "Watch"
-    tp0Text := "Need SFP"
-
-if showEntryDiagnostics and (resolvedBearishRaw or resolvedBullishRaw) and (historicalVisualTestMode or barstate.islast)
-    drawEntryDiagnostic(resolvedBearishRaw ? high : low, resolvedBearishRaw, resolvedBearishRaw ? color.red : color.green)
-
-// Mark D/W/M levels consumed after signal checks, so the first sweep/reclaim can
-// be evaluated once but later touches cannot create new D/W/M primary entries.
-if dailyHighValid and high >= activeDailyHigh
-    dailyHighState := LEVEL_CONSUMED
-    finishLifecycleLine(dailyHighLine, bar_index, color.orange)
-    historicalLifecycleLabel(activeDailyHigh, "D High\nConsumed", color.orange, true)
-if dailyLowValid and low <= activeDailyLow
-    dailyLowState := LEVEL_CONSUMED
-    finishLifecycleLine(dailyLowLine, bar_index, color.orange)
-    historicalLifecycleLabel(activeDailyLow, "D Low\nConsumed", color.orange, false)
-if dailyBodyHighValid and high >= activeDailyBodyHigh
-    dailyBodyHighState := LEVEL_CONSUMED
-    finishLifecycleLine(dailyBodyHighLine, bar_index, color.lime)
-    historicalLifecycleLabel(activeDailyBodyHigh, "D Body High\nConsumed", color.lime, true)
-if dailyBodyLowValid and low <= activeDailyBodyLow
-    dailyBodyLowState := LEVEL_CONSUMED
-    finishLifecycleLine(dailyBodyLowLine, bar_index, color.lime)
-    historicalLifecycleLabel(activeDailyBodyLow, "D Body Low\nConsumed", color.lime, false)
-if weeklyHighValid and high >= activeWeeklyHigh
-    weeklyHighState := LEVEL_CONSUMED
-    finishLifecycleLine(weeklyHighLine, bar_index, color.blue)
-    historicalLifecycleLabel(activeWeeklyHigh, "W High\nConsumed", color.blue, true)
-if weeklyLowValid and low <= activeWeeklyLow
-    weeklyLowState := LEVEL_CONSUMED
-    finishLifecycleLine(weeklyLowLine, bar_index, color.blue)
-    historicalLifecycleLabel(activeWeeklyLow, "W Low\nConsumed", color.blue, false)
-if weeklyBodyHighValid and high >= activeWeeklyBodyHigh
-    weeklyBodyHighState := LEVEL_CONSUMED
-    finishLifecycleLine(weeklyBodyHighLine, bar_index, color.blue)
-    historicalLifecycleLabel(activeWeeklyBodyHigh, "W Body High\nConsumed", color.blue, true)
-if weeklyBodyLowValid and low <= activeWeeklyBodyLow
-    weeklyBodyLowState := LEVEL_CONSUMED
-    finishLifecycleLine(weeklyBodyLowLine, bar_index, color.blue)
-    historicalLifecycleLabel(activeWeeklyBodyLow, "W Body Low\nConsumed", color.blue, false)
-if monthlyHighValid and high >= activeMonthlyHigh
-    monthlyHighState := LEVEL_CONSUMED
-    finishLifecycleLine(monthlyHighLine, bar_index, color.purple)
-    historicalLifecycleLabel(activeMonthlyHigh, "M High\nConsumed", color.purple, true)
-if monthlyLowValid and low <= activeMonthlyLow
-    monthlyLowState := LEVEL_CONSUMED
-    finishLifecycleLine(monthlyLowLine, bar_index, color.purple)
-    historicalLifecycleLabel(activeMonthlyLow, "M Low\nConsumed", color.purple, false)
-if monthlyBodyHighValid and high >= activeMonthlyBodyHigh
-    monthlyBodyHighState := LEVEL_CONSUMED
-    finishLifecycleLine(monthlyBodyHighLine, bar_index, monthlyBodyLevelColor)
-    historicalLifecycleLabel(activeMonthlyBodyHigh, "M Body High\nConsumed", monthlyBodyLevelColor, true)
-if monthlyBodyLowValid and low <= activeMonthlyBodyLow
-    monthlyBodyLowState := LEVEL_CONSUMED
-    finishLifecycleLine(monthlyBodyLowLine, bar_index, monthlyBodyLevelColor)
-    historicalLifecycleLabel(activeMonthlyBodyLow, "M Body Low\nConsumed", monthlyBodyLevelColor, false)
-
-if structureHighFresh and high >= activeStructureHigh
-    structureHighState := LEVEL_CONSUMED
-    finishLifecycleLine(structureHighLine, bar_index, color.red)
-    historicalLifecycleLabel(activeStructureHigh, "Structure High\nConsumed", color.red, true)
-if structureLowFresh and low <= activeStructureLow
-    structureLowState := LEVEL_CONSUMED
-    finishLifecycleLine(structureLowLine, bar_index, color.green)
-    historicalLifecycleLabel(activeStructureLow, "Structure Low\nConsumed", color.green, false)
-
-// Consume or invalidate swing levels after signal checks.
-if swingHighFresh and high >= lastSwingHigh
-    swingHighTouches += 1
-
-if swingLowFresh and low <= lastSwingLow
-    swingLowTouches += 1
-
-if swingHighFresh and (swingHighTouches > 0 or (invalidateSwingOnCloseBeyondLevel and close > lastSwingHigh) or swingHighTouches > maxTouchesBeforeConsumed or swingHighAge > maxSwingLevelAgeBars or (consumeSwingAfterFirstSfp and bearishSweepReclaim(lastSwingHigh)))
-    swingHighConsumed := true
-    finishLifecycleLine(swingHighLine, bar_index, color.red)
-    historicalLifecycleLabel(lastSwingHigh, "Swing High\nConsumed", color.red, true)
-
-if swingLowFresh and (swingLowTouches > 0 or (invalidateSwingOnCloseBeyondLevel and close < lastSwingLow) or swingLowTouches > maxTouchesBeforeConsumed or swingLowAge > maxSwingLevelAgeBars or (consumeSwingAfterFirstSfp and bullishSweepReclaim(lastSwingLow)))
-    swingLowConsumed := true
-    finishLifecycleLine(swingLowLine, bar_index, color.green)
-    historicalLifecycleLabel(lastSwingLow, "Swing Low\nConsumed", color.green, false)
+nearestFreshLevel = nearestFreshLevelText()
 
 // === Dashboard ===
-var table dashboard = table.new(position.top_right, 2, 13, border_width=1)
+var table dashboard = table.new(position.top_right, 2, 10, border_width=1)
 if dashboardMode != "Off" and barstate.islast
-    table.clear(dashboard, 0, 0, 1, 12)
+    table.clear(dashboard, 0, 0, 1, 9)
     table.cell(dashboard, 0, 0, "Version", bgcolor=color.new(color.black, 0), text_color=color.white)
-    table.cell(dashboard, 1, 0, "v0.3.7", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(dashboard, 1, 0, "v0.3.8", bgcolor=color.new(color.black, 0), text_color=color.white)
     table.cell(dashboard, 0, 1, "Market Mode", text_color=color.white)
     table.cell(dashboard, 1, 1, marketMode, text_color=color.white)
     table.cell(dashboard, 0, 2, "EMA Bias", text_color=color.white)
     table.cell(dashboard, 1, 2, emaBias, text_color=color.white)
-    table.cell(dashboard, 0, 3, "Setup", text_color=color.white)
-    table.cell(dashboard, 1, 3, setupText, text_color=color.white)
-    table.cell(dashboard, 0, 4, "Status", text_color=color.white)
-    table.cell(dashboard, 1, 4, statusText, text_color=color.white)
-    table.cell(dashboard, 0, 5, "Trigger source", text_color=color.white)
-    table.cell(dashboard, 1, 5, triggerSourceText, text_color=color.white)
-    table.cell(dashboard, 0, 6, "TP0 status", text_color=color.white)
-    table.cell(dashboard, 1, 6, tp0Text, text_color=color.white)
+    table.cell(dashboard, 0, 3, "Active scenario", text_color=color.white)
+    table.cell(dashboard, 1, 3, activeScenario, text_color=color.white)
+    table.cell(dashboard, 0, 4, "Nearest fresh level", text_color=color.white)
+    table.cell(dashboard, 1, 4, nearestFreshLevel, text_color=color.white)
+    table.cell(dashboard, 0, 5, "Last structure event", text_color=color.white)
+    table.cell(dashboard, 1, 5, lastStructureEvent, text_color=color.white)
     if dashboardMode == "Full"
-        table.cell(dashboard, 0, 7, "Trigger level type", text_color=color.white)
-        table.cell(dashboard, 1, 7, triggerTypeText, text_color=color.white)
-        table.cell(dashboard, 0, 8, "Level state", text_color=color.white)
-        table.cell(dashboard, 1, 8, activeDiagnosticSide == "Bear" ? bearKind + " / " + bearSource : activeDiagnosticSide == "Bull" ? bullKind + " / " + bullSource : "Fresh levels extend", text_color=color.white)
-        table.cell(dashboard, 0, 9, "Entry diag", text_color=color.white)
-        table.cell(dashboard, 1, 9, entryDiagnosticText, text_color=color.white)
-        table.cell(dashboard, 0, 10, "D/W/M body", text_color=color.white)
-        table.cell(dashboard, 1, 10, showBodyAlignedDwmLevels ? "On" : "Off", text_color=color.white)
-        table.cell(dashboard, 0, 11, "History mode", text_color=color.white)
-        table.cell(dashboard, 1, 11, historicalVisualTestMode ? "On" : "Off", text_color=color.white)
-        table.cell(dashboard, 0, 12, "Active scenario", text_color=color.white)
-        table.cell(dashboard, 1, 12, activeScenario, text_color=color.white)
+        table.cell(dashboard, 0, 6, "High touches", text_color=color.white)
+        table.cell(dashboard, 1, 6, str.tostring(structureHighTouches), text_color=color.white)
+        table.cell(dashboard, 0, 7, "Low touches", text_color=color.white)
+        table.cell(dashboard, 1, 7, str.tostring(structureLowTouches), text_color=color.white)
+        table.cell(dashboard, 0, 8, "Candidates", text_color=color.white)
+        table.cell(dashboard, 1, 8, showStructureCandidates ? "On" : "Off", text_color=color.white)
+        table.cell(dashboard, 0, 9, "Consumed", text_color=color.white)
+        table.cell(dashboard, 1, 9, showConsumedLevels ? "Shown" : "Hidden", text_color=color.white)
 
-// Visual-only alert placeholders. No orders, no webhooks, no exchange commands.
-alertcondition(primaryBearishSfp, title="Bear SFP", message="Bear SFP visual setup on {{ticker}} {{interval}}.")
-alertcondition(primaryBullishSfp, title="Bull SFP", message="Bull SFP visual setup on {{ticker}} {{interval}}.")
-alertcondition(strictChopNoTrade, title="Chop No Trade", message="Chop / No Trade visual regime on {{ticker}} {{interval}}.")
-alertcondition(ambiguousNoTrade, title="Ambiguous No Trade", message="Ambiguous / No Trade visual condition on {{ticker}} {{interval}}.")
-alertcondition(bearTp0Blocked or bullTp0Blocked, title="TP0 Blocked", message="No Trade / TP0 blocked visual condition on {{ticker}} {{interval}}.")
-alertcondition(bearLateEntry or bullLateEntry, title="Late Entry No Trade", message="Late Entry / No Trade visual condition on {{ticker}} {{interval}}.")
+// Visual-only alert placeholders for candidates/context only. No orders, webhooks,
+// exchange commands, strategy entries, stops, targets, or bot execution.
+alertcondition(bearSfpCandidate, title="Bear SFP Candidate", message="Bear SFP candidate visual marker on {{ticker}} {{interval}}.")
+alertcondition(bullSfpCandidate, title="Bull SFP Candidate", message="Bull SFP candidate visual marker on {{ticker}} {{interval}}.")
+alertcondition(lowerHighContext or higherLowContext or retestHighContext or retestLowContext, title="Structure Context", message="Structure context visual marker on {{ticker}} {{interval}}.")
