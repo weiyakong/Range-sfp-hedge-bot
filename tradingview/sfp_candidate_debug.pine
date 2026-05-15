@@ -1,10 +1,10 @@
 //@version=6
-indicator("SFP Candidate Debug v0.5", overlay=true, max_lines_count=500, max_labels_count=200)
+indicator("SFP Candidate Debug v0.6", overlay=true, max_lines_count=500, max_labels_count=200)
 
 // Diagnostic only: raw swing -> Candidate after 700+ USD move -> sweep -> SFP confirmed / broken.
 // Candidate labels are drawn on the original raw swing bar, not on the confirmation bar.
-// v0.5: during impulse, new counter-trend raw swings are NOT collected and are NOT promoted to Candidates.
-// Existing Candidates created before impulse are still watched for sweep / SFP / broken.
+// v0.6: during impulse, new counter-trend raw swings are NOT collected and existing counter-trend Candidates do NOT print SWEEP/BROKEN noise.
+// Existing counter-trend Candidates can still print SFP confirmed only if there is a real same-bar / immediate reclaim.
 // No entries, SL, TP, strategy orders, webhooks, or live trading.
 
 showDashboard = input.bool(true, "Show dashboard")
@@ -103,8 +103,8 @@ labelAt(x, y, labelText, isHigh, bg) =>
 rawMove(price, isHigh) =>
     isHigh ? price - low : high - price
 
-counterTrendRawBlocked(isHigh) =>
-    // Bearish impulse: do not create new Low Candidates. Bullish impulse: do not create new High Candidates.
+counterTrendBlocked(isHigh) =>
+    // Bearish impulse: lows are counter-trend. Bullish impulse: highs are counter-trend.
     (impulseMode == -1 and not isHigh) or (impulseMode == 1 and isHigh)
 
 hasDuplicateCandidate(price, isHigh) =>
@@ -115,8 +115,8 @@ hasDuplicateCandidate(price, isHigh) =>
     duplicate
 
 addRawSwing(price, isHigh, src, originBar) =>
-    // v0.5: during active impulse, counter-trend raw swings are not collected at all.
-    if not na(price) and not counterTrendRawBlocked(isHigh)
+    // v0.6: during active impulse, counter-trend raw swings are not collected at all.
+    if not na(price) and not counterTrendBlocked(isHigh)
         array.push(rawPrice, price)
         array.push(rawIsHigh, isHigh)
         array.push(rawSource, src)
@@ -197,8 +197,8 @@ if array.size(rawPrice) > 0
             rs = array.get(rawSource, i)
             rb = array.get(rawBar, i)
             moveSize = rawMove(rp, rh)
-            // v0.5: old raw swings that become counter-trend during a later impulse are paused, not invalidated/labelled.
-            if moveSize >= minMoveUsd and not counterTrendRawBlocked(rh)
+            // v0.6: old raw swings that become counter-trend during a later impulse are paused, not promoted.
+            if moveSize >= minMoveUsd and not counterTrendBlocked(rh)
                 wasAdded = addCandidate(rp, rh, rs, rb)
                 array.set(rawActive, i, false)
                 if wasAdded
@@ -236,35 +236,52 @@ if array.size(candPrice) > 0
             pending = array.get(candPendingSweep, i)
             pendingBar = array.get(candPendingBar, i)
             nextBarSfp = pending and bar_index - pendingBar <= maxImmediateReclaimBars and (ch ? close < cp : close > cp)
-            if sweptNoReclaim and not sameBarSfp
-                array.set(candPendingSweep, i, true)
-                array.set(candPendingBar, i, bar_index)
-                lastStatus := ch ? "Swept Candidate High" : "Swept Candidate Low"
-                lastSource := sourceShort(cs)
-                lastPrice := cp
-                if showSweepLabels
-                    sweepY = ch ? cp + sweepLabelOffsetUsd : cp - sweepLabelOffsetUsd
-                    sweepText = ch ? "SWEEP High" : "SWEEP Low"
-                    labelAt(bar_index, sweepY, sweepText, ch, color.rgb(80, 140, 255))
-            if sameBarSfp or nextBarSfp
-                lastStatus := ch ? "SFP High confirmed" : "SFP Low confirmed"
-                lastSource := sourceShort(cs)
-                lastPrice := cp
-                sfpEventThisBar := true
-                if showSfpLabels
-                    sfpText = (ch ? "SFP High confirmed" : "SFP Low confirmed") + " · " + sourceShort(cs) + " · " + str.tostring(cp, format.mintick)
-                    labelAt(bar_index, cp, sfpText, ch, color.new(levelColor(ch, true), 0))
-                retireCandidate(i)
-            else if cleanBreak and not sameBarSfp and not nextBarSfp
-                lastStatus := ch ? "Candidate High broken" : "Candidate Low broken"
-                lastSource := sourceShort(cs)
-                lastPrice := cp
-                if showBrokenLabels
-                    brokenY = ch ? cp + sweepLabelOffsetUsd : cp - sweepLabelOffsetUsd
-                    labelAt(bar_index, brokenY, ch ? "BROKEN High" : "BROKEN Low", ch, color.rgb(170, 70, 70))
-                retireCandidate(i)
-            else if pending and bar_index - pendingBar > maxImmediateReclaimBars
-                array.set(candPendingSweep, i, false)
+            candidateCounterTrendInImpulse = counterTrendBlocked(ch)
+            // During active impulse, do not print SWEEP/BROKEN for counter-trend Candidates.
+            // Only a real SFP reclaim is allowed to print.
+            if candidateCounterTrendInImpulse
+                if sameBarSfp or nextBarSfp
+                    lastStatus := ch ? "SFP High confirmed" : "SFP Low confirmed"
+                    lastSource := sourceShort(cs)
+                    lastPrice := cp
+                    sfpEventThisBar := true
+                    if showSfpLabels
+                        sfpText = (ch ? "SFP High confirmed" : "SFP Low confirmed") + " · " + sourceShort(cs) + " · " + str.tostring(cp, format.mintick)
+                        labelAt(bar_index, cp, sfpText, ch, color.new(levelColor(ch, true), 0))
+                    retireCandidate(i)
+                else if cleanBreak
+                    // Passed by impulse: retire silently, no sweep/broken/invalidated label.
+                    retireCandidate(i)
+            else
+                if sweptNoReclaim and not sameBarSfp
+                    array.set(candPendingSweep, i, true)
+                    array.set(candPendingBar, i, bar_index)
+                    lastStatus := ch ? "Swept Candidate High" : "Swept Candidate Low"
+                    lastSource := sourceShort(cs)
+                    lastPrice := cp
+                    if showSweepLabels
+                        sweepY = ch ? cp + sweepLabelOffsetUsd : cp - sweepLabelOffsetUsd
+                        sweepText = ch ? "SWEEP High" : "SWEEP Low"
+                        labelAt(bar_index, sweepY, sweepText, ch, color.rgb(80, 140, 255))
+                if sameBarSfp or nextBarSfp
+                    lastStatus := ch ? "SFP High confirmed" : "SFP Low confirmed"
+                    lastSource := sourceShort(cs)
+                    lastPrice := cp
+                    sfpEventThisBar := true
+                    if showSfpLabels
+                        sfpText = (ch ? "SFP High confirmed" : "SFP Low confirmed") + " · " + sourceShort(cs) + " · " + str.tostring(cp, format.mintick)
+                        labelAt(bar_index, cp, sfpText, ch, color.new(levelColor(ch, true), 0))
+                    retireCandidate(i)
+                else if cleanBreak and not sameBarSfp and not nextBarSfp
+                    lastStatus := ch ? "Candidate High broken" : "Candidate Low broken"
+                    lastSource := sourceShort(cs)
+                    lastPrice := cp
+                    if showBrokenLabels
+                        brokenY = ch ? cp + sweepLabelOffsetUsd : cp - sweepLabelOffsetUsd
+                        labelAt(bar_index, brokenY, ch ? "BROKEN High" : "BROKEN Low", ch, color.rgb(170, 70, 70))
+                    retireCandidate(i)
+                else if pending and bar_index - pendingBar > maxImmediateReclaimBars
+                    array.set(candPendingSweep, i, false)
 
 nearest = "None"
 float nearestDist = na
@@ -285,7 +302,7 @@ var table dash = table.new(position.top_right, 2, 6, border_width=1)
 if showDashboard and barstate.islast
     table.clear(dash, 0, 0, 1, 5)
     table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.new(color.black, 0))
-    table.cell(dash, 1, 0, "Candidate Debug v0.5", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, "Candidate Debug v0.6", text_color=color.white, bgcolor=color.new(color.black, 0))
     table.cell(dash, 0, 1, "Impulse mode", text_color=color.white)
     table.cell(dash, 1, 1, impulseText, text_color=color.white)
     table.cell(dash, 0, 2, "Nearest Candidate", text_color=color.white)
