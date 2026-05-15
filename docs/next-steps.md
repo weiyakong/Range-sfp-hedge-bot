@@ -1,74 +1,58 @@
 # Next Steps
 
-Version: **0.4.1**
+Version: **0.4.2**
 
 This project should be tested slowly and visually before any automation or trade-plan logic is considered.
 
-## 1. Validate Relevant Reaction Levels first
+## 1. Validate broken relevant level lifecycle
 
-Open BTC on a 15m chart and check whether the indicator preserves old horizontal levels that caused strong reactions.
+Open BTC on a 15m chart and find Relevant Reaction High / Low levels that are later broken.
 
-Look for:
+Expected behavior:
 
-- Relevant Reaction High after price moves down strongly from an old high/body/range level.
-- Relevant Reaction Low after price moves up strongly from an old low/body/range level.
-- Few labels, not a stream of minor ignored reactions.
-- Old important levels extending right for later retests.
+- A Relevant Reaction Low stops acting active after price cleanly breaks below it.
+- A Relevant Reaction High stops acting active after price cleanly breaks above it.
+- Broken levels stop extending as active levels.
+- Broken levels are hidden by default unless `showPastRelevantLevels = true`.
+- Broken lows do not create Bull SFP candidates.
+- Broken highs do not create Bear SFP candidates.
 
-## 2. Verify the reaction strength filter
+## 2. Validate clean break settings
 
 Defaults are:
 
-- `reactionLookaheadBars = 24`
-- `reactionMinUsd = 700`
-- `reactionMinAtr = 3.0`
-- `reactionMinPercent = 0.7`
+- `cleanBreakCloseRequired = true`
+- `cleanBreakAtrBuffer = 0.3`
+- `cleanBreakUsdBuffer = 100`
+- `keepRelevantLevelAfterCleanBreak = false`
 
-A level should become relevant only if the reaction away from it is meaningful. Levels where price moved only 100–300 USD should usually stay silent.
+With the default close requirement, a Relevant Reaction Low should break when price closes below the level by the USD/ATR buffer or displaces strongly through it. A Relevant Reaction High should break when price closes above the level by the USD/ATR buffer or displaces strongly through it.
 
-## 3. Verify future interactions
+## 3. Validate future retests of broken levels
 
-When price later returns to a Relevant Reaction High / Low, the indicator may show only compact labels:
+After a Relevant Reaction Low breaks downward:
 
-- `Reaction at Relevant Level`
-- `SFP candidate at Relevant Level`
+- Later retests from below should not show `Reaction at Relevant Level` for a long reaction.
+- Later retests from below should not show `SFP at Relevant Low`.
+- If past relevant labels are enabled, only `Broken support retest` may appear.
 
-It should not draw Entry, SL, TP0, or any trade plan.
+After a Relevant Reaction High breaks upward:
 
-If price cleanly breaks through a relevant level and `keepRelevantLevelAfterCleanBreak = false`, the level should become inactive/muted.
+- Later retests from above should not show `Reaction at Relevant Level` for a short reaction.
+- Later retests from above should not show `SFP at Relevant High`.
+- If past relevant labels are enabled, only `Broken resistance retest` may appear.
 
-## 4. Verify old swing vs relevant level distinction
+## 4. Validate displacement through multiple levels
 
-Past Swing High / Past Swing Low:
+Find strong impulse candles or sequences that cross several relevant levels.
 
-- muted;
-- historical context only;
-- not extended as a fresh reaction level.
+Expected behavior:
 
-Relevant Reaction High / Relevant Reaction Low:
+- Bearish displacement through multiple Relevant Reaction Lows marks all crossed lows broken/past.
+- Bullish displacement through multiple Relevant Reaction Highs marks all crossed highs broken/past.
+- Crossed broken levels are not used later for same-direction reaction/SFP labels.
 
-- proved itself through a strong reaction;
-- remains extended right;
-- can be watched for future reaction/SFP candidates.
-
-## 5. Confirm noise defaults
-
-These settings should keep the chart quiet by default:
-
-- `showRelevantReactionLevels = true`
-- `showPastSwingLevels = true`
-- `showMinorReactionLabels = false`
-- `showMicroSwingLabels = false`
-- `showDebugLabels = false`
-- `showStructureCandidates = false`
-- `showOrdinaryDwmHighLowLevels = false`
-- `dashboardMode = Compact`
-
-The chart should not show `Minor reaction / ignore` labels unless explicitly enabled.
-
-## 6. Validate MTF context without clutter
-
-The existing HTF context can remain, but it should not be the noisy part of the indicator. Use Full dashboard only for debugging nearest 4H/8H/12H/1D levels and impulse/chop context.
+## 5. Validate nearest relevant dashboard field
 
 Compact dashboard should show:
 
@@ -79,12 +63,25 @@ Compact dashboard should show:
 - Nearest Relevant Level
 - Last Relevant Event
 
-If there is no important event, Last Relevant Event should remain `None`.
+Nearest Relevant Level should ignore broken/past levels. It should only consider active Relevant Reaction Lows below price and active Relevant Reaction Highs above price. If none exist, it should show `None`.
+
+## 6. Validate label cleanup
+
+The chart should use short labels:
+
+- `Relevant High`
+- `Relevant Low`
+- `SFP at Relevant Low`
+- `SFP at Relevant High`
+- `Broken support retest`
+- `Broken resistance retest`
+
+`relevantEventCooldownBars = 12` should prevent repeated labels for the same level/zone.
 
 ## 7. Keep automation out
 
-No live trading, exchange connection, API keys, webhook automation, server code, real bot execution, strategy orders, Entry / SL / TP0, TP1 / TP2 / TP3, runner logic, add-ons, re-entry, reversal engine, countertrend scalp mode, FVG, Volume Profile, CVD, AVWAP, Fibonacci, or Moon cycle module should be added in v0.4.1.
+No live trading, exchange connection, API keys, webhook automation, server code, real bot execution, strategy orders, Entry / SL / TP0, TP1 / TP2 / TP3, runner logic, add-ons, re-entry, reversal engine, countertrend scalp mode, Fibonacci, FVG, Volume Profile, CVD, AVWAP, or Moon cycle module should be added in v0.4.2.
 
 ## 8. Future work
 
-Only after relevant reaction levels are visually trusted should future versions revisit trade qualification, paper trading, testnet work, or advanced context modules.
+Only after relevant level lifecycle and broken-level behavior are visually trusted should future versions revisit trade qualification, paper trading, testnet work, or advanced context modules.

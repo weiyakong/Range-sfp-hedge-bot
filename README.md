@@ -1,62 +1,87 @@
 # Range SFP Hedge Bot
 
-Version: **0.4.1**
+Version: **0.4.2**
 
-Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.4.1 keeps the project visual-only and adds a quieter **Relevant Reaction Levels** module.
+Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.4.2 keeps the project visual-only and fixes Relevant Reaction Level lifecycle/directionality.
 
-## Main purpose of v0.4.1
+## Main purpose of v0.4.2
 
-Version 0.4.1 stops labeling minor ignored reactions and focuses on old horizontal levels that already proved importance.
+Version 0.4.2 ensures a Relevant Reaction Level stops acting active after it is cleanly broken.
 
-Core idea:
+Core rules:
 
-- A swing, body cluster, range boundary, or D/W/M body level is only promoted to a **Relevant Reaction High** or **Relevant Reaction Low** after price moves away strongly from it.
-- Strong reaction is measured by USD distance, ATR distance, percent move, or a local structure break.
-- Relevant Reaction Levels remain useful for future retests/rejections/SFP candidates.
-- Ordinary past swings remain muted historical context and are not the same as relevant reaction levels.
+- A **Relevant Reaction Low** is active support only while price is above it and it has not been broken downward.
+- A **Relevant Reaction High** is active resistance only while price is below it and it has not been broken upward.
+- Broken relevant levels are removed from active reaction/SFP logic.
+- Broken levels can optionally remain visible as muted history with `showPastRelevantLevels = true`.
+- A broken support retest is not a long reaction.
+- A broken resistance retest is not a short reaction.
 
-## What the indicator shows
+## Relevant level lifecycle
 
-- Relevant Reaction High / Relevant Reaction Low levels, extended right and visually emphasized.
-- Reaction at Relevant Level and SFP candidate at Relevant Level labels when price later returns to a relevant level.
-- Higher-timeframe swing context from 4H, 8H, 12H, and 1D, with optional 1H medium structure.
-- Active vs Past swing state for HTF/LTF context levels.
-- D/W/M body-aligned context levels:
-  - Daily: lime / light green.
-  - Weekly: orange.
-  - Monthly: white by default and configurable.
-- Optional ordinary D/W/M high/low context levels, disabled by default.
-- Compact dashboard with Version, Market Mode, EMA Bias, HTF Context, Nearest Relevant Level, and Last Relevant Event.
+Active Relevant Reaction Low:
 
-## Relevant Reaction Level requirements
+- Can produce `Reaction at Relevant Level` from above.
+- Can produce `SFP at Relevant Low` only while still active.
+- Becomes `Broken Relevant Low` after a clean break below.
 
-A candidate level becomes relevant only after a strong reaction within `reactionLookaheadBars`.
+Active Relevant Reaction High:
 
-Defaults:
+- Can produce `Reaction at Relevant Level` from below.
+- Can produce `SFP at Relevant High` only while still active.
+- Becomes `Broken Relevant High` after a clean break above.
 
-- `reactionLookaheadBars = 24`
-- `reactionMinUsd = 700`
-- `reactionMinAtr = 3.0`
-- `reactionMinPercent = 0.7`
+Broken/past relevant levels:
 
-A Relevant Reaction High is created only after price moves down strongly from a candidate high. A Relevant Reaction Low is created only after price moves up strongly from a candidate low. Small 100–300 USD reactions should generally not create relevant levels.
+- Are muted or hidden depending on `showPastRelevantLevels`.
+- Do not extend as active levels.
+- Do not create SFP candidates.
+- Do not create same-direction active reaction labels.
+- May show only compact `Broken support retest` or `Broken resistance retest` labels when past relevant levels are visible.
 
-## Noise reduction defaults
+## Clean break defaults
+
+A clean break uses close-based logic by default:
+
+- `cleanBreakCloseRequired = true`
+- `cleanBreakAtrBuffer = 0.3`
+- `cleanBreakUsdBuffer = 100`
+- `keepRelevantLevelAfterCleanBreak = false`
+
+A strong displacement candle through relevant levels also breaks them. Multiple crossed relevant lows/highs can be muted in the same displacement pass.
+
+## Noise and grouping defaults
 
 Defaults are intentionally quiet:
 
 - `showRelevantReactionLevels = true`
+- `showPastRelevantLevels = false`
 - `showPastSwingLevels = true`
 - `showMinorReactionLabels = false`
 - `showMicroSwingLabels = false`
 - `showDebugLabels = false`
 - `showStructureCandidates = false`
 - `showOrdinaryDwmHighLowLevels = false`
+- `relevantEventCooldownBars = 12`
+- `relevantZoneMergeUsd = 100`
 - `dashboardMode = Compact`
 
-If something is ignored, the indicator should usually stay silent.
+Close relevant highs/lows are grouped into a zone label instead of producing many overlapping relevant lines.
 
-## What v0.4.1 deliberately does not do
+## Dashboard
+
+Compact dashboard shows:
+
+- Version: v0.4.2
+- Market Mode
+- EMA Bias
+- HTF Context
+- Nearest Relevant Level
+- Last Relevant Event
+
+Nearest Relevant Level only considers active levels on the correct side of price: active lows below price and active highs above price.
+
+## What v0.4.2 deliberately does not do
 
 This version does **not** try to trade.
 
@@ -69,7 +94,7 @@ This version does **not** try to trade.
 - It does **not** add re-entry logic.
 - It does **not** add reversal logic.
 - It does **not** add countertrend scalp mode.
-- It does **not** add FVG, Volume Profile, CVD, AVWAP, Fibonacci, or Moon cycle modules.
+- It does **not** add Fibonacci, FVG, Volume Profile, CVD, AVWAP, or Moon cycle modules.
 
 ## Visual-only scope
 
