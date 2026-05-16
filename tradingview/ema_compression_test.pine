@@ -1,0 +1,10 @@
+//@version=6
+indicator("EMA Compression Test v0.1", overlay=true)
+
+ema7 = ta.ema(close, 7)
+ema14 = ta.ema(close, 14)
+ema28 = ta.ema(close, 28)
+
+plot(ema7, "EMA 7")
+plot(ema14, "EMA 14")
+plot(ema28, "EMA 28")
