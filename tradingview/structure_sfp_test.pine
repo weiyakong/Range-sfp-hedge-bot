@@ -1,0 +1,329 @@
+//@version=6
+indicator("Structure SFP Test v0.1", overlay=true, max_lines_count=500, max_labels_count=300)
+
+// Combined diagnostic test only.
+// Structure layer decides which raw swings become Entry / Inter. / Watch / x.
+// SFP layer works ONLY on Entry and Inter. levels.
+// Watch and x levels never become SFP levels.
+
+showDashboard = input.bool(true, "Show dashboard")
+showEntry = input.bool(true, "Show Entry labels")
+showInternal = input.bool(true, "Show Inter. labels")
+showWatch = input.bool(true, "Show Watch labels")
+showRejected = input.bool(true, "Show x labels")
+showSfpLevels = input.bool(true, "Show SFP level lines")
+showSweepLabels = input.bool(true, "Show Sweep labels")
+showSfpLabels = input.bool(true, "Show SFP confirmed labels")
+showBrokenLabels = input.bool(true, "Show Broken labels")
+showPastLevels = input.bool(false, "Show used/broken SFP levels")
+
+pivotLen = input.int(5, "Pivot length", minval=2, maxval=40)
+minMoveUsd = input.float(700.0, "Minimum move from raw swing", minval=0.0, step=50.0)
+structureLookback = input.int(60, "Structure edge lookback", minval=5, maxval=300)
+resetUsd = input.float(1500.0, "Reset move USD", minval=0.0, step=100.0)
+mergeUsd = input.float(120.0, "Nearby level USD", minval=0.0, step=10.0)
+cleanBreakUsdBuffer = input.float(120.0, "Clean break buffer USD", minval=0.0, step=10.0)
+sweepLabelOffsetUsd = input.float(90.0, "Sweep/Broken label vertical offset USD", minval=0.0, step=10.0)
+maxImmediateReclaimBars = input.int(1, "Immediate reclaim window bars", minval=0, maxval=2)
+maxRaw = input.int(160, "Max raw swings", minval=20, maxval=400)
+maxLevels = input.int(120, "Max structure levels", minval=20, maxval=300)
+maxSfpLevels = input.int(120, "Max SFP levels", minval=20, maxval=300)
+
+var float[] rawPrice = array.new<float>()
+var bool[] rawHigh = array.new<bool>()
+var bool[] rawActive = array.new<bool>()
+var int[] rawBar = array.new<int>()
+var bool[] rawEdge = array.new<bool>()
+
+var float[] lvlPrice = array.new<float>()
+var bool[] lvlHigh = array.new<bool>()
+var string[] lvlType = array.new<string>()
+var float[] lvlMin = array.new<float>()
+var float[] lvlMax = array.new<float>()
+var bool[] lvlReady = array.new<bool>()
+
+var float[] sfpPrice = array.new<float>()
+var bool[] sfpHigh = array.new<bool>()
+var string[] sfpType = array.new<string>()
+var bool[] sfpActive = array.new<bool>()
+var bool[] sfpPending = array.new<bool>()
+var int[] sfpPendingBar = array.new<int>()
+var int[] sfpOriginBar = array.new<int>()
+var line[] sfpLine = array.new<line>()
+
+var int entryCount = 0
+var int internalCount = 0
+var int watchCount = 0
+var int xCount = 0
+var int sweepCount = 0
+var int sfpCount = 0
+var int brokenCount = 0
+var string lastStatus = "None"
+var float lastLevel = na
+var float lastEntryHigh = na
+var float lastEntryLow = na
+var float lowSinceEntryHigh = na
+var float highSinceEntryLow = na
+bool sfpEventThisBar = false
+
+if not na(lastEntryHigh)
+    lowSinceEntryHigh := na(lowSinceEntryHigh) ? low : math.min(lowSinceEntryHigh, low)
+if not na(lastEntryLow)
+    highSinceEntryLow := na(highSinceEntryLow) ? high : math.max(highSinceEntryLow, high)
+
+if array.size(lvlPrice) > 0
+    for j = 0 to array.size(lvlPrice) - 1
+        p = array.get(lvlPrice, j)
+        h = array.get(lvlHigh, j)
+        t = array.get(lvlType, j)
+        mn = math.min(array.get(lvlMin, j), low)
+        mx = math.max(array.get(lvlMax, j), high)
+        array.set(lvlMin, j, mn)
+        array.set(lvlMax, j, mx)
+        if t == "entry"
+            if h and p - mn >= resetUsd
+                array.set(lvlReady, j, true)
+            if not h and mx - p >= resetUsd
+                array.set(lvlReady, j, true)
+
+levelColor(isHigh, active) =>
+    base = isHigh ? color.rgb(255, 80, 130) : color.lime
+    active ? color.new(base, 0) : color.new(base, 84)
+
+nearestSame(price, isHigh) =>
+    int idx = -1
+    float best = na
+    if array.size(lvlPrice) > 0
+        for j = 0 to array.size(lvlPrice) - 1
+            if array.get(lvlHigh, j) == isHigh
+                d = math.abs(array.get(lvlPrice, j) - price)
+                if d <= mergeUsd and (na(best) or d < best)
+                    best := d
+                    idx := j
+    idx
+
+canWatch(idx) => idx >= 0 and array.get(lvlType, idx) == "entry" and array.get(lvlReady, idx)
+
+useWatch(idx) =>
+    if idx >= 0
+        array.set(lvlReady, idx, false)
+        array.set(lvlMin, idx, low)
+        array.set(lvlMax, idx, high)
+
+addStructureLevel(price, isHigh, typ) =>
+    array.push(lvlPrice, price)
+    array.push(lvlHigh, isHigh)
+    array.push(lvlType, typ)
+    array.push(lvlMin, low)
+    array.push(lvlMax, high)
+    array.push(lvlReady, false)
+    if array.size(lvlPrice) > maxLevels
+        array.shift(lvlPrice)
+        array.shift(lvlHigh)
+        array.shift(lvlType)
+        array.shift(lvlMin)
+        array.shift(lvlMax)
+        array.shift(lvlReady)
+
+hasDuplicateSfp(price, isHigh) =>
+    bool duplicate = false
+    if array.size(sfpPrice) > 0
+        for j = 0 to array.size(sfpPrice) - 1
+            duplicate := duplicate or (array.get(sfpActive, j) and array.get(sfpHigh, j) == isHigh and math.abs(array.get(sfpPrice, j) - price) <= mergeUsd)
+    duplicate
+
+addSfpLevel(price, isHigh, typ, originBar) =>
+    if not hasDuplicateSfp(price, isHigh)
+        ln = line.new(originBar, price, bar_index + 1, price, color=levelColor(isHigh, true), width=2, extend=extend.right)
+        array.push(sfpPrice, price)
+        array.push(sfpHigh, isHigh)
+        array.push(sfpType, typ)
+        array.push(sfpActive, true)
+        array.push(sfpPending, false)
+        array.push(sfpPendingBar, na)
+        array.push(sfpOriginBar, originBar)
+        array.push(sfpLine, ln)
+        if not showSfpLevels
+            line.delete(ln)
+        if array.size(sfpPrice) > maxSfpLevels
+            oldLine = array.shift(sfpLine)
+            line.delete(oldLine)
+            array.shift(sfpPrice)
+            array.shift(sfpHigh)
+            array.shift(sfpType)
+            array.shift(sfpActive)
+            array.shift(sfpPending)
+            array.shift(sfpPendingBar)
+            array.shift(sfpOriginBar)
+
+retireSfp(i) =>
+    array.set(sfpActive, i, false)
+    array.set(sfpPending, i, false)
+    ln = array.get(sfpLine, i)
+    line.set_extend(ln, extend.none)
+    line.set_x2(ln, bar_index)
+    line.set_color(ln, levelColor(array.get(sfpHigh, i), false))
+    line.set_width(ln, 1)
+    if not showPastLevels
+        line.delete(ln)
+
+addRaw(price, isHigh, originBar, isEdge) =>
+    if not na(price)
+        array.push(rawPrice, price)
+        array.push(rawHigh, isHigh)
+        array.push(rawActive, true)
+        array.push(rawBar, originBar)
+        array.push(rawEdge, isEdge)
+        if array.size(rawPrice) > maxRaw
+            array.shift(rawPrice)
+            array.shift(rawHigh)
+            array.shift(rawActive)
+            array.shift(rawBar)
+            array.shift(rawEdge)
+
+rawMove(price, isHigh) => isHigh ? price - low : high - price
+internalOk(isHigh) => isHigh ? (not na(lastEntryHigh) and not na(lowSinceEntryHigh) and lastEntryHigh - lowSinceEntryHigh >= resetUsd) : (not na(lastEntryLow) and not na(highSinceEntryLow) and highSinceEntryLow - lastEntryLow >= resetUsd)
+
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+hiOrigin = ta.highest(high, structureLookback)[pivotLen]
+loOrigin = ta.lowest(low, structureLookback)[pivotLen]
+if not na(ph)
+    addRaw(ph, true, bar_index - pivotLen, ph >= hiOrigin)
+if not na(pl)
+    addRaw(pl, false, bar_index - pivotLen, pl <= loOrigin)
+
+if array.size(rawPrice) > 0
+    for i = 0 to array.size(rawPrice) - 1
+        if array.get(rawActive, i)
+            rp = array.get(rawPrice, i)
+            rh = array.get(rawHigh, i)
+            rb = array.get(rawBar, i)
+            edge = array.get(rawEdge, i)
+            if rawMove(rp, rh) >= minMoveUsd
+                array.set(rawActive, i, false)
+                dupIdx = nearestSame(rp, rh)
+                dup = dupIdx >= 0
+                watchOk = canWatch(dupIdx)
+                intOk = internalOk(rh)
+                if dup and watchOk
+                    addStructureLevel(rp, rh, "watch")
+                    useWatch(dupIdx)
+                    watchCount += 1
+                    lastStatus := rh ? "Watch H" : "Watch L"
+                    lastLevel := rp
+                    if showWatch
+                        label.new(rb, rp, rh ? "Watch H" : "Watch L", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny)
+                else if edge
+                    addStructureLevel(rp, rh, "entry")
+                    addSfpLevel(rp, rh, "entry", rb)
+                    entryCount += 1
+                    lastStatus := rh ? "Entry High" : "Entry Low"
+                    lastLevel := rp
+                    if rh
+                        lastEntryHigh := rp
+                        lowSinceEntryHigh := low
+                    else
+                        lastEntryLow := rp
+                        highSinceEntryLow := high
+                    if showEntry
+                        label.new(rb, rp, rh ? "Entry High" : "Entry Low", style=rh ? label.style_label_down : label.style_label_up, color=rh ? color.new(color.red, 0) : color.new(color.lime, 0), textcolor=color.white, size=size.tiny)
+                else if dup
+                    xCount += 1
+                    lastStatus := "x duplicate"
+                    lastLevel := rp
+                    if showRejected
+                        label.new(rb, rp, "x duplicate", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
+                else if intOk
+                    addStructureLevel(rp, rh, "internal")
+                    addSfpLevel(rp, rh, "internal", rb)
+                    internalCount += 1
+                    lastStatus := rh ? "Inter. High" : "Inter. Low"
+                    lastLevel := rp
+                    if showInternal
+                        label.new(rb, rp, rh ? "Inter. High" : "Inter. Low", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.blue, 0), textcolor=color.white, size=size.tiny)
+                else
+                    xCount += 1
+                    lastStatus := "x not edge"
+                    lastLevel := rp
+                    if showRejected
+                        label.new(rb, rp, "x not edge", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
+
+if array.size(sfpPrice) > 0
+    for i = 0 to array.size(sfpPrice) - 1
+        if array.get(sfpActive, i)
+            cp = array.get(sfpPrice, i)
+            ch = array.get(sfpHigh, i)
+            typ = array.get(sfpType, i)
+            ln = array.get(sfpLine, i)
+            if showSfpLevels
+                line.set_x2(ln, bar_index + 1)
+            sameBarSfp = ch ? high > cp and close < cp : low < cp and close > cp
+            sweptNoReclaim = ch ? high > cp and close >= cp : low < cp and close <= cp
+            cleanBreak = ch ? close > cp + cleanBreakUsdBuffer : close < cp - cleanBreakUsdBuffer
+            pending = array.get(sfpPending, i)
+            pendingBar = array.get(sfpPendingBar, i)
+            nextBarSfp = pending and bar_index - pendingBar <= maxImmediateReclaimBars and (ch ? close < cp : close > cp)
+            if sweptNoReclaim and not sameBarSfp
+                array.set(sfpPending, i, true)
+                array.set(sfpPendingBar, i, bar_index)
+                sweepCount += 1
+                lastStatus := ch ? "Sweep High" : "Sweep Low"
+                lastLevel := cp
+                if showSweepLabels
+                    y = ch ? cp + sweepLabelOffsetUsd : cp - sweepLabelOffsetUsd
+                    label.new(bar_index, y, ch ? "SWEEP High" : "SWEEP Low", style=ch ? label.style_label_down : label.style_label_up, color=color.rgb(80, 140, 255), textcolor=color.white, size=size.tiny)
+            if sameBarSfp or nextBarSfp
+                sfpCount += 1
+                lastStatus := ch ? "SFP High confirmed" : "SFP Low confirmed"
+                lastLevel := cp
+                sfpEventThisBar := true
+                if showSfpLabels
+                    txt = (ch ? "SFP High" : "SFP Low") + " · " + typ
+                    label.new(bar_index, cp, txt, style=ch ? label.style_label_down : label.style_label_up, color=levelColor(ch, true), textcolor=color.white, size=size.tiny)
+                retireSfp(i)
+            else if cleanBreak and not sameBarSfp and not nextBarSfp
+                brokenCount += 1
+                lastStatus := ch ? "Broken High" : "Broken Low"
+                lastLevel := cp
+                if showBrokenLabels
+                    y = ch ? cp + sweepLabelOffsetUsd : cp - sweepLabelOffsetUsd
+                    label.new(bar_index, y, ch ? "BROKEN High" : "BROKEN Low", style=ch ? label.style_label_down : label.style_label_up, color=color.rgb(170, 70, 70), textcolor=color.white, size=size.tiny)
+                retireSfp(i)
+            else if pending and bar_index - pendingBar > maxImmediateReclaimBars
+                array.set(sfpPending, i, false)
+
+nearest = "None"
+float nearestDist = na
+if array.size(sfpPrice) > 0
+    for i = 0 to array.size(sfpPrice) - 1
+        if array.get(sfpActive, i)
+            cp = array.get(sfpPrice, i)
+            ch = array.get(sfpHigh, i)
+            validSide = ch ? cp > close : cp < close
+            dist = math.abs(close - cp)
+            if validSide and (na(nearestDist) or dist < nearestDist)
+                nearestDist := dist
+                nearest := (ch ? "High " : "Low ") + str.tostring(cp, format.mintick) + " · " + array.get(sfpType, i)
+
+var table dash = table.new(position.top_right, 2, 8, border_width=1)
+if showDashboard and barstate.islast
+    table.clear(dash, 0, 0, 1, 7)
+    table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, "Structure SFP v0.1", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 0, 1, "Entry/Inter./Watch/x", text_color=color.white)
+    table.cell(dash, 1, 1, str.tostring(entryCount) + " / " + str.tostring(internalCount) + " / " + str.tostring(watchCount) + " / " + str.tostring(xCount), text_color=color.white)
+    table.cell(dash, 0, 2, "SFP sweep/conf/broken", text_color=color.white)
+    table.cell(dash, 1, 2, str.tostring(sweepCount) + " / " + str.tostring(sfpCount) + " / " + str.tostring(brokenCount), text_color=color.white)
+    table.cell(dash, 0, 3, "Nearest SFP level", text_color=color.white)
+    table.cell(dash, 1, 3, nearest, text_color=color.white)
+    table.cell(dash, 0, 4, "Last", text_color=color.white)
+    table.cell(dash, 1, 4, lastStatus + (na(lastLevel) ? "" : " " + str.tostring(lastLevel, format.mintick)), text_color=color.white)
+    table.cell(dash, 0, 5, "Since Entry High", text_color=color.white)
+    table.cell(dash, 1, 5, na(lastEntryHigh) or na(lowSinceEntryHigh) ? "" : str.tostring(lastEntryHigh - lowSinceEntryHigh, "#.##"), text_color=color.white)
+    table.cell(dash, 0, 6, "Since Entry Low", text_color=color.white)
+    table.cell(dash, 1, 6, na(lastEntryLow) or na(highSinceEntryLow) ? "" : str.tostring(highSinceEntryLow - lastEntryLow, "#.##"), text_color=color.white)
+    table.cell(dash, 0, 7, "SFP allowed from", text_color=color.white)
+    table.cell(dash, 1, 7, "Entry + Inter only", text_color=color.white)
+
+alertcondition(sfpEventThisBar, title="Structure SFP confirmed", message="Structure-filtered SFP confirmed on {{ticker}} {{interval}}.")
