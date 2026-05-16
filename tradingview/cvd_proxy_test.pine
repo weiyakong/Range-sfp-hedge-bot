@@ -1,0 +1,95 @@
+//@version=6
+indicator("CVD Proxy Test v0.1", overlay=false, max_labels_count=300)
+
+// Diagnostic only.
+// This is NOT true bid/ask CVD. It is a proxy CVD based on regular OHLCV candles.
+// Two modes:
+// 1) Candle direction: green candle volume = buy pressure, red candle volume = sell pressure.
+// 2) Close location: volume is weighted by where close is inside candle range.
+
+mode = input.string("Close location", "Delta mode", options=["Close location", "Candle direction"])
+resetDaily = input.bool(false, "Reset CVD daily")
+showDivergences = input.bool(true, "Show divergences")
+showPressureLabels = input.bool(false, "Show pressure labels")
+
+pivotLen = input.int(5, "Pivot length", minval=2, maxval=30)
+cvdSmoothing = input.int(1, "CVD smoothing", minval=1, maxval=50)
+divergenceLookback = input.int(80, "Divergence max bars between pivots", minval=10, maxval=300)
+pressureLookback = input.int(8, "Pressure lookback", minval=2, maxval=50)
+pressureThreshold = input.float(0.0, "Pressure threshold", step=0.1)
+
+candleRange = high - low
+closeLocationDelta = candleRange > 0 ? volume * (((close - low) - (high - close)) / candleRange) : 0.0
+candleDirectionDelta = close > open ? volume : close < open ? -volume : 0.0
+delta = mode == "Close location" ? closeLocationDelta : candleDirectionDelta
+
+newDay = ta.change(time("D")) != 0
+var float cvd = 0.0
+if resetDaily and newDay
+    cvd := delta
+else
+    cvd += delta
+
+cvdSmooth = ta.sma(cvd, cvdSmoothing)
+plot(cvdSmooth, "CVD proxy", color=color.new(color.aqua, 0), linewidth=2)
+hline(0, "Zero", color=color.new(color.gray, 70))
+
+pressure = cvdSmooth - cvdSmooth[pressureLookback]
+plot(pressure, "CVD pressure change", color=color.new(color.orange, 0), display=display.none)
+
+pricePH = ta.pivothigh(high, pivotLen, pivotLen)
+pricePL = ta.pivotlow(low, pivotLen, pivotLen)
+cvdAtPivot = cvdSmooth[pivotLen]
+
+var float prevPriceHigh = na
+var float prevCvdHigh = na
+var int prevHighBar = na
+var float prevPriceLow = na
+var float prevCvdLow = na
+var int prevLowBar = na
+
+bearDiv = false
+bullDiv = false
+
+if not na(pricePH)
+    currentBar = bar_index - pivotLen
+    if not na(prevPriceHigh) and currentBar - prevHighBar <= divergenceLookback
+        bearDiv := pricePH > prevPriceHigh and cvdAtPivot <= prevCvdHigh
+    prevPriceHigh := pricePH
+    prevCvdHigh := cvdAtPivot
+    prevHighBar := currentBar
+
+if not na(pricePL)
+    currentBar = bar_index - pivotLen
+    if not na(prevPriceLow) and currentBar - prevLowBar <= divergenceLookback
+        bullDiv := pricePL < prevPriceLow and cvdAtPivot >= prevCvdLow
+    prevPriceLow := pricePL
+    prevCvdLow := cvdAtPivot
+    prevLowBar := currentBar
+
+plotshape(showDivergences and bearDiv, title="Bear CVD div", text="Bear div", style=shape.labeldown, location=location.top, color=color.new(color.red, 0), textcolor=color.white, size=size.tiny, offset=-pivotLen)
+plotshape(showDivergences and bullDiv, title="Bull CVD div", text="Bull div", style=shape.labelup, location=location.bottom, color=color.new(color.lime, 0), textcolor=color.white, size=size.tiny, offset=-pivotLen)
+
+cvdBuying = pressure > pressureThreshold
+cvdSelling = pressure < -pressureThreshold
+plotshape(showPressureLabels and cvdBuying, title="CVD buying", text="CVD up", style=shape.circle, location=location.bottom, color=color.new(color.lime, 40), textcolor=color.white, size=size.tiny)
+plotshape(showPressureLabels and cvdSelling, title="CVD selling", text="CVD down", style=shape.circle, location=location.top, color=color.new(color.red, 40), textcolor=color.white, size=size.tiny)
+
+var table dash = table.new(position.top_right, 2, 6, border_width=1)
+if barstate.islast
+    table.clear(dash, 0, 0, 1, 5)
+    table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, "CVD Proxy v0.1", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 0, 1, "Mode", text_color=color.white)
+    table.cell(dash, 1, 1, mode, text_color=color.white)
+    table.cell(dash, 0, 2, "CVD", text_color=color.white)
+    table.cell(dash, 1, 2, str.tostring(cvdSmooth, "#.##"), text_color=color.white)
+    table.cell(dash, 0, 3, "Pressure", text_color=color.white)
+    table.cell(dash, 1, 3, str.tostring(pressure, "#.##"), text_color=color.white)
+    table.cell(dash, 0, 4, "Last div", text_color=color.white)
+    table.cell(dash, 1, 4, bearDiv ? "Bear div" : bullDiv ? "Bull div" : "None", text_color=color.white)
+    table.cell(dash, 0, 5, "Note", text_color=color.white)
+    table.cell(dash, 1, 5, "Proxy, not true bid/ask", text_color=color.white)
+
+alertcondition(bearDiv, title="Bear CVD proxy divergence", message="Bear CVD proxy divergence on {{ticker}} {{interval}}.")
+alertcondition(bullDiv, title="Bull CVD proxy divergence", message="Bull CVD proxy divergence on {{ticker}} {{interval}}.")
