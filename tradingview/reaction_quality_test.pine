@@ -1,0 +1,324 @@
+//@version=6
+indicator("Reaction Quality Test v0.1", overlay=true, max_labels_count=300, max_lines_count=300)
+
+// Diagnostic only.
+// Structure layer finds Entry / Inter. / Watch levels.
+// Reaction layer checks whether price reacts from a touched level within N bars.
+// No EMA, no CVD, no strategy orders.
+
+showDashboard = input.bool(true, "Show dashboard")
+showEntry = input.bool(true, "Show Entry labels")
+showInternal = input.bool(true, "Show Inter. labels")
+showWatch = input.bool(true, "Show Watch labels")
+showRejected = input.bool(false, "Show rejected x labels")
+showReactionLabels = input.bool(true, "Show reaction quality labels")
+showRangeBg = input.bool(true, "Show middle range boundaries")
+showReactionLines = input.bool(false, "Show reaction level lines")
+
+pivotLen = input.int(5, "Pivot length", minval=2, maxval=40)
+minMoveUsd = input.float(700.0, "Minimum move from raw swing", minval=0.0, step=50.0)
+structureLookback = input.int(60, "Structure edge lookback", minval=5, maxval=300)
+majorRangeLookback = input.int(200, "Major range lookback", minval=50, maxval=600)
+entryEdgePercent = input.float(25.0, "Entry edge zone %", minval=5.0, maxval=45.0, step=1.0)
+resetUsd = input.float(1500.0, "Reset move USD", minval=0.0, step=100.0)
+mergeUsd = input.float(120.0, "Nearby level USD", minval=0.0, step=10.0)
+
+reactionUsd = input.float(500.0, "Reaction move USD", minval=50.0, step=50.0)
+reactionWindowBars = input.int(8, "Reaction window bars", minval=1, maxval=50)
+touchBufferUsd = input.float(50.0, "Touch buffer USD", minval=0.0, step=10.0)
+
+maxRaw = input.int(160, "Max raw swings", minval=20, maxval=400)
+maxLevels = input.int(120, "Max levels", minval=20, maxval=300)
+maxReactionLevels = input.int(120, "Max reaction levels", minval=20, maxval=300)
+
+var float[] rawPrice = array.new<float>()
+var bool[] rawHigh = array.new<bool>()
+var bool[] rawActive = array.new<bool>()
+var int[] rawBar = array.new<int>()
+var bool[] rawEdge = array.new<bool>()
+var float[] rawRangePos = array.new<float>()
+
+var float[] lvlPrice = array.new<float>()
+var bool[] lvlHigh = array.new<bool>()
+var string[] lvlType = array.new<string>()
+var float[] lvlMin = array.new<float>()
+var float[] lvlMax = array.new<float>()
+var bool[] lvlReady = array.new<bool>()
+
+var float[] rqPrice = array.new<float>()
+var bool[] rqHigh = array.new<bool>()
+var string[] rqType = array.new<string>()
+var bool[] rqActive = array.new<bool>()
+var bool[] rqTouched = array.new<bool>()
+var int[] rqTouchBar = array.new<int>()
+var line[] rqLine = array.new<line>()
+
+var int entryCount = 0
+var int internalCount = 0
+var int watchCount = 0
+var int xCount = 0
+var int xMiddleCount = 0
+var int touchCount = 0
+var int reactionOkCount = 0
+var int noReactionCount = 0
+var string lastStatus = "None"
+var float lastLevel = na
+var float lastEntryHigh = na
+var float lastEntryLow = na
+var float lowSinceEntryHigh = na
+var float highSinceEntryLow = na
+
+levelColor(isHigh, active) =>
+    base = isHigh ? color.rgb(255, 80, 130) : color.lime
+    active ? color.new(base, 0) : color.new(base, 84)
+
+if not na(lastEntryHigh)
+    lowSinceEntryHigh := na(lowSinceEntryHigh) ? low : math.min(lowSinceEntryHigh, low)
+if not na(lastEntryLow)
+    highSinceEntryLow := na(highSinceEntryLow) ? high : math.max(highSinceEntryLow, high)
+
+if array.size(lvlPrice) > 0
+    for j = 0 to array.size(lvlPrice) - 1
+        p = array.get(lvlPrice, j)
+        h = array.get(lvlHigh, j)
+        t = array.get(lvlType, j)
+        mn = math.min(array.get(lvlMin, j), low)
+        mx = math.max(array.get(lvlMax, j), high)
+        array.set(lvlMin, j, mn)
+        array.set(lvlMax, j, mx)
+        if t == "entry"
+            if h and p - mn >= resetUsd
+                array.set(lvlReady, j, true)
+            if not h and mx - p >= resetUsd
+                array.set(lvlReady, j, true)
+
+nearestSame(price, isHigh) =>
+    int idx = -1
+    float best = na
+    if array.size(lvlPrice) > 0
+        for j = 0 to array.size(lvlPrice) - 1
+            if array.get(lvlHigh, j) == isHigh
+                d = math.abs(array.get(lvlPrice, j) - price)
+                if d <= mergeUsd and (na(best) or d < best)
+                    best := d
+                    idx := j
+    idx
+
+canWatch(idx) => idx >= 0 and array.get(lvlType, idx) == "entry" and array.get(lvlReady, idx)
+
+useWatch(idx) =>
+    if idx >= 0
+        array.set(lvlReady, idx, false)
+        array.set(lvlMin, idx, low)
+        array.set(lvlMax, idx, high)
+
+addStructureLevel(price, isHigh, typ) =>
+    array.push(lvlPrice, price)
+    array.push(lvlHigh, isHigh)
+    array.push(lvlType, typ)
+    array.push(lvlMin, low)
+    array.push(lvlMax, high)
+    array.push(lvlReady, false)
+    if array.size(lvlPrice) > maxLevels
+        array.shift(lvlPrice)
+        array.shift(lvlHigh)
+        array.shift(lvlType)
+        array.shift(lvlMin)
+        array.shift(lvlMax)
+        array.shift(lvlReady)
+
+addReactionLevel(price, isHigh, typ, originBar) =>
+    ln = line.new(originBar, price, bar_index + 1, price, color=levelColor(isHigh, true), width=1, extend=extend.right)
+    if not showReactionLines
+        line.delete(ln)
+    array.push(rqPrice, price)
+    array.push(rqHigh, isHigh)
+    array.push(rqType, typ)
+    array.push(rqActive, true)
+    array.push(rqTouched, false)
+    array.push(rqTouchBar, na)
+    array.push(rqLine, ln)
+    if array.size(rqPrice) > maxReactionLevels
+        oldLine = array.shift(rqLine)
+        line.delete(oldLine)
+        array.shift(rqPrice)
+        array.shift(rqHigh)
+        array.shift(rqType)
+        array.shift(rqActive)
+        array.shift(rqTouched)
+        array.shift(rqTouchBar)
+
+retireReactionLevel(i) =>
+    array.set(rqActive, i, false)
+    ln = array.get(rqLine, i)
+    if not na(ln)
+        line.set_extend(ln, extend.none)
+        line.set_x2(ln, bar_index)
+        line.set_color(ln, levelColor(array.get(rqHigh, i), false))
+
+addRaw(price, isHigh, originBar, isEdge, pos) =>
+    if not na(price)
+        array.push(rawPrice, price)
+        array.push(rawHigh, isHigh)
+        array.push(rawActive, true)
+        array.push(rawBar, originBar)
+        array.push(rawEdge, isEdge)
+        array.push(rawRangePos, pos)
+        if array.size(rawPrice) > maxRaw
+            array.shift(rawPrice)
+            array.shift(rawHigh)
+            array.shift(rawActive)
+            array.shift(rawBar)
+            array.shift(rawEdge)
+            array.shift(rawRangePos)
+
+rawMove(price, isHigh) => isHigh ? price - low : high - price
+internalOk(isHigh) => isHigh ? (not na(lastEntryHigh) and not na(lowSinceEntryHigh) and lastEntryHigh - lowSinceEntryHigh >= resetUsd) : (not na(lastEntryLow) and not na(highSinceEntryLow) and highSinceEntryLow - lastEntryLow >= resetUsd)
+entryZoneOk(isHigh, pos) => not na(pos) and (isHigh ? pos >= 100.0 - entryEdgePercent : pos <= entryEdgePercent)
+
+majorHigh = ta.highest(high, majorRangeLookback)
+majorLow = ta.lowest(low, majorRangeLookback)
+majorSize = majorHigh - majorLow
+upperBoundary = majorLow + majorSize * (100.0 - entryEdgePercent) / 100.0
+lowerBoundary = majorLow + majorSize * entryEdgePercent / 100.0
+plot(showRangeBg ? upperBoundary : na, "Entry upper boundary", color=color.new(color.red, 65), linewidth=1)
+plot(showRangeBg ? lowerBoundary : na, "Entry lower boundary", color=color.new(color.lime, 65), linewidth=1)
+
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+hiOrigin = ta.highest(high, structureLookback)[pivotLen]
+loOrigin = ta.lowest(low, structureLookback)[pivotLen]
+majorHighOrigin = ta.highest(high, majorRangeLookback)[pivotLen]
+majorLowOrigin = ta.lowest(low, majorRangeLookback)[pivotLen]
+majorSizeOrigin = majorHighOrigin - majorLowOrigin
+
+if not na(ph)
+    posH = majorSizeOrigin > 0 ? (ph - majorLowOrigin) / majorSizeOrigin * 100.0 : na
+    addRaw(ph, true, bar_index - pivotLen, ph >= hiOrigin, posH)
+if not na(pl)
+    posL = majorSizeOrigin > 0 ? (pl - majorLowOrigin) / majorSizeOrigin * 100.0 : na
+    addRaw(pl, false, bar_index - pivotLen, pl <= loOrigin, posL)
+
+if array.size(rawPrice) > 0
+    for i = 0 to array.size(rawPrice) - 1
+        if array.get(rawActive, i)
+            rp = array.get(rawPrice, i)
+            rh = array.get(rawHigh, i)
+            rb = array.get(rawBar, i)
+            edge = array.get(rawEdge, i)
+            pos = array.get(rawRangePos, i)
+            if rawMove(rp, rh) >= minMoveUsd
+                array.set(rawActive, i, false)
+                dupIdx = nearestSame(rp, rh)
+                dup = dupIdx >= 0
+                watchOk = canWatch(dupIdx)
+                intOk = internalOk(rh)
+                if dup and watchOk
+                    addStructureLevel(rp, rh, "watch")
+                    addReactionLevel(rp, rh, "watch", rb)
+                    useWatch(dupIdx)
+                    watchCount += 1
+                    lastStatus := rh ? "Watch H" : "Watch L"
+                    lastLevel := rp
+                    if showWatch
+                        label.new(rb, rp, rh ? "Watch H" : "Watch L", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny)
+                else if edge and not entryZoneOk(rh, pos)
+                    xCount += 1
+                    xMiddleCount += 1
+                    lastStatus := "x middle"
+                    lastLevel := rp
+                    if showRejected
+                        label.new(rb, rp, "x middle", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
+                else if edge
+                    addStructureLevel(rp, rh, "entry")
+                    addReactionLevel(rp, rh, "entry", rb)
+                    entryCount += 1
+                    lastStatus := rh ? "Entry High" : "Entry Low"
+                    lastLevel := rp
+                    if rh
+                        lastEntryHigh := rp
+                        lowSinceEntryHigh := low
+                    else
+                        lastEntryLow := rp
+                        highSinceEntryLow := high
+                    if showEntry
+                        label.new(rb, rp, rh ? "Entry High" : "Entry Low", style=rh ? label.style_label_down : label.style_label_up, color=rh ? color.new(color.red, 0) : color.new(color.lime, 0), textcolor=color.white, size=size.tiny)
+                else if dup
+                    xCount += 1
+                    lastStatus := "x duplicate"
+                    lastLevel := rp
+                    if showRejected
+                        label.new(rb, rp, "x duplicate", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
+                else if intOk
+                    addStructureLevel(rp, rh, "internal")
+                    addReactionLevel(rp, rh, "internal", rb)
+                    internalCount += 1
+                    lastStatus := rh ? "Inter. High" : "Inter. Low"
+                    lastLevel := rp
+                    if showInternal
+                        label.new(rb, rp, rh ? "Inter. High" : "Inter. Low", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.blue, 0), textcolor=color.white, size=size.tiny)
+                else
+                    xCount += 1
+                    lastStatus := "x not edge"
+                    lastLevel := rp
+                    if showRejected
+                        label.new(rb, rp, "x not edge", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
+
+if array.size(rqPrice) > 0
+    for i = 0 to array.size(rqPrice) - 1
+        if array.get(rqActive, i)
+            rp = array.get(rqPrice, i)
+            rh = array.get(rqHigh, i)
+            typ = array.get(rqType, i)
+            touched = array.get(rqTouched, i)
+            if showReactionLines
+                ln = array.get(rqLine, i)
+                if not na(ln)
+                    line.set_x2(ln, bar_index + 1)
+            touchNow = rh ? high >= rp - touchBufferUsd : low <= rp + touchBufferUsd
+            if not touched and touchNow
+                array.set(rqTouched, i, true)
+                array.set(rqTouchBar, i, bar_index)
+                touchCount += 1
+            if array.get(rqTouched, i)
+                tb = array.get(rqTouchBar, i)
+                reacted = rh ? rp - low >= reactionUsd : high - rp >= reactionUsd
+                expired = bar_index - tb > reactionWindowBars
+                if reacted
+                    reactionOkCount += 1
+                    lastStatus := rh ? "Reaction OK High" : "Reaction OK Low"
+                    lastLevel := rp
+                    if showReactionLabels
+                        label.new(bar_index, rp, rh ? "Reaction OK H" : "Reaction OK L", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.aqua, 0), textcolor=color.black, size=size.tiny)
+                    retireReactionLevel(i)
+                else if expired
+                    noReactionCount += 1
+                    lastStatus := rh ? "x no reaction H" : "x no reaction L"
+                    lastLevel := rp
+                    if showReactionLabels
+                        label.new(bar_index, rp, rh ? "x no reaction H" : "x no reaction L", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
+                    retireReactionLevel(i)
+
+var table dash = table.new(position.top_right, 2, 10, border_width=1)
+if showDashboard and barstate.islast
+    table.clear(dash, 0, 0, 1, 9)
+    table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, "Reaction Quality v0.1", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 0, 1, "Reaction USD", text_color=color.white)
+    table.cell(dash, 1, 1, str.tostring(reactionUsd), text_color=color.white)
+    table.cell(dash, 0, 2, "Window bars", text_color=color.white)
+    table.cell(dash, 1, 2, str.tostring(reactionWindowBars), text_color=color.white)
+    table.cell(dash, 0, 3, "Entry/Inter./Watch/x", text_color=color.white)
+    table.cell(dash, 1, 3, str.tostring(entryCount) + " / " + str.tostring(internalCount) + " / " + str.tostring(watchCount) + " / " + str.tostring(xCount), text_color=color.white)
+    table.cell(dash, 0, 4, "Touch/OK/No", text_color=color.white)
+    table.cell(dash, 1, 4, str.tostring(touchCount) + " / " + str.tostring(reactionOkCount) + " / " + str.tostring(noReactionCount), text_color=color.white)
+    table.cell(dash, 0, 5, "x middle", text_color=color.white)
+    table.cell(dash, 1, 5, str.tostring(xMiddleCount), text_color=color.white)
+    table.cell(dash, 0, 6, "Last", text_color=color.white)
+    table.cell(dash, 1, 6, lastStatus + (na(lastLevel) ? "" : " " + str.tostring(lastLevel, format.mintick)), text_color=color.white)
+    table.cell(dash, 0, 7, "Major lookback", text_color=color.white)
+    table.cell(dash, 1, 7, str.tostring(majorRangeLookback), text_color=color.white)
+    table.cell(dash, 0, 8, "Entry edge", text_color=color.white)
+    table.cell(dash, 1, 8, str.tostring(entryEdgePercent) + "%", text_color=color.white)
+    table.cell(dash, 0, 9, "Note", text_color=color.white)
+    table.cell(dash, 1, 9, "No EMA / no CVD", text_color=color.white)
