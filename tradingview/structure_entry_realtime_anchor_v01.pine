@@ -1,0 +1,221 @@
+//@version=6
+indicator("Realtime Entry + Anchor v0.1", overlay=true, max_labels_count=300)
+
+// No postfactum entry validation.
+// Entry High = price already moved UP into this high.
+// Entry Low  = price already moved DOWN into this low.
+// Anchor is the only postfactum role.
+
+showDash = input.bool(true, "Show dashboard")
+showEntry = input.bool(true, "Show Entry")
+showWatch = input.bool(true, "Show Watch")
+showAnchor = input.bool(true, "Show Anchor")
+showX = input.bool(false, "Show x labels")
+showBounds = input.bool(true, "Show edge boundaries")
+
+pivotLen = input.int(5, "Pivot length", minval=2, maxval=40)
+impulseLookback = input.int(80, "Impulse INTO lookback", minval=10, maxval=400)
+minIntoUsd = input.float(1000.0, "Minimum impulse INTO level", minval=0, step=50)
+structureLookback = input.int(60, "Structure edge lookback", minval=5, maxval=300)
+majorRangeLookback = input.int(200, "Major range lookback", minval=50, maxval=600)
+edgePct = input.float(25.0, "Entry edge zone %", minval=5, maxval=45, step=1)
+nearUsd = input.float(300.0, "Near existing Entry USD", minval=50, step=50)
+anchorUsd = input.float(1500.0, "Anchor impulse USD", minval=0, step=100)
+maxN = input.int(120, "Max stored levels", minval=20, maxval=300)
+
+var float[] eP = array.new<float>()
+var bool[] eH = array.new<bool>()
+var float[] wP = array.new<float>()
+var bool[] wH = array.new<bool>()
+var int[] wB = array.new<int>()
+var bool[] wA = array.new<bool>()
+
+var int entryN = 0
+var int watchN = 0
+var int anchorN = 0
+var int xN = 0
+var int xWeak = 0
+var int xEdge = 0
+var string last = "None"
+var float lastP = na
+
+hiRange = ta.highest(high, majorRangeLookback)
+loRange = ta.lowest(low, majorRangeLookback)
+rng = hiRange - loRange
+upper = loRange + rng * (100 - edgePct) / 100
+lower = loRange + rng * edgePct / 100
+plot(showBounds ? upper : na, "upper edge", color=color.new(color.red, 70))
+plot(showBounds ? lower : na, "lower edge", color=color.new(color.lime, 70))
+
+findNear(price, isHigh) =>
+    int out = -1
+    float best = na
+    if array.size(eP) > 0
+        for i = 0 to array.size(eP) - 1
+            if array.get(eH, i) == isHigh
+                d = math.abs(array.get(eP, i) - price)
+                if d <= nearUsd and (na(best) or d < best)
+                    best := d
+                    out := i
+    out
+
+addEntry(price, isHigh, b) =>
+    if showEntry
+        label.new(b, price, isHigh ? "Entry High" : "Entry Low", style=isHigh ? label.style_label_down : label.style_label_up, color=isHigh ? color.red : color.lime, textcolor=color.white, size=size.tiny)
+    array.push(eP, price)
+    array.push(eH, isHigh)
+    if array.size(eP) > maxN
+        array.shift(eP)
+        array.shift(eH)
+
+setEntry(idx, price, isHigh, b) =>
+    array.set(eP, idx, price)
+    if showEntry
+        label.new(b, price, isHigh ? "Entry High" : "Entry Low", style=isHigh ? label.style_label_down : label.style_label_up, color=isHigh ? color.red : color.lime, textcolor=color.white, size=size.tiny)
+
+addWatch(price, isHigh, b) =>
+    if showWatch
+        label.new(b, price, isHigh ? "Watch H" : "Watch L", style=isHigh ? label.style_label_down : label.style_label_up, color=color.orange, textcolor=color.white, size=size.tiny)
+    array.push(wP, price)
+    array.push(wH, isHigh)
+    array.push(wB, b)
+    array.push(wA, true)
+    if array.size(wP) > maxN
+        array.shift(wP)
+        array.shift(wH)
+        array.shift(wB)
+        array.shift(wA)
+
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+hiStruct = ta.highest(high, structureLookback)[pivotLen]
+loStruct = ta.lowest(low, structureLookback)[pivotLen]
+hiRangeO = ta.highest(high, majorRangeLookback)[pivotLen]
+loRangeO = ta.lowest(low, majorRangeLookback)[pivotLen]
+rngO = hiRangeO - loRangeO
+priorLow = ta.lowest(low, impulseLookback)[pivotLen]
+priorHigh = ta.highest(high, impulseLookback)[pivotLen]
+
+if not na(ph)
+    b = bar_index - pivotLen
+    pos = rngO > 0 ? (ph - loRangeO) / rngO * 100 : na
+    into = ph - priorLow
+    okInto = into >= minIntoUsd
+    okEdge = ph >= hiStruct and not na(pos) and pos >= 100 - edgePct
+    if okInto and okEdge
+        idx = findNear(ph, true)
+        if idx >= 0
+            old = array.get(eP, idx)
+            if ph > old
+                setEntry(idx, ph, true, b)
+                entryN += 1
+                last := "Entry High upgraded"
+            else
+                addWatch(ph, true, b)
+                watchN += 1
+                last := "Watch H"
+        else
+            addEntry(ph, true, b)
+            entryN += 1
+            last := "Entry High"
+    else
+        xN += 1
+        xWeak += okInto ? 0 : 1
+        xEdge += okEdge ? 0 : 1
+        last := okInto ? "x high edge" : "x high weak into"
+        if showX
+            label.new(b, ph, okInto ? "x edge H" : "x weak H", style=label.style_label_down, color=color.gray, textcolor=color.white, size=size.tiny)
+    lastP := ph
+
+if not na(pl)
+    b = bar_index - pivotLen
+    pos = rngO > 0 ? (pl - loRangeO) / rngO * 100 : na
+    into = priorHigh - pl
+    okInto = into >= minIntoUsd
+    okEdge = pl <= loStruct and not na(pos) and pos <= edgePct
+    if okInto and okEdge
+        idx = findNear(pl, false)
+        if idx >= 0
+            old = array.get(eP, idx)
+            if pl < old
+                setEntry(idx, pl, false, b)
+                entryN += 1
+                last := "Entry Low upgraded"
+            else
+                addWatch(pl, false, b)
+                watchN += 1
+                last := "Watch L"
+        else
+            addEntry(pl, false, b)
+            entryN += 1
+            last := "Entry Low"
+    else
+        xN += 1
+        xWeak += okInto ? 0 : 1
+        xEdge += okEdge ? 0 : 1
+        last := okInto ? "x low edge" : "x low weak into"
+        if showX
+            label.new(b, pl, okInto ? "x edge L" : "x weak L", style=label.style_label_up, color=color.gray, textcolor=color.white, size=size.tiny)
+    lastP := pl
+
+// Anchor only: Watch becomes Anchor after later impulse.
+if array.size(wP) > 0
+    int bestH = -1
+    int bestHB = na
+    int bestL = -1
+    int bestLB = na
+    for i = 0 to array.size(wP) - 1
+        if array.get(wA, i)
+            p = array.get(wP, i)
+            isH = array.get(wH, i)
+            b = array.get(wB, i)
+            moved = isH ? p - low >= anchorUsd : high - p >= anchorUsd
+            if moved and isH and (bestH == -1 or b > bestHB)
+                bestH := i
+                bestHB := b
+            if moved and not isH and (bestL == -1 or b > bestLB)
+                bestL := i
+                bestLB := b
+    if bestH >= 0
+        p = array.get(wP, bestH)
+        b = array.get(wB, bestH)
+        anchorN += 1
+        last := "Anchor H"
+        lastP := p
+        if showAnchor
+            label.new(b, p, "Anchor H", style=label.style_label_down, color=color.rgb(255, 0, 180), textcolor=color.white, size=size.tiny)
+        for k = 0 to array.size(wP) - 1
+            if array.get(wH, k) and array.get(wB, k) <= b
+                array.set(wA, k, false)
+    if bestL >= 0
+        p = array.get(wP, bestL)
+        b = array.get(wB, bestL)
+        anchorN += 1
+        last := "Anchor L"
+        lastP := p
+        if showAnchor
+            label.new(b, p, "Anchor L", style=label.style_label_up, color=color.rgb(255, 0, 180), textcolor=color.white, size=size.tiny)
+        for k = 0 to array.size(wP) - 1
+            if not array.get(wH, k) and array.get(wB, k) <= b
+                array.set(wA, k, false)
+
+var table t = table.new(position.top_right, 2, 8, border_width=1)
+if showDash and barstate.islast
+    table.clear(t, 0, 0, 1, 7)
+    table.cell(t, 0, 0, "Version", text_color=color.white, bgcolor=color.black)
+    table.cell(t, 1, 0, "Realtime Entry + Anchor v0.1", text_color=color.white, bgcolor=color.black)
+    table.cell(t, 0, 1, "Impulse INTO", text_color=color.white)
+    table.cell(t, 1, 1, str.tostring(minIntoUsd), text_color=color.white)
+    table.cell(t, 0, 2, "Lookback", text_color=color.white)
+    table.cell(t, 1, 2, str.tostring(impulseLookback), text_color=color.white)
+    table.cell(t, 0, 3, "Entry / Watch / Anchor", text_color=color.white)
+    table.cell(t, 1, 3, str.tostring(entryN) + " / " + str.tostring(watchN) + " / " + str.tostring(anchorN), text_color=color.white)
+    table.cell(t, 0, 4, "x total", text_color=color.white)
+    table.cell(t, 1, 4, str.tostring(xN), text_color=color.white)
+    table.cell(t, 0, 5, "x weak / edge", text_color=color.white)
+    table.cell(t, 1, 5, str.tostring(xWeak) + " / " + str.tostring(xEdge), text_color=color.white)
+    table.cell(t, 0, 6, "Near Entry", text_color=color.white)
+    table.cell(t, 1, 6, str.tostring(nearUsd), text_color=color.white)
+    table.cell(t, 0, 7, "Last", text_color=color.white)
+    table.cell(t, 1, 7, last + (na(lastP) ? "" : " " + str.tostring(lastP, format.mintick)), text_color=color.white)
