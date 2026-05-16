@@ -1,15 +1,16 @@
 //@version=6
-indicator("Structure + Internal Levels Test v0.3", overlay=true, max_labels_count=300)
+indicator("Structure + Internal + Retest Levels v0.4", overlay=true, max_labels_count=300)
 
 showDashboard = input.bool(true, "Show dashboard")
 showRejected = input.bool(true, "Show rejected raw swings")
 showCandidates = input.bool(true, "Show candidates")
 showInternal = input.bool(true, "Show internal levels")
+showRetests = input.bool(true, "Show retest levels")
 
 pivotLen = input.int(5, "Pivot length", minval=2, maxval=40)
 minMoveUsd = input.float(700.0, "Minimum move from raw swing", minval=0.0, step=50.0)
 structureLookback = input.int(60, "Structure edge lookback", minval=5, maxval=300)
-internalResetUsd = input.float(1500.0, "Internal level reset move USD", minval=0.0, step=100.0)
+internalResetUsd = input.float(1500.0, "Internal/retest reset move USD", minval=0.0, step=100.0)
 mergeUsd = input.float(120.0, "Merge nearby levels USD", minval=0.0, step=10.0)
 maxRaw = input.int(160, "Max raw swings", minval=20, maxval=400)
 maxLevels = input.int(120, "Max remembered levels", minval=20, maxval=300)
@@ -23,9 +24,12 @@ var bool[] rawIsStructureEdge = array.new<bool>()
 var float[] levelPrice = array.new<float>()
 var bool[] levelIsHigh = array.new<bool>()
 var string[] levelType = array.new<string>()
+var float[] levelMinAfter = array.new<float>()
+var float[] levelMaxAfter = array.new<float>()
 
 var int candCount = 0
 var int internalCount = 0
+var int retestCount = 0
 var int rejectedCount = 0
 var string lastStatus = "None"
 var float lastLevel = na
@@ -40,21 +44,43 @@ if not na(lastCandHigh)
 if not na(lastCandLow)
     highestSinceCandLow := na(highestSinceCandLow) ? high : math.max(highestSinceCandLow, high)
 
-hasDuplicate(price, isHigh) =>
-    bool duplicate = false
+if array.size(levelPrice) > 0
+    for i = 0 to array.size(levelPrice) - 1
+        array.set(levelMinAfter, i, math.min(array.get(levelMinAfter, i), low))
+        array.set(levelMaxAfter, i, math.max(array.get(levelMaxAfter, i), high))
+
+nearestDuplicateIndex(price, isHigh) =>
+    int nearestIndex = -1
+    float nearestDistance = na
     if array.size(levelPrice) > 0
         for i = 0 to array.size(levelPrice) - 1
-            duplicate := duplicate or (array.get(levelIsHigh, i) == isHigh and math.abs(array.get(levelPrice, i) - price) <= mergeUsd)
-    duplicate
+            if array.get(levelIsHigh, i) == isHigh
+                dist = math.abs(array.get(levelPrice, i) - price)
+                if dist <= mergeUsd and (na(nearestDistance) or dist < nearestDistance)
+                    nearestDistance := dist
+                    nearestIndex := i
+    nearestIndex
+
+retestAllowedFromLevel(levelIndex) =>
+    if levelIndex < 0
+        false
+    else
+        oldPrice = array.get(levelPrice, levelIndex)
+        oldIsHigh = array.get(levelIsHigh, levelIndex)
+        oldIsHigh ? oldPrice - array.get(levelMinAfter, levelIndex) >= internalResetUsd : array.get(levelMaxAfter, levelIndex) - oldPrice >= internalResetUsd
 
 rememberLevel(price, isHigh, typ) =>
     array.push(levelPrice, price)
     array.push(levelIsHigh, isHigh)
     array.push(levelType, typ)
+    array.push(levelMinAfter, low)
+    array.push(levelMaxAfter, high)
     if array.size(levelPrice) > maxLevels
         array.shift(levelPrice)
         array.shift(levelIsHigh)
         array.shift(levelType)
+        array.shift(levelMinAfter)
+        array.shift(levelMaxAfter)
 
 addRaw(price, isHigh, originBar, isEdge) =>
     if not na(price)
@@ -100,9 +126,18 @@ if array.size(rawPrice) > 0
             mv = moveFromRaw(rp, rh)
             if mv >= minMoveUsd
                 array.set(rawActive, i, false)
+                duplicateIndex = nearestDuplicateIndex(rp, rh)
+                duplicate = duplicateIndex >= 0
+                retestOk = duplicate and retestAllowedFromLevel(duplicateIndex)
                 resetOk = internalAllowed(rh)
-                duplicate = hasDuplicate(rp, rh)
-                if duplicate and not resetOk
+                if duplicate and retestOk
+                    rememberLevel(rp, rh, "retest")
+                    retestCount += 1
+                    lastStatus := rh ? "Ret. High" : "Ret. Low"
+                    lastLevel := rp
+                    if showRetests
+                        label.new(rb, rp, rh ? "Ret. High" : "Ret. Low", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.purple, 0), textcolor=color.white, size=size.tiny)
+                else if duplicate
                     rejectedCount += 1
                     lastStatus := "✕ duplicate"
                     lastLevel := rp
@@ -139,13 +174,13 @@ var table dash = table.new(position.top_right, 2, 7, border_width=1)
 if showDashboard and barstate.islast
     table.clear(dash, 0, 0, 1, 6)
     table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.new(color.black, 0))
-    table.cell(dash, 1, 0, "Structure + Internal v0.3", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, "Structure + Retest v0.4", text_color=color.white, bgcolor=color.new(color.black, 0))
     table.cell(dash, 0, 1, "Lookback", text_color=color.white)
     table.cell(dash, 1, 1, str.tostring(structureLookback), text_color=color.white)
-    table.cell(dash, 0, 2, "Internal reset", text_color=color.white)
+    table.cell(dash, 0, 2, "Reset", text_color=color.white)
     table.cell(dash, 1, 2, str.tostring(internalResetUsd), text_color=color.white)
-    table.cell(dash, 0, 3, "Cand. / Inter. / ✕", text_color=color.white)
-    table.cell(dash, 1, 3, str.tostring(candCount) + " / " + str.tostring(internalCount) + " / " + str.tostring(rejectedCount), text_color=color.white)
+    table.cell(dash, 0, 3, "Cand./Inter./Ret./✕", text_color=color.white)
+    table.cell(dash, 1, 3, str.tostring(candCount) + " / " + str.tostring(internalCount) + " / " + str.tostring(retestCount) + " / " + str.tostring(rejectedCount), text_color=color.white)
     table.cell(dash, 0, 4, "Last", text_color=color.white)
     table.cell(dash, 1, 4, lastStatus + (na(lastLevel) ? "" : " " + str.tostring(lastLevel, format.mintick)), text_color=color.white)
     table.cell(dash, 0, 5, "Since Cand. High", text_color=color.white)
