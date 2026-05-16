@@ -1,5 +1,5 @@
 //@version=6
-indicator("Structure EMA Filter Test v0.1", overlay=true, max_labels_count=300)
+indicator("Structure EMA Filter Test v0.2", overlay=true, max_labels_count=300)
 
 showDashboard = input.bool(true, "Show dashboard")
 showRejected = input.bool(true, "Show rejected")
@@ -24,10 +24,7 @@ compressionAtr = input.float(0.20, "EMA compression: spread / ATR", minval=0.01,
 expansionAtr = input.float(0.45, "EMA expansion: spread / ATR", minval=0.01, step=0.01)
 crossLookback = input.int(12, "EMA cross lookback", minval=3, maxval=80)
 minCrosses = input.int(4, "Min crosses for chop", minval=1, maxval=40)
-blockEntryOnCompression = input.bool(true, "Block Entry on compression/chop")
-blockInternalOnCompression = input.bool(true, "Block Inter. on compression/chop")
-blockCounterImpulseEntry = input.bool(true, "Block counter-impulse Entry")
-blockCounterImpulseInternal = input.bool(true, "Block counter-impulse Inter.")
+filterWatchWithEma = input.bool(true, "Filter Watch with EMA")
 
 emaFast = ta.ema(close, emaFastLen)
 emaMid = ta.ema(close, emaMidLen)
@@ -63,8 +60,7 @@ var int entryCount = 0
 var int internalCount = 0
 var int watchCount = 0
 var int xCount = 0
-var int xCompressionCount = 0
-var int xImpulseCount = 0
+var int xEmaCount = 0
 var string lastStatus = "None"
 var float lastLevel = na
 var float lastEntryHigh = na
@@ -147,11 +143,8 @@ rawMove(price, isHigh) => isHigh ? price - low : high - price
 internalOk(isHigh) =>
     isHigh ? (not na(lastEntryHigh) and not na(lowSinceEntryHigh) and lastEntryHigh - lowSinceEntryHigh >= resetUsd) : (not na(lastEntryLow) and not na(highSinceEntryLow) and highSinceEntryLow - lastEntryLow >= resetUsd)
 
-entryBlockedByImpulse(isHigh) =>
-    blockCounterImpulseEntry and ((isHigh and bullExpansion) or (not isHigh and bearExpansion))
-
-internalBlockedByImpulse(isHigh) =>
-    blockCounterImpulseInternal and ((isHigh and bullExpansion) or (not isHigh and bearExpansion))
+watchBlockedByEma(isHigh) =>
+    filterWatchWithEma and (emaChop or (isHigh and bullExpansion) or (not isHigh and bearExpansion))
 
 ph = ta.pivothigh(high, pivotLen, pivotLen)
 pl = ta.pivotlow(low, pivotLen, pivotLen)
@@ -177,41 +170,33 @@ if array.size(rawPrice) > 0
                 watchOk = canWatch(dupIdx)
                 intOk = internalOk(rh)
                 if dup and watchOk
-                    addLevel(rp, rh, "watch")
-                    useWatch(dupIdx)
-                    watchCount += 1
-                    lastStatus := rh ? "Watch H" : "Watch L"
-                    lastLevel := rp
-                    if showWatch
-                        label.new(rb, rp, rh ? "Watch H" : "Watch L", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny)
-                else if edge
-                    if emaChop and blockEntryOnCompression
-                        xCount += 1
-                        xCompressionCount += 1
-                        lastStatus := "x compression"
+                    if watchBlockedByEma(rh)
+                        xEmaCount += 1
+                        lastStatus := "x ema"
                         lastLevel := rp
                         if showRejected
-                            label.new(rb, rp, "x compression", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
-                    else if entryBlockedByImpulse(rh)
-                        xCount += 1
-                        xImpulseCount += 1
-                        lastStatus := "x impulse"
-                        lastLevel := rp
-                        if showRejected
-                            label.new(rb, rp, "x impulse", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
+                            label.new(rb, rp, "x ema", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
                     else
-                        addLevel(rp, rh, "entry")
-                        entryCount += 1
-                        lastStatus := rh ? "Entry High" : "Entry Low"
+                        addLevel(rp, rh, "watch")
+                        useWatch(dupIdx)
+                        watchCount += 1
+                        lastStatus := rh ? "Watch H" : "Watch L"
                         lastLevel := rp
-                        if rh
-                            lastEntryHigh := rp
-                            lowSinceEntryHigh := low
-                        else
-                            lastEntryLow := rp
-                            highSinceEntryLow := high
-                        if showEntry
-                            label.new(rb, rp, rh ? "Entry High" : "Entry Low", style=rh ? label.style_label_down : label.style_label_up, color=rh ? color.new(color.red, 0) : color.new(color.lime, 0), textcolor=color.white, size=size.tiny)
+                        if showWatch
+                            label.new(rb, rp, rh ? "Watch H" : "Watch L", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny)
+                else if edge
+                    addLevel(rp, rh, "entry")
+                    entryCount += 1
+                    lastStatus := rh ? "Entry High" : "Entry Low"
+                    lastLevel := rp
+                    if rh
+                        lastEntryHigh := rp
+                        lowSinceEntryHigh := low
+                    else
+                        lastEntryLow := rp
+                        highSinceEntryLow := high
+                    if showEntry
+                        label.new(rb, rp, rh ? "Entry High" : "Entry Low", style=rh ? label.style_label_down : label.style_label_up, color=rh ? color.new(color.red, 0) : color.new(color.lime, 0), textcolor=color.white, size=size.tiny)
                 else if dup
                     xCount += 1
                     lastStatus := "x duplicate"
@@ -219,27 +204,12 @@ if array.size(rawPrice) > 0
                     if showRejected
                         label.new(rb, rp, "x duplicate", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
                 else if intOk
-                    if emaChop and blockInternalOnCompression
-                        xCount += 1
-                        xCompressionCount += 1
-                        lastStatus := "x compression"
-                        lastLevel := rp
-                        if showRejected
-                            label.new(rb, rp, "x compression", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
-                    else if internalBlockedByImpulse(rh)
-                        xCount += 1
-                        xImpulseCount += 1
-                        lastStatus := "x impulse"
-                        lastLevel := rp
-                        if showRejected
-                            label.new(rb, rp, "x impulse", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
-                    else
-                        addLevel(rp, rh, "internal")
-                        internalCount += 1
-                        lastStatus := rh ? "Inter. High" : "Inter. Low"
-                        lastLevel := rp
-                        if showInternal
-                            label.new(rb, rp, rh ? "Inter. High" : "Inter. Low", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.blue, 0), textcolor=color.white, size=size.tiny)
+                    addLevel(rp, rh, "internal")
+                    internalCount += 1
+                    lastStatus := rh ? "Inter. High" : "Inter. Low"
+                    lastLevel := rp
+                    if showInternal
+                        label.new(rb, rp, rh ? "Inter. High" : "Inter. Low", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.blue, 0), textcolor=color.white, size=size.tiny)
                 else
                     xCount += 1
                     lastStatus := "x not edge"
@@ -247,11 +217,11 @@ if array.size(rawPrice) > 0
                     if showRejected
                         label.new(rb, rp, "x not edge", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
 
-var table dash = table.new(position.top_right, 2, 9, border_width=1)
+var table dash = table.new(position.top_right, 2, 10, border_width=1)
 if showDashboard and barstate.islast
-    table.clear(dash, 0, 0, 1, 8)
+    table.clear(dash, 0, 0, 1, 9)
     table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.new(color.black, 0))
-    table.cell(dash, 1, 0, "Structure EMA v0.1", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, "Structure EMA v0.2", text_color=color.white, bgcolor=color.new(color.black, 0))
     table.cell(dash, 0, 1, "EMA regime", text_color=color.white)
     table.cell(dash, 1, 1, emaChop ? "compression" : bullExpansion ? "bull impulse" : bearExpansion ? "bear impulse" : "normal", text_color=color.white)
     table.cell(dash, 0, 2, "EMA spread / ATR", text_color=color.white)
@@ -260,11 +230,13 @@ if showDashboard and barstate.islast
     table.cell(dash, 1, 3, str.tostring(crossCount) + " / " + str.tostring(crossLookback), text_color=color.white)
     table.cell(dash, 0, 4, "Entry/Inter./Watch/x", text_color=color.white)
     table.cell(dash, 1, 4, str.tostring(entryCount) + " / " + str.tostring(internalCount) + " / " + str.tostring(watchCount) + " / " + str.tostring(xCount), text_color=color.white)
-    table.cell(dash, 0, 5, "x comp / x impulse", text_color=color.white)
-    table.cell(dash, 1, 5, str.tostring(xCompressionCount) + " / " + str.tostring(xImpulseCount), text_color=color.white)
+    table.cell(dash, 0, 5, "x ema", text_color=color.white)
+    table.cell(dash, 1, 5, str.tostring(xEmaCount), text_color=color.white)
     table.cell(dash, 0, 6, "Last", text_color=color.white)
     table.cell(dash, 1, 6, lastStatus + (na(lastLevel) ? "" : " " + str.tostring(lastLevel, format.mintick)), text_color=color.white)
     table.cell(dash, 0, 7, "Since Entry High", text_color=color.white)
     table.cell(dash, 1, 7, na(lastEntryHigh) or na(lowSinceEntryHigh) ? "" : str.tostring(lastEntryHigh - lowSinceEntryHigh, "#.##"), text_color=color.white)
     table.cell(dash, 0, 8, "Since Entry Low", text_color=color.white)
     table.cell(dash, 1, 8, na(lastEntryLow) or na(highSinceEntryLow) ? "" : str.tostring(highSinceEntryLow - lastEntryLow, "#.##"), text_color=color.white)
+    table.cell(dash, 0, 9, "Watch EMA filter", text_color=color.white)
+    table.cell(dash, 1, 9, filterWatchWithEma ? "on" : "off", text_color=color.white)
