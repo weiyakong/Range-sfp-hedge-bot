@@ -1,0 +1,117 @@
+//@version=6
+indicator("Structure Filter Test v0.1", overlay=true, max_labels_count=300)
+
+showDashboard = input.bool(true, "Show dashboard")
+showBlocked = input.bool(true, "Show blocked swings")
+showCandidates = input.bool(true, "Show allowed candidates")
+
+pivotLen = input.int(5, "Pivot length", minval=2, maxval=40)
+minMoveUsd = input.float(700.0, "Minimum move from raw swing", minval=0.0, step=50.0)
+structureLookback = input.int(60, "Structure edge lookback", minval=5, maxval=300)
+mergeUsd = input.float(120.0, "Merge nearby levels USD", minval=0.0, step=10.0)
+maxRaw = input.int(160, "Max raw swings", minval=20, maxval=400)
+maxCandidates = input.int(120, "Max candidates", minval=20, maxval=300)
+
+var float[] rawPrice = array.new<float>()
+var bool[] rawIsHigh = array.new<bool>()
+var bool[] rawActive = array.new<bool>()
+var int[] rawBar = array.new<int>()
+var bool[] rawIsStructureEdge = array.new<bool>()
+
+var float[] candPrice = array.new<float>()
+var bool[] candIsHigh = array.new<bool>()
+
+var int allowedCount = 0
+var int blockedCount = 0
+var string lastStatus = "None"
+var float lastLevel = na
+
+hasDuplicate(price, isHigh) =>
+    bool duplicate = false
+    if array.size(candPrice) > 0
+        for i = 0 to array.size(candPrice) - 1
+            duplicate := duplicate or (array.get(candIsHigh, i) == isHigh and math.abs(array.get(candPrice, i) - price) <= mergeUsd)
+    duplicate
+
+addRaw(price, isHigh, originBar, isEdge) =>
+    if not na(price)
+        array.push(rawPrice, price)
+        array.push(rawIsHigh, isHigh)
+        array.push(rawActive, true)
+        array.push(rawBar, originBar)
+        array.push(rawIsStructureEdge, isEdge)
+        if array.size(rawPrice) > maxRaw
+            array.shift(rawPrice)
+            array.shift(rawIsHigh)
+            array.shift(rawActive)
+            array.shift(rawBar)
+            array.shift(rawIsStructureEdge)
+
+addCandidate(price, isHigh) =>
+    if not hasDuplicate(price, isHigh)
+        array.push(candPrice, price)
+        array.push(candIsHigh, isHigh)
+        if array.size(candPrice) > maxCandidates
+            array.shift(candPrice)
+            array.shift(candIsHigh)
+        true
+    else
+        false
+
+moveFromRaw(price, isHigh) =>
+    isHigh ? price - low : high - price
+
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+highestAtOrigin = ta.highest(high, structureLookback)[pivotLen]
+lowestAtOrigin = ta.lowest(low, structureLookback)[pivotLen]
+
+if not na(ph)
+    isHighEdge = ph >= highestAtOrigin
+    addRaw(ph, true, bar_index - pivotLen, isHighEdge)
+
+if not na(pl)
+    isLowEdge = pl <= lowestAtOrigin
+    addRaw(pl, false, bar_index - pivotLen, isLowEdge)
+
+if array.size(rawPrice) > 0
+    for i = 0 to array.size(rawPrice) - 1
+        if array.get(rawActive, i)
+            rp = array.get(rawPrice, i)
+            rh = array.get(rawIsHigh, i)
+            rb = array.get(rawBar, i)
+            isEdge = array.get(rawIsStructureEdge, i)
+            mv = moveFromRaw(rp, rh)
+            if mv >= minMoveUsd
+                array.set(rawActive, i, false)
+                if not isEdge
+                    blockedCount += 1
+                    lastStatus := rh ? "Blocked High" : "Blocked Low"
+                    lastLevel := rp
+                    if showBlocked
+                        label.new(rb, rp, rh ? "Blocked High\nnot structure edge" : "Blocked Low\nnot structure edge", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
+                else
+                    added = addCandidate(rp, rh)
+                    if added
+                        allowedCount += 1
+                        lastStatus := rh ? "Candidate High" : "Candidate Low"
+                        lastLevel := rp
+                        if showCandidates
+                            label.new(rb, rp, rh ? "Candidate High" : "Candidate Low", style=rh ? label.style_label_down : label.style_label_up, color=rh ? color.new(color.red, 0) : color.new(color.lime, 0), textcolor=color.white, size=size.tiny)
+
+var table dash = table.new(position.top_right, 2, 6, border_width=1)
+if showDashboard and barstate.islast
+    table.clear(dash, 0, 0, 1, 5)
+    table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, "Structure Filter Test v0.1", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 0, 1, "Lookback", text_color=color.white)
+    table.cell(dash, 1, 1, str.tostring(structureLookback), text_color=color.white)
+    table.cell(dash, 0, 2, "Pivot length", text_color=color.white)
+    table.cell(dash, 1, 2, str.tostring(pivotLen), text_color=color.white)
+    table.cell(dash, 0, 3, "Allowed / blocked", text_color=color.white)
+    table.cell(dash, 1, 3, str.tostring(allowedCount) + " / " + str.tostring(blockedCount), text_color=color.white)
+    table.cell(dash, 0, 4, "Rule", text_color=color.white)
+    table.cell(dash, 1, 4, "highest/lowest in lookback", text_color=color.white)
+    table.cell(dash, 0, 5, "Last", text_color=color.white)
+    table.cell(dash, 1, 5, lastStatus + (na(lastLevel) ? "" : " " + str.tostring(lastLevel, format.mintick)), text_color=color.white)
