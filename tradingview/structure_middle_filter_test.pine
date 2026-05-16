@@ -1,5 +1,5 @@
 //@version=6
-indicator("Structure Middle Filter Test v0.2", overlay=true, max_labels_count=300)
+indicator("Structure Middle Filter Test v0.1", overlay=true, max_labels_count=300)
 
 showDashboard = input.bool(true, "Show dashboard")
 showRejected = input.bool(true, "Show rejected")
@@ -13,8 +13,7 @@ minMoveUsd = input.float(700.0, "Minimum move from raw swing", minval=0.0, step=
 structureLookback = input.int(60, "Structure edge lookback", minval=5, maxval=300)
 majorRangeLookback = input.int(200, "Major range lookback", minval=50, maxval=600)
 entryEdgePercent = input.float(25.0, "Entry edge zone %", minval=5.0, maxval=45.0, step=1.0)
-impulseMoveUsd = input.float(1500.0, "Impulse move USD", minval=0.0, step=100.0)
-pullbackMoveUsd = input.float(1200.0, "Pullback move USD for Inter.", minval=0.0, step=100.0)
+resetUsd = input.float(1500.0, "Reset move USD", minval=0.0, step=100.0)
 mergeUsd = input.float(120.0, "Nearby level USD", minval=0.0, step=10.0)
 maxRaw = input.int(160, "Max raw swings", minval=20, maxval=400)
 maxLevels = input.int(120, "Max levels", minval=20, maxval=300)
@@ -44,18 +43,11 @@ var float lastEntryHigh = na
 var float lastEntryLow = na
 var float lowSinceEntryHigh = na
 var float highSinceEntryLow = na
-var float lastDownImpulseLow = na
-var float lastUpImpulseHigh = na
 
 if not na(lastEntryHigh)
     lowSinceEntryHigh := na(lowSinceEntryHigh) ? low : math.min(lowSinceEntryHigh, low)
 if not na(lastEntryLow)
     highSinceEntryLow := na(highSinceEntryLow) ? high : math.max(highSinceEntryLow, high)
-
-if not na(lastEntryHigh) and not na(lowSinceEntryHigh) and lastEntryHigh - lowSinceEntryHigh >= impulseMoveUsd
-    lastDownImpulseLow := lowSinceEntryHigh
-if not na(lastEntryLow) and not na(highSinceEntryLow) and highSinceEntryLow - lastEntryLow >= impulseMoveUsd
-    lastUpImpulseHigh := highSinceEntryLow
 
 if array.size(lvlPrice) > 0
     for j = 0 to array.size(lvlPrice) - 1
@@ -67,9 +59,9 @@ if array.size(lvlPrice) > 0
         array.set(lvlMin, j, mn)
         array.set(lvlMax, j, mx)
         if t == "entry"
-            if h and p - mn >= impulseMoveUsd
+            if h and p - mn >= resetUsd
                 array.set(lvlReady, j, true)
-            if not h and mx - p >= impulseMoveUsd
+            if not h and mx - p >= resetUsd
                 array.set(lvlReady, j, true)
 
 nearestSame(price, isHigh) =>
@@ -85,6 +77,7 @@ nearestSame(price, isHigh) =>
     idx
 
 canWatch(idx) => idx >= 0 and array.get(lvlType, idx) == "entry" and array.get(lvlReady, idx)
+
 useWatch(idx) =>
     if idx >= 0
         array.set(lvlReady, idx, false)
@@ -123,12 +116,14 @@ addRaw(price, isHigh, originBar, isEdge, pos) =>
             array.shift(rawRangePos)
 
 rawMove(price, isHigh) => isHigh ? price - low : high - price
+internalOk(isHigh) => isHigh ? (not na(lastEntryHigh) and not na(lowSinceEntryHigh) and lastEntryHigh - lowSinceEntryHigh >= resetUsd) : (not na(lastEntryLow) and not na(highSinceEntryLow) and highSinceEntryLow - lastEntryLow >= resetUsd)
 entryZoneOk(isHigh, pos) => not na(pos) and (isHigh ? pos >= 100.0 - entryEdgePercent : pos <= entryEdgePercent)
-internalOk(isHigh, price) => isHigh ? (not na(lastDownImpulseLow) and price - lastDownImpulseLow >= pullbackMoveUsd) : (not na(lastUpImpulseHigh) and lastUpImpulseHigh - price >= pullbackMoveUsd)
 
 majorHigh = ta.highest(high, majorRangeLookback)
 majorLow = ta.lowest(low, majorRangeLookback)
 majorSize = majorHigh - majorLow
+rangePos(price) => majorSize > 0 ? (price - majorLow) / majorSize * 100.0 : na
+
 upperBoundary = majorLow + majorSize * (100.0 - entryEdgePercent) / 100.0
 lowerBoundary = majorLow + majorSize * entryEdgePercent / 100.0
 plot(showRangeBg ? upperBoundary : na, "Entry upper boundary", color=color.new(color.red, 65), linewidth=1)
@@ -162,15 +157,8 @@ if array.size(rawPrice) > 0
                 dupIdx = nearestSame(rp, rh)
                 dup = dupIdx >= 0
                 watchOk = canWatch(dupIdx)
-                intOk = internalOk(rh, rp)
-                if intOk
-                    addLevel(rp, rh, "internal")
-                    internalCount += 1
-                    lastStatus := rh ? "Inter. High" : "Inter. Low"
-                    lastLevel := rp
-                    if showInternal
-                        label.new(rb, rp, rh ? "Inter. High" : "Inter. Low", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.blue, 0), textcolor=color.white, size=size.tiny)
-                else if dup and watchOk
+                intOk = internalOk(rh)
+                if dup and watchOk
                     addLevel(rp, rh, "watch")
                     useWatch(dupIdx)
                     watchCount += 1
@@ -193,11 +181,9 @@ if array.size(rawPrice) > 0
                     if rh
                         lastEntryHigh := rp
                         lowSinceEntryHigh := low
-                        lastDownImpulseLow := na
                     else
                         lastEntryLow := rp
                         highSinceEntryLow := high
-                        lastUpImpulseHigh := na
                     if showEntry
                         label.new(rb, rp, rh ? "Entry High" : "Entry Low", style=rh ? label.style_label_down : label.style_label_up, color=rh ? color.new(color.red, 0) : color.new(color.lime, 0), textcolor=color.white, size=size.tiny)
                 else if dup
@@ -206,6 +192,13 @@ if array.size(rawPrice) > 0
                     lastLevel := rp
                     if showRejected
                         label.new(rb, rp, "x duplicate", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
+                else if intOk
+                    addLevel(rp, rh, "internal")
+                    internalCount += 1
+                    lastStatus := rh ? "Inter. High" : "Inter. Low"
+                    lastLevel := rp
+                    if showInternal
+                        label.new(rb, rp, rh ? "Inter. High" : "Inter. Low", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.blue, 0), textcolor=color.white, size=size.tiny)
                 else
                     xCount += 1
                     lastStatus := "x not edge"
@@ -213,26 +206,24 @@ if array.size(rawPrice) > 0
                     if showRejected
                         label.new(rb, rp, "x not edge", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
 
-var table dash = table.new(position.top_right, 2, 10, border_width=1)
+var table dash = table.new(position.top_right, 2, 9, border_width=1)
 if showDashboard and barstate.islast
-    table.clear(dash, 0, 0, 1, 9)
+    table.clear(dash, 0, 0, 1, 8)
     table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.new(color.black, 0))
-    table.cell(dash, 1, 0, "Structure Middle v0.2", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, "Structure Middle v0.1", text_color=color.white, bgcolor=color.new(color.black, 0))
     table.cell(dash, 0, 1, "Major lookback", text_color=color.white)
     table.cell(dash, 1, 1, str.tostring(majorRangeLookback), text_color=color.white)
     table.cell(dash, 0, 2, "Entry edge zone", text_color=color.white)
     table.cell(dash, 1, 2, str.tostring(entryEdgePercent) + "%", text_color=color.white)
-    table.cell(dash, 0, 3, "Impulse / Pullback", text_color=color.white)
-    table.cell(dash, 1, 3, str.tostring(impulseMoveUsd) + " / " + str.tostring(pullbackMoveUsd), text_color=color.white)
-    table.cell(dash, 0, 4, "Entry/Inter./Watch/x", text_color=color.white)
-    table.cell(dash, 1, 4, str.tostring(entryCount) + " / " + str.tostring(internalCount) + " / " + str.tostring(watchCount) + " / " + str.tostring(xCount), text_color=color.white)
-    table.cell(dash, 0, 5, "x middle", text_color=color.white)
-    table.cell(dash, 1, 5, str.tostring(xMiddleCount), text_color=color.white)
-    table.cell(dash, 0, 6, "Last", text_color=color.white)
-    table.cell(dash, 1, 6, lastStatus + (na(lastLevel) ? "" : " " + str.tostring(lastLevel, format.mintick)), text_color=color.white)
-    table.cell(dash, 0, 7, "Major range", text_color=color.white)
-    table.cell(dash, 1, 7, str.tostring(majorLow, format.mintick) + " - " + str.tostring(majorHigh, format.mintick), text_color=color.white)
-    table.cell(dash, 0, 8, "Since Entry High", text_color=color.white)
-    table.cell(dash, 1, 8, na(lastEntryHigh) or na(lowSinceEntryHigh) ? "" : str.tostring(lastEntryHigh - lowSinceEntryHigh, "#.##"), text_color=color.white)
-    table.cell(dash, 0, 9, "Since Entry Low", text_color=color.white)
-    table.cell(dash, 1, 9, na(lastEntryLow) or na(highSinceEntryLow) ? "" : str.tostring(highSinceEntryLow - lastEntryLow, "#.##"), text_color=color.white)
+    table.cell(dash, 0, 3, "Entry/Inter./Watch/x", text_color=color.white)
+    table.cell(dash, 1, 3, str.tostring(entryCount) + " / " + str.tostring(internalCount) + " / " + str.tostring(watchCount) + " / " + str.tostring(xCount), text_color=color.white)
+    table.cell(dash, 0, 4, "x middle", text_color=color.white)
+    table.cell(dash, 1, 4, str.tostring(xMiddleCount), text_color=color.white)
+    table.cell(dash, 0, 5, "Last", text_color=color.white)
+    table.cell(dash, 1, 5, lastStatus + (na(lastLevel) ? "" : " " + str.tostring(lastLevel, format.mintick)), text_color=color.white)
+    table.cell(dash, 0, 6, "Major range", text_color=color.white)
+    table.cell(dash, 1, 6, str.tostring(majorLow, format.mintick) + " - " + str.tostring(majorHigh, format.mintick), text_color=color.white)
+    table.cell(dash, 0, 7, "Since Entry High", text_color=color.white)
+    table.cell(dash, 1, 7, na(lastEntryHigh) or na(lowSinceEntryHigh) ? "" : str.tostring(lastEntryHigh - lowSinceEntryHigh, "#.##"), text_color=color.white)
+    table.cell(dash, 0, 8, "Since Entry Low", text_color=color.white)
+    table.cell(dash, 1, 8, na(lastEntryLow) or na(highSinceEntryLow) ? "" : str.tostring(highSinceEntryLow - lastEntryLow, "#.##"), text_color=color.white)
