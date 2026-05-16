@@ -1,5 +1,5 @@
 //@version=6
-indicator("Structure Watch v0.6", overlay=true, max_labels_count=300)
+indicator("Structure Watch v0.7", overlay=true, max_labels_count=300)
 
 showDashboard = input.bool(true, "Show dashboard")
 showRejected = input.bool(true, "Show rejected")
@@ -145,12 +145,6 @@ if array.size(rawPrice) > 0
                     lastLevel := rp
                     if showWatch
                         label.new(rb, rp, rh ? "Watch H" : "Watch L", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny)
-                else if dup
-                    xCount += 1
-                    lastStatus := "x duplicate"
-                    lastLevel := rp
-                    if showRejected
-                        label.new(rb, rp, "x duplicate", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
                 else if edge
                     addLevel(rp, rh, "candidate")
                     candCount += 1
@@ -164,6 +158,12 @@ if array.size(rawPrice) > 0
                         highSinceCandLow := high
                     if showCandidates
                         label.new(rb, rp, rh ? "Cand. High" : "Cand. Low", style=rh ? label.style_label_down : label.style_label_up, color=rh ? color.new(color.red, 0) : color.new(color.lime, 0), textcolor=color.white, size=size.tiny)
+                else if dup
+                    xCount += 1
+                    lastStatus := "x duplicate"
+                    lastLevel := rp
+                    if showRejected
+                        label.new(rb, rp, "x duplicate", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
                 else if intOk
                     addLevel(rp, rh, "internal")
                     internalCount += 1
@@ -182,7 +182,7 @@ var table dash = table.new(position.top_right, 2, 7, border_width=1)
 if showDashboard and barstate.islast
     table.clear(dash, 0, 0, 1, 6)
     table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.new(color.black, 0))
-    table.cell(dash, 1, 0, "Structure Watch v0.6", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, "Structure Watch v0.7", text_color=color.white, bgcolor=color.new(color.black, 0))
     table.cell(dash, 0, 1, "Lookback", text_color=color.white)
     table.cell(dash, 1, 1, str.tostring(structureLookback), text_color=color.white)
     table.cell(dash, 0, 2, "Reset", text_color=color.white)
