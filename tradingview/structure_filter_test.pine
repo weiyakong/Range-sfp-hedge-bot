@@ -1,9 +1,9 @@
 //@version=6
-indicator("Structure Watch v0.7", overlay=true, max_labels_count=300)
+indicator("Structure Entry Watch v0.8", overlay=true, max_labels_count=300)
 
 showDashboard = input.bool(true, "Show dashboard")
 showRejected = input.bool(true, "Show rejected")
-showCandidates = input.bool(true, "Show candidates")
+showEntry = input.bool(true, "Show entry levels")
 showInternal = input.bool(true, "Show internal")
 showWatch = input.bool(true, "Show watch levels")
 
@@ -28,21 +28,21 @@ var float[] lvlMin = array.new<float>()
 var float[] lvlMax = array.new<float>()
 var bool[] lvlReady = array.new<bool>()
 
-var int candCount = 0
+var int entryCount = 0
 var int internalCount = 0
 var int watchCount = 0
 var int xCount = 0
 var string lastStatus = "None"
 var float lastLevel = na
-var float lastCandHigh = na
-var float lastCandLow = na
-var float lowSinceCandHigh = na
-var float highSinceCandLow = na
+var float lastEntryHigh = na
+var float lastEntryLow = na
+var float lowSinceEntryHigh = na
+var float highSinceEntryLow = na
 
-if not na(lastCandHigh)
-    lowSinceCandHigh := na(lowSinceCandHigh) ? low : math.min(lowSinceCandHigh, low)
-if not na(lastCandLow)
-    highSinceCandLow := na(highSinceCandLow) ? high : math.max(highSinceCandLow, high)
+if not na(lastEntryHigh)
+    lowSinceEntryHigh := na(lowSinceEntryHigh) ? low : math.min(lowSinceEntryHigh, low)
+if not na(lastEntryLow)
+    highSinceEntryLow := na(highSinceEntryLow) ? high : math.max(highSinceEntryLow, high)
 
 if array.size(lvlPrice) > 0
     for j = 0 to array.size(lvlPrice) - 1
@@ -53,7 +53,7 @@ if array.size(lvlPrice) > 0
         mx = math.max(array.get(lvlMax, j), high)
         array.set(lvlMin, j, mn)
         array.set(lvlMax, j, mx)
-        if t == "candidate"
+        if t == "entry"
             if h and p - mn >= resetUsd
                 array.set(lvlReady, j, true)
             if not h and mx - p >= resetUsd
@@ -72,7 +72,7 @@ nearestSame(price, isHigh) =>
     idx
 
 canWatch(idx) =>
-    idx >= 0 and array.get(lvlType, idx) == "candidate" and array.get(lvlReady, idx)
+    idx >= 0 and array.get(lvlType, idx) == "entry" and array.get(lvlReady, idx)
 
 useWatch(idx) =>
     if idx >= 0
@@ -112,7 +112,7 @@ addRaw(price, isHigh, originBar, isEdge) =>
 rawMove(price, isHigh) => isHigh ? price - low : high - price
 
 internalOk(isHigh) =>
-    isHigh ? (not na(lastCandHigh) and not na(lowSinceCandHigh) and lastCandHigh - lowSinceCandHigh >= resetUsd) : (not na(lastCandLow) and not na(highSinceCandLow) and highSinceCandLow - lastCandLow >= resetUsd)
+    isHigh ? (not na(lastEntryHigh) and not na(lowSinceEntryHigh) and lastEntryHigh - lowSinceEntryHigh >= resetUsd) : (not na(lastEntryLow) and not na(highSinceEntryLow) and highSinceEntryLow - lastEntryLow >= resetUsd)
 
 ph = ta.pivothigh(high, pivotLen, pivotLen)
 pl = ta.pivotlow(low, pivotLen, pivotLen)
@@ -146,18 +146,18 @@ if array.size(rawPrice) > 0
                     if showWatch
                         label.new(rb, rp, rh ? "Watch H" : "Watch L", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny)
                 else if edge
-                    addLevel(rp, rh, "candidate")
-                    candCount += 1
-                    lastStatus := rh ? "Cand. High" : "Cand. Low"
+                    addLevel(rp, rh, "entry")
+                    entryCount += 1
+                    lastStatus := rh ? "Entry High" : "Entry Low"
                     lastLevel := rp
                     if rh
-                        lastCandHigh := rp
-                        lowSinceCandHigh := low
+                        lastEntryHigh := rp
+                        lowSinceEntryHigh := low
                     else
-                        lastCandLow := rp
-                        highSinceCandLow := high
-                    if showCandidates
-                        label.new(rb, rp, rh ? "Cand. High" : "Cand. Low", style=rh ? label.style_label_down : label.style_label_up, color=rh ? color.new(color.red, 0) : color.new(color.lime, 0), textcolor=color.white, size=size.tiny)
+                        lastEntryLow := rp
+                        highSinceEntryLow := high
+                    if showEntry
+                        label.new(rb, rp, rh ? "Entry High" : "Entry Low", style=rh ? label.style_label_down : label.style_label_up, color=rh ? color.new(color.red, 0) : color.new(color.lime, 0), textcolor=color.white, size=size.tiny)
                 else if dup
                     xCount += 1
                     lastStatus := "x duplicate"
@@ -182,16 +182,16 @@ var table dash = table.new(position.top_right, 2, 7, border_width=1)
 if showDashboard and barstate.islast
     table.clear(dash, 0, 0, 1, 6)
     table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.new(color.black, 0))
-    table.cell(dash, 1, 0, "Structure Watch v0.7", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, "Structure Entry Watch v0.8", text_color=color.white, bgcolor=color.new(color.black, 0))
     table.cell(dash, 0, 1, "Lookback", text_color=color.white)
     table.cell(dash, 1, 1, str.tostring(structureLookback), text_color=color.white)
     table.cell(dash, 0, 2, "Reset", text_color=color.white)
     table.cell(dash, 1, 2, str.tostring(resetUsd), text_color=color.white)
-    table.cell(dash, 0, 3, "Cand./Inter./Watch/x", text_color=color.white)
-    table.cell(dash, 1, 3, str.tostring(candCount) + " / " + str.tostring(internalCount) + " / " + str.tostring(watchCount) + " / " + str.tostring(xCount), text_color=color.white)
+    table.cell(dash, 0, 3, "Entry/Inter./Watch/x", text_color=color.white)
+    table.cell(dash, 1, 3, str.tostring(entryCount) + " / " + str.tostring(internalCount) + " / " + str.tostring(watchCount) + " / " + str.tostring(xCount), text_color=color.white)
     table.cell(dash, 0, 4, "Last", text_color=color.white)
     table.cell(dash, 1, 4, lastStatus + (na(lastLevel) ? "" : " " + str.tostring(lastLevel, format.mintick)), text_color=color.white)
-    table.cell(dash, 0, 5, "Since Cand. High", text_color=color.white)
-    table.cell(dash, 1, 5, na(lastCandHigh) or na(lowSinceCandHigh) ? "" : str.tostring(lastCandHigh - lowSinceCandHigh, "#.##"), text_color=color.white)
-    table.cell(dash, 0, 6, "Since Cand. Low", text_color=color.white)
-    table.cell(dash, 1, 6, na(lastCandLow) or na(highSinceCandLow) ? "" : str.tostring(highSinceCandLow - lastCandLow, "#.##"), text_color=color.white)
+    table.cell(dash, 0, 5, "Since Entry High", text_color=color.white)
+    table.cell(dash, 1, 5, na(lastEntryHigh) or na(lowSinceEntryHigh) ? "" : str.tostring(lastEntryHigh - lowSinceEntryHigh, "#.##"), text_color=color.white)
+    table.cell(dash, 0, 6, "Since Entry Low", text_color=color.white)
+    table.cell(dash, 1, 6, na(lastEntryLow) or na(highSinceEntryLow) ? "" : str.tostring(highSinceEntryLow - lastEntryLow, "#.##"), text_color=color.white)
