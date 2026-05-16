@@ -1,0 +1,320 @@
+//@version=6
+indicator("Structure Anchor Phase 1000 Test v0.1", overlay=true, max_labels_count=300)
+
+// Same logic as Structure Anchor Phase Test v0.2.
+// Only default Minimum move from raw swing is raised from 700 to 1000.
+// Diagnostic test. No strategy orders.
+
+showDashboard = input.bool(true, "Show dashboard")
+showRejected = input.bool(false, "Show rejected x labels")
+showEntry = input.bool(true, "Show entry levels")
+showInternal = input.bool(true, "Show internal")
+showWatch = input.bool(true, "Show watch levels")
+showAnchor = input.bool(true, "Show Anchor labels")
+showRangeBg = input.bool(true, "Show middle range background")
+
+pivotLen = input.int(5, "Pivot length", minval=2, maxval=40)
+minMoveUsd = input.float(1000.0, "Minimum move from raw swing", minval=0.0, step=50.0)
+structureLookback = input.int(60, "Structure edge lookback", minval=5, maxval=300)
+majorRangeLookback = input.int(200, "Major range lookback", minval=50, maxval=600)
+entryEdgePercent = input.float(25.0, "Entry edge zone %", minval=5.0, maxval=45.0, step=1.0)
+resetUsd = input.float(1500.0, "Reset move USD", minval=0.0, step=100.0)
+anchorImpulseUsd = input.float(1500.0, "Anchor impulse USD", minval=0.0, step=100.0)
+mergeUsd = input.float(120.0, "Nearby level USD", minval=0.0, step=10.0)
+maxRaw = input.int(160, "Max raw swings", minval=20, maxval=400)
+maxLevels = input.int(120, "Max levels", minval=20, maxval=300)
+maxWatchCandidates = input.int(120, "Max watch candidates", minval=20, maxval=300)
+
+var float[] rawPrice = array.new<float>()
+var bool[] rawHigh = array.new<bool>()
+var bool[] rawActive = array.new<bool>()
+var int[] rawBar = array.new<int>()
+var bool[] rawEdge = array.new<bool>()
+var float[] rawRangePos = array.new<float>()
+
+var float[] lvlPrice = array.new<float>()
+var bool[] lvlHigh = array.new<bool>()
+var string[] lvlType = array.new<string>()
+var float[] lvlMin = array.new<float>()
+var float[] lvlMax = array.new<float>()
+var bool[] lvlReady = array.new<bool>()
+
+var float[] watchPrice = array.new<float>()
+var bool[] watchHigh = array.new<bool>()
+var int[] watchBar = array.new<int>()
+var bool[] watchActive = array.new<bool>()
+
+var int entryCount = 0
+var int internalCount = 0
+var int watchCount = 0
+var int anchorCount = 0
+var int xCount = 0
+var int xMiddleCount = 0
+var int xInternalPhaseCount = 0
+var string lastStatus = "None"
+var float lastLevel = na
+var float lastEntryHigh = na
+var float lastEntryLow = na
+var float lowSinceEntryHigh = na
+var float highSinceEntryLow = na
+var bool interHighArmed = false
+var bool interLowArmed = false
+var bool interHighUsed = false
+var bool interLowUsed = false
+
+if not na(lastEntryHigh)
+    lowSinceEntryHigh := na(lowSinceEntryHigh) ? low : math.min(lowSinceEntryHigh, low)
+if not na(lastEntryLow)
+    highSinceEntryLow := na(highSinceEntryLow) ? high : math.max(highSinceEntryLow, high)
+
+if not na(lastEntryHigh) and not na(lowSinceEntryHigh) and lastEntryHigh - lowSinceEntryHigh >= resetUsd and not interHighUsed
+    interHighArmed := true
+if not na(lastEntryLow) and not na(highSinceEntryLow) and highSinceEntryLow - lastEntryLow >= resetUsd and not interLowUsed
+    interLowArmed := true
+
+if array.size(lvlPrice) > 0
+    for j = 0 to array.size(lvlPrice) - 1
+        p = array.get(lvlPrice, j)
+        h = array.get(lvlHigh, j)
+        t = array.get(lvlType, j)
+        mn = math.min(array.get(lvlMin, j), low)
+        mx = math.max(array.get(lvlMax, j), high)
+        array.set(lvlMin, j, mn)
+        array.set(lvlMax, j, mx)
+        if t == "entry"
+            if h and p - mn >= resetUsd
+                array.set(lvlReady, j, true)
+            if not h and mx - p >= resetUsd
+                array.set(lvlReady, j, true)
+
+nearestSame(price, isHigh) =>
+    int idx = -1
+    float best = na
+    if array.size(lvlPrice) > 0
+        for j = 0 to array.size(lvlPrice) - 1
+            if array.get(lvlHigh, j) == isHigh
+                d = math.abs(array.get(lvlPrice, j) - price)
+                if d <= mergeUsd and (na(best) or d < best)
+                    best := d
+                    idx := j
+    idx
+
+canWatch(idx) => idx >= 0 and array.get(lvlType, idx) == "entry" and array.get(lvlReady, idx)
+
+useWatch(idx) =>
+    if idx >= 0
+        array.set(lvlReady, idx, false)
+        array.set(lvlMin, idx, low)
+        array.set(lvlMax, idx, high)
+
+addLevel(price, isHigh, typ) =>
+    array.push(lvlPrice, price)
+    array.push(lvlHigh, isHigh)
+    array.push(lvlType, typ)
+    array.push(lvlMin, low)
+    array.push(lvlMax, high)
+    array.push(lvlReady, false)
+    if array.size(lvlPrice) > maxLevels
+        array.shift(lvlPrice)
+        array.shift(lvlHigh)
+        array.shift(lvlType)
+        array.shift(lvlMin)
+        array.shift(lvlMax)
+        array.shift(lvlReady)
+
+addWatchCandidate(price, isHigh, originBar) =>
+    array.push(watchPrice, price)
+    array.push(watchHigh, isHigh)
+    array.push(watchBar, originBar)
+    array.push(watchActive, true)
+    if array.size(watchPrice) > maxWatchCandidates
+        array.shift(watchPrice)
+        array.shift(watchHigh)
+        array.shift(watchBar)
+        array.shift(watchActive)
+
+addRaw(price, isHigh, originBar, isEdge, pos) =>
+    if not na(price)
+        array.push(rawPrice, price)
+        array.push(rawHigh, isHigh)
+        array.push(rawActive, true)
+        array.push(rawBar, originBar)
+        array.push(rawEdge, isEdge)
+        array.push(rawRangePos, pos)
+        if array.size(rawPrice) > maxRaw
+            array.shift(rawPrice)
+            array.shift(rawHigh)
+            array.shift(rawActive)
+            array.shift(rawBar)
+            array.shift(rawEdge)
+            array.shift(rawRangePos)
+
+rawMove(price, isHigh) => isHigh ? price - low : high - price
+internalOk(isHigh) => isHigh ? interHighArmed : interLowArmed
+entryZoneOk(isHigh, pos) => not na(pos) and (isHigh ? pos >= 100.0 - entryEdgePercent : pos <= entryEdgePercent)
+
+majorHigh = ta.highest(high, majorRangeLookback)
+majorLow = ta.lowest(low, majorRangeLookback)
+majorSize = majorHigh - majorLow
+upperBoundary = majorLow + majorSize * (100.0 - entryEdgePercent) / 100.0
+lowerBoundary = majorLow + majorSize * entryEdgePercent / 100.0
+plot(showRangeBg ? upperBoundary : na, "Entry upper boundary", color=color.new(color.red, 65), linewidth=1)
+plot(showRangeBg ? lowerBoundary : na, "Entry lower boundary", color=color.new(color.lime, 65), linewidth=1)
+
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+hiOrigin = ta.highest(high, structureLookback)[pivotLen]
+loOrigin = ta.lowest(low, structureLookback)[pivotLen]
+majorHighOrigin = ta.highest(high, majorRangeLookback)[pivotLen]
+majorLowOrigin = ta.lowest(low, majorRangeLookback)[pivotLen]
+majorSizeOrigin = majorHighOrigin - majorLowOrigin
+
+if not na(ph)
+    posH = majorSizeOrigin > 0 ? (ph - majorLowOrigin) / majorSizeOrigin * 100.0 : na
+    addRaw(ph, true, bar_index - pivotLen, ph >= hiOrigin, posH)
+if not na(pl)
+    posL = majorSizeOrigin > 0 ? (pl - majorLowOrigin) / majorSizeOrigin * 100.0 : na
+    addRaw(pl, false, bar_index - pivotLen, pl <= loOrigin, posL)
+
+if array.size(rawPrice) > 0
+    for i = 0 to array.size(rawPrice) - 1
+        if array.get(rawActive, i)
+            rp = array.get(rawPrice, i)
+            rh = array.get(rawHigh, i)
+            rb = array.get(rawBar, i)
+            edge = array.get(rawEdge, i)
+            pos = array.get(rawRangePos, i)
+            if rawMove(rp, rh) >= minMoveUsd
+                array.set(rawActive, i, false)
+                dupIdx = nearestSame(rp, rh)
+                dup = dupIdx >= 0
+                watchOk = canWatch(dupIdx)
+                intOk = internalOk(rh)
+                if dup and watchOk
+                    addLevel(rp, rh, "watch")
+                    addWatchCandidate(rp, rh, rb)
+                    useWatch(dupIdx)
+                    watchCount += 1
+                    lastStatus := rh ? "Watch H" : "Watch L"
+                    lastLevel := rp
+                    if showWatch
+                        label.new(rb, rp, rh ? "Watch H" : "Watch L", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny)
+                else if edge and not entryZoneOk(rh, pos)
+                    xCount += 1
+                    xMiddleCount += 1
+                    lastStatus := "x middle"
+                    lastLevel := rp
+                    if showRejected
+                        label.new(rb, rp, "x middle", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
+                else if edge
+                    addLevel(rp, rh, "entry")
+                    entryCount += 1
+                    lastStatus := rh ? "Entry High" : "Entry Low"
+                    lastLevel := rp
+                    if rh
+                        lastEntryHigh := rp
+                        lowSinceEntryHigh := low
+                        interHighArmed := false
+                        interHighUsed := false
+                    else
+                        lastEntryLow := rp
+                        highSinceEntryLow := high
+                        interLowArmed := false
+                        interLowUsed := false
+                    if showEntry
+                        label.new(rb, rp, rh ? "Entry High" : "Entry Low", style=rh ? label.style_label_down : label.style_label_up, color=rh ? color.new(color.red, 0) : color.new(color.lime, 0), textcolor=color.white, size=size.tiny)
+                else if dup
+                    xCount += 1
+                    lastStatus := "x duplicate"
+                    lastLevel := rp
+                    if showRejected
+                        label.new(rb, rp, "x duplicate", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
+                else if intOk
+                    addLevel(rp, rh, "internal")
+                    internalCount += 1
+                    lastStatus := rh ? "Inter. High" : "Inter. Low"
+                    lastLevel := rp
+                    if rh
+                        interHighArmed := false
+                        interHighUsed := true
+                    else
+                        interLowArmed := false
+                        interLowUsed := true
+                    if showInternal
+                        label.new(rb, rp, rh ? "Inter. High" : "Inter. Low", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.blue, 0), textcolor=color.white, size=size.tiny)
+                else
+                    if rh ? not interHighArmed : not interLowArmed
+                        xInternalPhaseCount += 1
+                    xCount += 1
+                    lastStatus := "x not edge"
+                    lastLevel := rp
+                    if showRejected
+                        label.new(rb, rp, "x not edge", style=rh ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 0), textcolor=color.white, size=size.tiny)
+
+// Anchor logic: choose only the latest active Watch of each side that already produced an impulse.
+if array.size(watchPrice) > 0
+    int highAnchorIdx = -1
+    int highAnchorBar = na
+    int lowAnchorIdx = -1
+    int lowAnchorBar = na
+    for i = 0 to array.size(watchPrice) - 1
+        if array.get(watchActive, i)
+            wp = array.get(watchPrice, i)
+            wh = array.get(watchHigh, i)
+            wb = array.get(watchBar, i)
+            movedEnough = wh ? wp - low >= anchorImpulseUsd : high - wp >= anchorImpulseUsd
+            if movedEnough
+                if wh
+                    if highAnchorIdx == -1 or wb > highAnchorBar
+                        highAnchorIdx := i
+                        highAnchorBar := wb
+                else
+                    if lowAnchorIdx == -1 or wb > lowAnchorBar
+                        lowAnchorIdx := i
+                        lowAnchorBar := wb
+    if highAnchorIdx >= 0
+        ap = array.get(watchPrice, highAnchorIdx)
+        ab = array.get(watchBar, highAnchorIdx)
+        anchorCount += 1
+        lastStatus := "Anchor H"
+        lastLevel := ap
+        if showAnchor
+            label.new(ab, ap, "Anchor H", style=label.style_label_down, color=color.rgb(255, 0, 180), textcolor=color.white, size=size.tiny)
+        for k = 0 to array.size(watchPrice) - 1
+            if array.get(watchHigh, k) and array.get(watchBar, k) <= ab
+                array.set(watchActive, k, false)
+    if lowAnchorIdx >= 0
+        ap = array.get(watchPrice, lowAnchorIdx)
+        ab = array.get(watchBar, lowAnchorIdx)
+        anchorCount += 1
+        lastStatus := "Anchor L"
+        lastLevel := ap
+        if showAnchor
+            label.new(ab, ap, "Anchor L", style=label.style_label_up, color=color.rgb(255, 0, 180), textcolor=color.white, size=size.tiny)
+        for k = 0 to array.size(watchPrice) - 1
+            if not array.get(watchHigh, k) and array.get(watchBar, k) <= ab
+                array.set(watchActive, k, false)
+
+var table dash = table.new(position.top_right, 2, 10, border_width=1)
+if showDashboard and barstate.islast
+    table.clear(dash, 0, 0, 1, 9)
+    table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, "Structure Anchor Phase 1000 v0.1", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 0, 1, "Min move", text_color=color.white)
+    table.cell(dash, 1, 1, str.tostring(minMoveUsd), text_color=color.white)
+    table.cell(dash, 0, 2, "Entry edge zone", text_color=color.white)
+    table.cell(dash, 1, 2, str.tostring(entryEdgePercent) + "%", text_color=color.white)
+    table.cell(dash, 0, 3, "Anchor impulse", text_color=color.white)
+    table.cell(dash, 1, 3, str.tostring(anchorImpulseUsd), text_color=color.white)
+    table.cell(dash, 0, 4, "Entry/Inter./Watch/x", text_color=color.white)
+    table.cell(dash, 1, 4, str.tostring(entryCount) + " / " + str.tostring(internalCount) + " / " + str.tostring(watchCount) + " / " + str.tostring(xCount), text_color=color.white)
+    table.cell(dash, 0, 5, "Anchor", text_color=color.white)
+    table.cell(dash, 1, 5, str.tostring(anchorCount), text_color=color.white)
+    table.cell(dash, 0, 6, "x middle", text_color=color.white)
+    table.cell(dash, 1, 6, str.tostring(xMiddleCount), text_color=color.white)
+    table.cell(dash, 0, 7, "Inter phase armed", text_color=color.white)
+    table.cell(dash, 1, 7, (interHighArmed ? "H " : "") + (interLowArmed ? "L" : ""), text_color=color.white)
+    table.cell(dash, 0, 8, "Last", text_color=color.white)
+    table.cell(dash, 1, 8, lastStatus + (na(lastLevel) ? "" : " " + str.tostring(lastLevel, format.mintick)), text_color=color.white)
+    table.cell(dash, 0, 9, "Inter rule", text_color=color.white)
+    table.cell(dash, 1, 9, "one per impulse phase", text_color=color.white)
