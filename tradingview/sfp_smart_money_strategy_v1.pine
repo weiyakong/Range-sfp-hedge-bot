@@ -1,0 +1,4 @@
+//@version=6
+strategy("SFP Smart Money Strategy v1 - A/B/C", overlay=true, pyramiding=0, calc_on_every_tick=true, process_orders_on_close=false)
+
+// Stub created first. Full strategy content will be added in the next update.
