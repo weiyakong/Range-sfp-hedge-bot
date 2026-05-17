@@ -1,5 +1,5 @@
 //@version=6
-indicator("Realtime Persistent SFP TP-R v0.2", overlay=true, max_labels_count=300)
+indicator("Realtime Persistent SFP TP-R v0.3", overlay=true, max_labels_count=300)
 
 showDash = input.bool(true, "Show dashboard")
 showSfp = input.bool(true, "Show entries")
@@ -242,9 +242,10 @@ if side != 0 and bar_index > entryBar
     tp4 = side == 1 ? trEntry + trRisk * tp4R : trEntry - trRisk * tp4R
     stopped = side == 1 ? low <= trStop : high >= trStop
     if stopped
+        protectedExit = tp1Hit
         if showTp
-            label.new(bar_index, trStop, "SL / EXIT", style=side == 1 ? label.style_label_down : label.style_label_up, color=color.red, textcolor=color.white, size=size.tiny)
-        lastStatus := "Stop exit"
+            label.new(bar_index, trStop, protectedExit ? "PROTECTED EXIT" : "SL / EXIT", style=side == 1 ? label.style_label_down : label.style_label_up, color=protectedExit ? color.yellow : color.red, textcolor=protectedExit ? color.black : color.white, size=size.tiny)
+        lastStatus := protectedExit ? "Protected stop exit" : "Stop exit"
         side := 0
     else
         if not tp0Hit and (side == 1 ? high >= tp0 : low <= tp0)
@@ -275,7 +276,7 @@ var table dash = table.new(position.top_right, 2, 7, border_width=1)
 if showDash and barstate.islast
     table.clear(dash, 0, 0, 1, 6)
     table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.black)
-    table.cell(dash, 1, 0, "TP-R v0.2", text_color=color.white, bgcolor=color.black)
+    table.cell(dash, 1, 0, "TP-R v0.3", text_color=color.white, bgcolor=color.black)
     table.cell(dash, 0, 1, "Active trade", text_color=color.white)
     table.cell(dash, 1, 1, side == 1 ? "LONG" : side == -1 ? "SHORT" : "FLAT", text_color=color.white)
     table.cell(dash, 0, 2, "Created E/W/SFP/A", text_color=color.white)
