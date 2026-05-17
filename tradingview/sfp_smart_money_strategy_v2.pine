@@ -1,0 +1,335 @@
+//@version=6
+strategy("SFP Smart Money Strategy v2 - instant rejection", overlay=true, pyramiding=0, calc_on_every_tick=true, process_orders_on_close=false, max_labels_count=500)
+
+// v2 focus: stricter entry filters + instant rejection entry.
+// Run on 1m chart for closest execution. During realtime, close = current price.
+// Historical backtest is still bar-based approximation; live/1m replay is more relevant for instant rejection.
+
+mode = input.string("A", "Management Mode", options=["A", "B", "C"])
+swing15 = input.int(20, "15m swing length", minval=3)
+swing4h = input.int(20, "4H swing length", minval=3)
+eqUsd = input.float(100, "EQH/EQL threshold USD", minval=1)
+nearUsd = input.float(150, "Confluence proximity USD", minval=1)
+shortMinConf = input.int(2, "Short min confluence", minval=1, maxval=8)
+longMinConf = input.int(3, "Long min confluence", minval=1, maxval=8)
+strongTrendMinConf = input.int(3, "Min confluence against 4H trend", minval=1, maxval=8)
+minSweepUsd = input.float(50, "Min sweep distance USD", minval=0)
+slBuffer = input.float(100, "SL buffer beyond wick USD", minval=0)
+tpStep = input.float(300, "TP step after TP0 USD", minval=1)
+slLock = input.float(150, "SL lock after TP USD", minval=0)
+feeTaker = input.float(0.10, "Taker one-way fee %", step=0.001)
+feeMaker = input.float(0.036, "Maker one-way fee %", step=0.001)
+useTakerTaker = input.bool(true, "Chart uses taker+taker")
+requireTp0Space = input.bool(true, "No entry if no TP0 space")
+minTp0Usd = input.float(100, "Min TP0 distance USD", minval=1)
+majorObMinUsd = input.float(250, "Major OB min height USD", minval=1)
+useEmaTrendFilter = input.bool(true, "Use 4H EMA impulse filter")
+showTable = input.bool(true, "Show table")
+
+feePct = useTakerTaker ? feeTaker * 2 : feeTaker + feeMaker
+feePrice(p) => p * feePct / 100
+near(a, b) => not na(a) and not na(b) and math.abs(a - b) <= nearUsd
+
+// Current price on execution TF. On 1m realtime this updates intrabar.
+px = close
+
+//==================== 15m / 4H levels ====================
+ph15 = request.security(syminfo.tickerid, "15", ta.pivothigh(high, swing15, swing15), lookahead=barmerge.lookahead_off)
+pl15 = request.security(syminfo.tickerid, "15", ta.pivotlow(low, swing15, swing15), lookahead=barmerge.lookahead_off)
+h15 = ta.valuewhen(not na(ph15), ph15, 0)
+h15p = ta.valuewhen(not na(ph15), ph15, 1)
+l15 = ta.valuewhen(not na(pl15), pl15, 0)
+l15p = ta.valuewhen(not na(pl15), pl15, 1)
+eqh = not na(h15) and not na(h15p) and math.abs(h15 - h15p) <= eqUsd ? math.avg(h15, h15p) : na
+eql = not na(l15) and not na(l15p) and math.abs(l15 - l15p) <= eqUsd ? math.avg(l15, l15p) : na
+
+ph4h = request.security(syminfo.tickerid, "240", ta.pivothigh(high, swing4h, swing4h), lookahead=barmerge.lookahead_off)
+pl4h = request.security(syminfo.tickerid, "240", ta.pivotlow(low, swing4h, swing4h), lookahead=barmerge.lookahead_off)
+h4 = ta.valuewhen(not na(ph4h), ph4h, 0)
+l4 = ta.valuewhen(not na(pl4h), pl4h, 0)
+
+ema7_4h = request.security(syminfo.tickerid, "240", ta.ema(close, 7), lookahead=barmerge.lookahead_off)
+ema14_4h = request.security(syminfo.tickerid, "240", ta.ema(close, 14), lookahead=barmerge.lookahead_off)
+ema28_4h = request.security(syminfo.tickerid, "240", ta.ema(close, 28), lookahead=barmerge.lookahead_off)
+bull4hImpulse = useEmaTrendFilter and ema7_4h > ema14_4h and ema14_4h > ema28_4h and px > ema28_4h
+bear4hImpulse = useEmaTrendFilter and ema7_4h < ema14_4h and ema14_4h < ema28_4h and px < ema28_4h
+
+pdh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_off)
+pdl = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_off)
+pwh = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_off)
+pwl = request.security(syminfo.tickerid, "W", low[1], lookahead=barmerge.lookahead_off)
+pmh = request.security(syminfo.tickerid, "M", high[1], lookahead=barmerge.lookahead_off)
+pml = request.security(syminfo.tickerid, "M", low[1], lookahead=barmerge.lookahead_off)
+
+//==================== Simplified OB ====================
+bosUp15 = request.security(syminfo.tickerid, "15", ta.crossover(close, ta.valuewhen(not na(ta.pivothigh(high, swing15, swing15)), ta.pivothigh(high, swing15, swing15), 0)), lookahead=barmerge.lookahead_off)
+bosDn15 = request.security(syminfo.tickerid, "15", ta.crossunder(close, ta.valuewhen(not na(ta.pivotlow(low, swing15, swing15)), ta.pivotlow(low, swing15, swing15), 0)), lookahead=barmerge.lookahead_off)
+lastBearHi = request.security(syminfo.tickerid, "15", ta.valuewhen(close < open, high, 0), lookahead=barmerge.lookahead_off)
+lastBearLo = request.security(syminfo.tickerid, "15", ta.valuewhen(close < open, low, 0), lookahead=barmerge.lookahead_off)
+lastBullHi = request.security(syminfo.tickerid, "15", ta.valuewhen(close > open, high, 0), lookahead=barmerge.lookahead_off)
+lastBullLo = request.security(syminfo.tickerid, "15", ta.valuewhen(close > open, low, 0), lookahead=barmerge.lookahead_off)
+
+var float bullObHi = na
+var float bullObLo = na
+var float bearObHi = na
+var float bearObLo = na
+if bosUp15
+    bullObHi := lastBearHi
+    bullObLo := lastBearLo
+if bosDn15
+    bearObHi := lastBullHi
+    bearObLo := lastBullLo
+if not na(bullObLo) and low < bullObLo
+    bullObHi := na
+    bullObLo := na
+if not na(bearObHi) and high > bearObHi
+    bearObHi := na
+    bearObLo := na
+
+bullObMajor = not na(bullObHi) and not na(bullObLo) and math.abs(bullObHi - bullObLo) >= majorObMinUsd
+bearObMajor = not na(bearObHi) and not na(bearObLo) and math.abs(bearObHi - bearObLo) >= majorObMinUsd
+
+//==================== S/R flip levels ====================
+// Broken support -> resistance for shorts. Broken resistance -> support for longs.
+var float brokenSupport = na
+var float brokenResistance = na
+if not na(l15) and px < l15
+    brokenSupport := l15
+if not na(h15) and px > h15
+    brokenResistance := h15
+
+srFlipShort = brokenSupport
+srFlipLong = brokenResistance
+
+//==================== Entry mechanics: instant sweep/rejection ====================
+shortSweep(x) => not na(x) and high >= x + minSweepUsd and px < x
+longSweep(x) => not na(x) and low <= x - minSweepUsd and px > x
+
+// Touch without sweep is allowed only on major zones.
+shortMajorTouch(x) => not na(x) and high >= x and px < x
+longMajorTouch(x) => not na(x) and low <= x and px > x
+
+shortFromSwing = shortSweep(h15)
+shortFromEq = shortSweep(eqh)
+shortFromDwm = shortSweep(pdh) or shortSweep(pwh) or shortSweep(pmh)
+shortFrom4h = shortSweep(h4)
+shortFromSrFlip = shortSweep(srFlipShort) or shortMajorTouch(srFlipShort)
+shortFromOb = (shortSweep(bearObHi) or shortSweep(bearObLo)) or (bearObMajor and (shortMajorTouch(bearObHi) or shortMajorTouch(bearObLo)))
+
+longFromSwing = longSweep(l15)
+longFromEq = longSweep(eql)
+longFromDwm = longSweep(pdl) or longSweep(pwl) or longSweep(pml)
+longFrom4h = longSweep(l4)
+longFromSrFlip = longSweep(srFlipLong) or longMajorTouch(srFlipLong)
+longFromOb = (longSweep(bullObHi) or longSweep(bullObLo)) or (bullObMajor and (longMajorTouch(bullObHi) or longMajorTouch(bullObLo)))
+
+shortLvl = shortFromDwm ? (shortSweep(pmh) ? pmh : shortSweep(pwh) ? pwh : pdh) : shortFrom4h ? h4 : shortFromEq ? eqh : shortFromOb ? (shortMajorTouch(bearObHi) ? bearObHi : bearObLo) : shortFromSrFlip ? srFlipShort : shortFromSwing ? h15 : na
+longLvl = longFromDwm ? (longSweep(pml) ? pml : longSweep(pwl) ? pwl : pdl) : longFrom4h ? l4 : longFromEq ? eql : longFromOb ? (longMajorTouch(bullObLo) ? bullObLo : bullObHi) : longFromSrFlip ? srFlipLong : longFromSwing ? l15 : na
+
+confShort(x) =>
+    int c = 0
+    c += near(x, h15) ? 1 : 0
+    c += near(x, eqh) ? 1 : 0
+    c += near(x, pdh) ? 1 : 0
+    c += near(x, pwh) ? 1 : 0
+    c += near(x, pmh) ? 1 : 0
+    c += near(x, h4) ? 1 : 0
+    c += near(x, bearObHi) or near(x, bearObLo) ? 1 : 0
+    c += near(x, srFlipShort) ? 1 : 0
+    c
+
+confLong(x) =>
+    int c = 0
+    c += near(x, l15) ? 1 : 0
+    c += near(x, eql) ? 1 : 0
+    c += near(x, pdl) ? 1 : 0
+    c += near(x, pwl) ? 1 : 0
+    c += near(x, pml) ? 1 : 0
+    c += near(x, l4) ? 1 : 0
+    c += near(x, bullObHi) or near(x, bullObLo) ? 1 : 0
+    c += near(x, srFlipLong) ? 1 : 0
+    c
+
+shortStrong = shortFromDwm or shortFrom4h or shortFromEq or shortFromOb or shortFromSrFlip
+longStrong = longFromDwm or longFrom4h or longFromEq or longFromOb or longFromSrFlip
+sc = not na(shortLvl) ? confShort(shortLvl) : 0
+lc = not na(longLvl) ? confLong(longLvl) : 0
+
+float targetDn = na
+for x in array.from(l15, eql, pdl, pwl, pml, l4, bullObHi, bullObLo, srFlipLong)
+    if not na(x) and x < px
+        targetDn := na(targetDn) ? x : math.max(targetDn, x)
+float targetUp = na
+for x in array.from(h15, eqh, pdh, pwh, pmh, h4, bearObHi, bearObLo, srFlipShort)
+    if not na(x) and x > px
+        targetUp := na(targetUp) ? x : math.min(targetUp, x)
+
+//==================== Trade state ====================
+var int dir = 0
+var float ep = na
+var float sl = na
+var float r = na
+var float tp0 = na
+var float tp1 = na
+var float tp2 = na
+var float tp3 = na
+var float tp4 = na
+var float tp5 = na
+var bool got0 = false
+var bool got1 = false
+var bool got2 = false
+var bool got3 = false
+var bool got4 = false
+var bool got5 = false
+
+if strategy.position_size == 0 and dir != 0
+    dir := 0
+    ep := na
+    sl := na
+    r := na
+    tp0 := na
+    tp1 := na
+    tp2 := na
+    tp3 := na
+    tp4 := na
+    tp5 := na
+    got0 := false
+    got1 := false
+    got2 := false
+    got3 := false
+    got4 := false
+    got5 := false
+
+//==================== Entry permission ====================
+shortSl = high + slBuffer
+shortR = shortSl - px + feePrice(px)
+shortTp0 = px - 2 * shortR
+shortSpace = not requireTp0Space or (not na(targetDn) and targetDn <= shortTp0 and px - shortTp0 >= minTp0Usd)
+shortConfOk = bull4hImpulse ? sc >= strongTrendMinConf : sc >= shortMinConf
+shortOk = strategy.position_size == 0 and not na(shortLvl) and shortStrong and shortConfOk and shortR > 0 and shortSpace
+
+longSl = low - slBuffer
+longR = px - longSl + feePrice(px)
+longTp0 = px + 2 * longR
+longSpace = not requireTp0Space or (not na(targetUp) and targetUp >= longTp0 and longTp0 - px >= minTp0Usd)
+longConfOk = bear4hImpulse ? lc >= strongTrendMinConf and longFromDwm : lc >= longMinConf
+longOk = strategy.position_size == 0 and not na(longLvl) and longStrong and longConfOk and longR > 0 and longSpace
+
+if shortOk
+    dir := -1
+    ep := px
+    sl := shortSl
+    r := shortR
+    tp0 := ep - 2 * r
+    tp1 := tp0 - tpStep
+    tp2 := tp0 - 2 * tpStep
+    tp3 := tp0 - 3 * tpStep
+    tp4 := tp0 - 4 * tpStep
+    tp5 := tp0 - 5 * tpStep
+    strategy.entry("S", strategy.short)
+    label.new(bar_index, high, "S instant\nconf " + str.tostring(sc), style=label.style_label_down, color=color.red, textcolor=color.white)
+
+if longOk
+    dir := 1
+    ep := px
+    sl := longSl
+    r := longR
+    tp0 := ep + 2 * r
+    tp1 := tp0 + tpStep
+    tp2 := tp0 + 2 * tpStep
+    tp3 := tp0 + 3 * tpStep
+    tp4 := tp0 + 4 * tpStep
+    tp5 := tp0 + 5 * tpStep
+    strategy.entry("L", strategy.long)
+    label.new(bar_index, low, "L instant\nconf " + str.tostring(lc), style=label.style_label_up, color=color.green, textcolor=color.white)
+
+//==================== Management A/B/C ====================
+if dir == -1 and strategy.position_size < 0
+    got0 := got0 or low <= tp0
+    got1 := got1 or low <= tp1
+    got2 := got2 or low <= tp2
+    got3 := got3 or low <= tp3
+    got4 := got4 or low <= tp4
+    got5 := got5 or low <= tp5
+    if mode == "C" and got0 and not got1
+        sl := math.min(sl, ep)
+    if got1
+        sl := math.min(sl, tp0 - slLock)
+    if mode == "B" and got2
+        sl := math.min(sl, tp1 - slLock)
+    if mode == "B" and got3
+        sl := math.min(sl, tp2 - slLock)
+    if mode == "B" and got4
+        sl := math.min(sl, tp3 - slLock)
+    if mode == "B" and got5
+        sl := math.min(sl, tp4 - slLock)
+    strategy.exit("S0", "S", qty_percent=50, limit=tp0, stop=sl)
+    strategy.exit("S1", "S", qty_percent=10, limit=tp1, stop=sl)
+    strategy.exit("S2", "S", qty_percent=10, limit=tp2, stop=sl)
+    strategy.exit("S3", "S", qty_percent=10, limit=tp3, stop=sl)
+    strategy.exit("S4", "S", qty_percent=10, limit=tp4, stop=sl)
+    strategy.exit("S5", "S", qty_percent=10, limit=tp5, stop=sl)
+
+if dir == 1 and strategy.position_size > 0
+    got0 := got0 or high >= tp0
+    got1 := got1 or high >= tp1
+    got2 := got2 or high >= tp2
+    got3 := got3 or high >= tp3
+    got4 := got4 or high >= tp4
+    got5 := got5 or high >= tp5
+    if mode == "C" and got0 and not got1
+        sl := math.max(sl, ep)
+    if got1
+        sl := math.max(sl, tp0 + slLock)
+    if mode == "B" and got2
+        sl := math.max(sl, tp1 + slLock)
+    if mode == "B" and got3
+        sl := math.max(sl, tp2 + slLock)
+    if mode == "B" and got4
+        sl := math.max(sl, tp3 + slLock)
+    if mode == "B" and got5
+        sl := math.max(sl, tp4 + slLock)
+    strategy.exit("L0", "L", qty_percent=50, limit=tp0, stop=sl)
+    strategy.exit("L1", "L", qty_percent=10, limit=tp1, stop=sl)
+    strategy.exit("L2", "L", qty_percent=10, limit=tp2, stop=sl)
+    strategy.exit("L3", "L", qty_percent=10, limit=tp3, stop=sl)
+    strategy.exit("L4", "L", qty_percent=10, limit=tp4, stop=sl)
+    strategy.exit("L5", "L", qty_percent=10, limit=tp5, stop=sl)
+
+//==================== Visuals ====================
+plot(pdh, "PDH", color=color.new(color.blue, 40))
+plot(pdl, "PDL", color=color.new(color.blue, 40))
+plot(pwh, "PWH", color=color.new(color.purple, 40))
+plot(pwl, "PWL", color=color.new(color.purple, 40))
+plot(eqh, "EQH", color=color.new(color.red, 0))
+plot(eql, "EQL", color=color.new(color.green, 0))
+plot(brokenSupport, "Broken support -> resistance", color=color.new(color.red, 30))
+plot(brokenResistance, "Broken resistance -> support", color=color.new(color.green, 30))
+plot(bearObHi, "Bear OB High", color=color.new(color.red, 60))
+plot(bearObLo, "Bear OB Low", color=color.new(color.red, 60))
+plot(bullObHi, "Bull OB High", color=color.new(color.green, 60))
+plot(bullObLo, "Bull OB Low", color=color.new(color.green, 60))
+plot(strategy.position_size != 0 ? sl : na, "SL", color=color.red, linewidth=2, style=plot.style_linebr)
+plot(strategy.position_size != 0 ? tp0 : na, "TP0", color=color.green, linewidth=2, style=plot.style_linebr)
+plot(strategy.position_size != 0 ? tp1 : na, "TP1", color=color.new(color.green, 20), style=plot.style_linebr)
+plot(strategy.position_size != 0 ? tp2 : na, "TP2", color=color.new(color.green, 30), style=plot.style_linebr)
+plot(strategy.position_size != 0 ? tp3 : na, "TP3", color=color.new(color.green, 40), style=plot.style_linebr)
+plot(strategy.position_size != 0 ? tp4 : na, "TP4", color=color.new(color.green, 50), style=plot.style_linebr)
+plot(strategy.position_size != 0 ? tp5 : na, "TP5", color=color.new(color.green, 60), style=plot.style_linebr)
+
+var table tb = table.new(position.top_right, 2, 7, border_width=1)
+if showTable and barstate.islast
+    table.cell(tb, 0, 0, "v2 mode")
+    table.cell(tb, 1, 0, mode)
+    table.cell(tb, 0, 1, "Fee")
+    table.cell(tb, 1, 1, useTakerTaker ? "taker+taker" : "maker+taker")
+    table.cell(tb, 0, 2, "Short conf")
+    table.cell(tb, 1, 2, str.tostring(sc))
+    table.cell(tb, 0, 3, "Long conf")
+    table.cell(tb, 1, 3, str.tostring(lc))
+    table.cell(tb, 0, 4, "4H impulse")
+    table.cell(tb, 1, 4, bull4hImpulse ? "bull" : bear4hImpulse ? "bear" : "none")
+    table.cell(tb, 0, 5, "R")
+    table.cell(tb, 1, 5, na(r) ? "-" : str.tostring(r, "#.##"))
+    table.cell(tb, 0, 6, "Instant")
+    table.cell(tb, 1, 6, "use 1m chart")
