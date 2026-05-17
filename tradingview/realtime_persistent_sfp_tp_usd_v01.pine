@@ -1,5 +1,5 @@
 //@version=6
-indicator("Realtime Persistent SFP TP-USD v0.1", overlay=true, max_labels_count=300)
+indicator("Realtime Persistent SFP TP-USD v0.2", overlay=true, max_labels_count=300)
 
 showDash = input.bool(true, "Show dashboard")
 showSfp = input.bool(true, "Show entries")
@@ -14,8 +14,9 @@ sfpBufferUsd = input.float(20.0, "SFP sweep buffer USD", minval=0, step=10)
 invalidateUsd = input.float(600.0, "Invalidation beyond level USD", minval=50, step=50)
 anchorUsd = input.float(1500.0, "Anchor impulse USD", minval=0, step=100)
 stopBufferUsd = input.float(20.0, "Stop buffer USD", minval=0, step=10)
+slAfterTp1ExtraUsd = input.float(150.0, "After TP1: SL beyond TP0 USD", minval=0, step=10)
 tp0R = input.float(2.0, "TP0 R", minval=0.1, step=0.1)
-tpStepUsd = input.float(300.0, "TP1-TP3 step USD", minval=50, step=50)
+tpStepUsd = input.float(300.0, "TP step USD", minval=50, step=50)
 
 var float[] entryP = array.new<float>()
 var bool[] entryH = array.new<bool>()
@@ -44,6 +45,7 @@ var bool tp0Hit = false
 var bool tp1Hit = false
 var bool tp2Hit = false
 var bool tp3Hit = false
+var bool tp4Hit = false
 
 activeEntryCount() =>
     int n = 0
@@ -151,8 +153,7 @@ if array.size(entryP) > 0
             if side == 0 and (shortSfp or longSfp)
                 newSide = shortSfp ? -1 : 1
                 stopPrice = shortSfp ? high + stopBufferUsd : low - stopBufferUsd
-                ok = math.abs(close - stopPrice) > 0
-                if ok
+                if math.abs(close - stopPrice) > 0
                     side := newSide
                     entryBar := bar_index
                     trEntry := close
@@ -162,6 +163,7 @@ if array.size(entryP) > 0
                     tp1Hit := false
                     tp2Hit := false
                     tp3Hit := false
+                    tp4Hit := false
                     sfpCount += 1
                     lastStatus := shortSfp ? "Short Entry" : "Long Entry"
                     lastLevel := close
@@ -234,6 +236,7 @@ if side != 0 and bar_index > entryBar
     tp1 = side == 1 ? trEntry + tpStepUsd : trEntry - tpStepUsd
     tp2 = side == 1 ? trEntry + tpStepUsd * 2 : trEntry - tpStepUsd * 2
     tp3 = side == 1 ? trEntry + tpStepUsd * 3 : trEntry - tpStepUsd * 3
+    tp4 = side == 1 ? trEntry + tpStepUsd * 4 : trEntry - tpStepUsd * 4
     stopped = side == 1 ? low <= trStop : high >= trStop
     if stopped
         if showTp
@@ -247,8 +250,9 @@ if side != 0 and bar_index > entryBar
                 label.new(bar_index, tp0, "TP0 2R 50%", style=side == 1 ? label.style_label_down : label.style_label_up, color=color.yellow, textcolor=color.black, size=size.tiny)
         if not tp1Hit and (side == 1 ? high >= tp1 : low <= tp1)
             tp1Hit := true
+            trStop := side == 1 ? tp0 + slAfterTp1ExtraUsd : tp0 - slAfterTp1ExtraUsd
             if showTp
-                label.new(bar_index, tp1, "TP1 +300 15%", style=side == 1 ? label.style_label_down : label.style_label_up, color=color.yellow, textcolor=color.black, size=size.tiny)
+                label.new(bar_index, tp1, "TP1 +300 15% / SL->TP0+150", style=side == 1 ? label.style_label_down : label.style_label_up, color=color.yellow, textcolor=color.black, size=size.tiny)
         if not tp2Hit and (side == 1 ? high >= tp2 : low <= tp2)
             tp2Hit := true
             if showTp
@@ -256,15 +260,19 @@ if side != 0 and bar_index > entryBar
         if not tp3Hit and (side == 1 ? high >= tp3 : low <= tp3)
             tp3Hit := true
             if showTp
-                label.new(bar_index, tp3, "TP3 +900 10% / runner 10%", style=side == 1 ? label.style_label_down : label.style_label_up, color=color.yellow, textcolor=color.black, size=size.tiny)
-            lastStatus := "TP3 reached"
+                label.new(bar_index, tp3, "TP3 +900 10%", style=side == 1 ? label.style_label_down : label.style_label_up, color=color.yellow, textcolor=color.black, size=size.tiny)
+        if not tp4Hit and (side == 1 ? high >= tp4 : low <= tp4)
+            tp4Hit := true
+            if showTp
+                label.new(bar_index, tp4, "TP4 +1200 10% / EXIT", style=side == 1 ? label.style_label_down : label.style_label_up, color=color.yellow, textcolor=color.black, size=size.tiny)
+            lastStatus := "TP4 reached"
             side := 0
 
 var table dash = table.new(position.top_right, 2, 7, border_width=1)
 if showDash and barstate.islast
     table.clear(dash, 0, 0, 1, 6)
     table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.black)
-    table.cell(dash, 1, 0, "TP-USD v0.1", text_color=color.white, bgcolor=color.black)
+    table.cell(dash, 1, 0, "TP-USD v0.2", text_color=color.white, bgcolor=color.black)
     table.cell(dash, 0, 1, "Active trade", text_color=color.white)
     table.cell(dash, 1, 1, side == 1 ? "LONG" : side == -1 ? "SHORT" : "FLAT", text_color=color.white)
     table.cell(dash, 0, 2, "Created E/W/SFP/A", text_color=color.white)
@@ -275,5 +283,5 @@ if showDash and barstate.islast
     table.cell(dash, 1, 4, str.tostring(tpStepUsd), text_color=color.white)
     table.cell(dash, 0, 5, "Last", text_color=color.white)
     table.cell(dash, 1, 5, lastStatus + (na(lastLevel) ? "" : " " + str.tostring(lastLevel, format.mintick)), text_color=color.white)
-    table.cell(dash, 0, 6, "Shown", text_color=color.white)
-    table.cell(dash, 1, 6, "entries + TP/SL only", text_color=color.white)
+    table.cell(dash, 0, 6, "SL after TP1", text_color=color.white)
+    table.cell(dash, 1, 6, "TP0 +/- " + str.tostring(slAfterTp1ExtraUsd), text_color=color.white)
