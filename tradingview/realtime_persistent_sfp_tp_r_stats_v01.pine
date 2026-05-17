@@ -1,0 +1,248 @@
+//@version=6
+indicator("Realtime Persistent SFP TP-R Stats v0.1", overlay=true, max_labels_count=300)
+
+showDash=input.bool(true,"Show dashboard")
+showSignals=input.bool(true,"Show entries/TP/exit")
+structureLookback=input.int(40,"Realtime structure lookback",minval=5,maxval=300)
+impulseLookback=input.int(80,"Impulse INTO lookback",minval=10,maxval=400)
+minIntoUsd=input.float(1000,"Minimum impulse INTO level",minval=0,step=50)
+nearUsd=input.float(300,"Near existing Entry USD",minval=50,step=50)
+upgradeUsd=input.float(50,"Upgrade tolerance USD",minval=0,step=10)
+sfpBufferUsd=input.float(20,"SFP sweep buffer USD",minval=0,step=10)
+invalidateUsd=input.float(600,"Invalidation beyond level USD",minval=50,step=50)
+stopBufferUsd=input.float(20,"Stop buffer USD",minval=0,step=10)
+slAfterTp1ExtraUsd=input.float(150,"After TP1: SL beyond TP0 USD",minval=0,step=10)
+tp0R=input.float(2.0,"TP0 R",minval=0.1,step=0.1)
+tp1R=input.float(2.5,"TP1 R",minval=0.1,step=0.1)
+tp2R=input.float(3.0,"TP2 R",minval=0.1,step=0.1)
+tp3R=input.float(3.5,"TP3 R",minval=0.1,step=0.1)
+tp4R=input.float(4.0,"TP4 R",minval=0.1,step=0.1)
+
+var float[] ep=array.new<float>()
+var bool[] eh=array.new<bool>()
+var bool[] ea=array.new<bool>()
+var int ec=0
+var int sfpc=0
+var int invc=0
+var int xc=0
+var string last="None"
+var float lastp=na
+var int side=0
+var int ebar=na
+var float trE=na
+var float trSL=na
+var float trR=na
+var bool h0=false
+var bool h1=false
+var bool h2=false
+var bool h3=false
+var bool h4=false
+var int trades=0
+var int longs=0
+var int shorts=0
+var int sl0=0
+var int only0=0
+var int safe1=0
+var int ex2=0
+var int ex3=0
+var int hit4=0
+var float sumR=0.0
+
+activeEntries()=>
+    int n=0
+    if array.size(ep)>0
+        for i=0 to array.size(ep)-1
+            if array.get(ea,i)
+                n+=1
+    n
+
+nearIdx(price,isHigh)=>
+    int out=-1
+    float best=na
+    if array.size(ep)>0
+        for i=0 to array.size(ep)-1
+            if array.get(ea,i) and array.get(eh,i)==isHigh
+                d=math.abs(array.get(ep,i)-price)
+                if d<=nearUsd and (na(best) or d<best)
+                    best:=d
+                    out:=i
+    out
+
+addEntry(price,isHigh)=>
+    array.push(ep,price)
+    array.push(eh,isHigh)
+    array.push(ea,true)
+
+ph=ta.highest(high,structureLookback)[1]
+pl=ta.lowest(low,structureLookback)[1]
+il=ta.lowest(low,impulseLookback)[1]
+ih=ta.highest(high,impulseLookback)[1]
+newH=not na(ph) and high>ph
+newL=not na(pl) and low<pl
+intoH=not na(il)?high-il:na
+intoL=not na(ih)?ih-low:na
+
+if newH
+    if intoH>=minIntoUsd
+        ni=nearIdx(high,true)
+        if ni>=0
+            old=array.get(ep,ni)
+            if high>old+upgradeUsd
+                array.set(ep,ni,high)
+                last:="Entry High upgraded"
+        else
+            addEntry(high,true)
+            ec+=1
+            last:="Entry High"
+        lastp:=high
+    else
+        xc+=1
+        last:="x weak high"
+        lastp:=high
+
+if newL
+    if intoL>=minIntoUsd
+        ni=nearIdx(low,false)
+        if ni>=0
+            old=array.get(ep,ni)
+            if low<old-upgradeUsd
+                array.set(ep,ni,low)
+                last:="Entry Low upgraded"
+        else
+            addEntry(low,false)
+            ec+=1
+            last:="Entry Low"
+        lastp:=low
+    else
+        xc+=1
+        last:="x weak low"
+        lastp:=low
+
+if array.size(ep)>0
+    for i=0 to array.size(ep)-1
+        if array.get(ea,i)
+            p=array.get(ep,i)
+            isH=array.get(eh,i)
+            shortSfp=isH and high>p+sfpBufferUsd and close<p
+            longSfp=not isH and low<p-sfpBufferUsd and close>p
+            if side==0 and (shortSfp or longSfp)
+                ns=shortSfp?-1:1
+                sl=shortSfp?high+stopBufferUsd:low-stopBufferUsd
+                if math.abs(close-sl)>0
+                    side:=ns
+                    ebar:=bar_index
+                    trE:=close
+                    trSL:=sl
+                    trR:=math.abs(close-sl)
+                    h0:=false
+                    h1:=false
+                    h2:=false
+                    h3:=false
+                    h4:=false
+                    trades+=1
+                    longs+=ns==1?1:0
+                    shorts+=ns==-1?1:0
+                    sfpc+=1
+                    last:=shortSfp?"Short":"Long"
+                    lastp:=close
+                    if showSignals
+                        label.new(bar_index,close,shortSfp?"SHORT":"LONG",style=shortSfp?label.style_label_down:label.style_label_up,color=color.aqua,textcolor=color.black,size=size.tiny)
+                array.set(ea,i,false)
+
+if array.size(ep)>0
+    for i=0 to array.size(ep)-1
+        if array.get(ea,i)
+            p=array.get(ep,i)
+            isH=array.get(eh,i)
+            bad=isH?close>p+invalidateUsd:close<p-invalidateUsd
+            if bad
+                invc+=1
+                array.set(ea,i,false)
+
+if side!=0 and bar_index>ebar
+    t0=side==1?trE+trR*tp0R:trE-trR*tp0R
+    t1=side==1?trE+trR*tp1R:trE-trR*tp1R
+    t2=side==1?trE+trR*tp2R:trE-trR*tp2R
+    t3=side==1?trE+trR*tp3R:trE-trR*tp3R
+    t4=side==1?trE+trR*tp4R:trE-trR*tp4R
+    stopped=side==1?low<=trSL:high>=trSL
+    if stopped
+        pr=side==1?(trSL-trE)/trR:(trE-trSL)/trR
+        out=0.0
+        if not h0
+            sl0+=1
+            out:=-1
+        else if not h1
+            only0+=1
+            out:=0.5*tp0R-0.5
+        else if not h2
+            safe1+=1
+            out:=0.5*tp0R+0.25*tp1R+0.25*pr
+        else if not h3
+            ex2+=1
+            out:=0.5*tp0R+0.25*tp1R+0.10*tp2R+0.15*pr
+        else
+            ex3+=1
+            out:=0.5*tp0R+0.25*tp1R+0.10*tp2R+0.05*tp3R+0.10*pr
+        sumR+=out
+        safe=h1
+        if showSignals
+            label.new(bar_index,trSL,safe?"SAFE EXIT":"SL / EXIT",style=side==1?label.style_label_down:label.style_label_up,color=safe?color.yellow:color.red,textcolor=safe?color.black:color.white,size=size.tiny)
+        last:=safe?"Safe exit":"Stop exit"
+        side:=0
+    else
+        if not h0 and (side==1?high>=t0:low<=t0)
+            h0:=true
+            if showSignals
+                label.new(bar_index,t0,"TP0 2R 50%",style=side==1?label.style_label_down:label.style_label_up,color=color.yellow,textcolor=color.black,size=size.tiny)
+        if not h1 and (side==1?high>=t1:low<=t1)
+            h1:=true
+            trSL:=side==1?t0+slAfterTp1ExtraUsd:t0-slAfterTp1ExtraUsd
+            if showSignals
+                label.new(bar_index,t1,"TP1 2.5R 25% / SL->TP0+150",style=side==1?label.style_label_down:label.style_label_up,color=color.yellow,textcolor=color.black,size=size.tiny)
+        if not h2 and (side==1?high>=t2:low<=t2)
+            h2:=true
+            if showSignals
+                label.new(bar_index,t2,"TP2 3R 10%",style=side==1?label.style_label_down:label.style_label_up,color=color.yellow,textcolor=color.black,size=size.tiny)
+        if not h3 and (side==1?high>=t3:low<=t3)
+            h3:=true
+            if showSignals
+                label.new(bar_index,t3,"TP3 3.5R 5%",style=side==1?label.style_label_down:label.style_label_up,color=color.yellow,textcolor=color.black,size=size.tiny)
+        if not h4 and (side==1?high>=t4:low<=t4)
+            h4:=true
+            hit4+=1
+            out=0.5*tp0R+0.25*tp1R+0.10*tp2R+0.05*tp3R+0.10*tp4R
+            sumR+=out
+            if showSignals
+                label.new(bar_index,t4,"TP4 4R 10% / EXIT",style=side==1?label.style_label_down:label.style_label_up,color=color.yellow,textcolor=color.black,size=size.tiny)
+            last:="TP4"
+            side:=0
+
+avg=trades>0?sumR/trades:na
+var table tb=table.new(position.top_right,2,12,border_width=1)
+if showDash and barstate.islast
+    table.clear(tb,0,0,1,11)
+    table.cell(tb,0,0,"Version",text_color=color.white,bgcolor=color.black)
+    table.cell(tb,1,0,"TP-R Stats v0.1",text_color=color.white,bgcolor=color.black)
+    table.cell(tb,0,1,"Active",text_color=color.white)
+    table.cell(tb,1,1,side==1?"LONG":side==-1?"SHORT":"FLAT",text_color=color.white)
+    table.cell(tb,0,2,"Trades L/S",text_color=color.white)
+    table.cell(tb,1,2,str.tostring(trades)+" "+str.tostring(longs)+"/"+str.tostring(shorts),text_color=color.white)
+    table.cell(tb,0,3,"SL before TP0",text_color=color.white)
+    table.cell(tb,1,3,str.tostring(sl0),text_color=color.white)
+    table.cell(tb,0,4,"TP0 only",text_color=color.white)
+    table.cell(tb,1,4,str.tostring(only0),text_color=color.white)
+    table.cell(tb,0,5,"TP1 safe exit",text_color=color.white)
+    table.cell(tb,1,5,str.tostring(safe1),text_color=color.white)
+    table.cell(tb,0,6,"TP2 / TP3 / TP4",text_color=color.white)
+    table.cell(tb,1,6,str.tostring(ex2)+" / "+str.tostring(ex3)+" / "+str.tostring(hit4),text_color=color.white)
+    table.cell(tb,0,7,"Est R / Avg",text_color=color.white)
+    table.cell(tb,1,7,str.tostring(sumR,"#.##")+" / "+(na(avg)?"na":str.tostring(avg,"#.##")),text_color=color.white)
+    table.cell(tb,0,8,"Entries/SFP",text_color=color.white)
+    table.cell(tb,1,8,str.tostring(ec)+"/"+str.tostring(sfpc),text_color=color.white)
+    table.cell(tb,0,9,"Active entries",text_color=color.white)
+    table.cell(tb,1,9,str.tostring(activeEntries()),text_color=color.white)
+    table.cell(tb,0,10,"R levels",text_color=color.white)
+    table.cell(tb,1,10,str.tostring(tp0R)+"/"+str.tostring(tp1R)+"/"+str.tostring(tp2R)+"/"+str.tostring(tp3R)+"/"+str.tostring(tp4R),text_color=color.white)
+    table.cell(tb,0,11,"Last",text_color=color.white)
+    table.cell(tb,1,11,last+(na(lastp)?"":" "+str.tostring(lastp,format.mintick)),text_color=color.white)
