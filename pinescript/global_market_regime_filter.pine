@@ -76,8 +76,9 @@ f_regime() =>
     touchUpper = high >= upperEdge
     touchLower = low <= lowerEdge
 
-    upperTouches = ta.sum(touchUpper ? 1 : 0, rangeLen)
-    lowerTouches = ta.sum(touchLower ? 1 : 0, rangeLen)
+    // Compatibility replacement for ta.sum(): count touches through SMA * length.
+    upperTouches = ta.sma(touchUpper ? 1.0 : 0.0, rangeLen) * rangeLen
+    lowerTouches = ta.sma(touchLower ? 1.0 : 0.0, rangeLen) * rangeLen
 
     confirmedRange = rangeBigEnough and upperTouches >= minTouches and lowerTouches >= minTouches and not trendUp and not trendDown
     chop = not rangeBigEnough
@@ -119,4 +120,4 @@ if barstate.islast
     table.cell(t, 0, 4, "4H range size", text_color=color.white, bgcolor=color.black)
     table.cell(t, 1, 4, str.tostring(mainRange, "#"), text_color=color.white, bgcolor=color.black)
     table.cell(t, 0, 5, "Touches U / L", text_color=color.white, bgcolor=color.black)
-    table.cell(t, 1, 5, str.tostring(mainUpperTouches) + " / " + str.tostring(mainLowerTouches), text_color=color.white, bgcolor=color.black)
+    table.cell(t, 1, 5, str.tostring(math.round(mainUpperTouches)) + " / " + str.tostring(math.round(mainLowerTouches)), text_color=color.white, bgcolor=color.black)
