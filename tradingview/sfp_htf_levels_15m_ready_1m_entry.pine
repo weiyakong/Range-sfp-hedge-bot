@@ -1,0 +1,282 @@
+//@version=6
+strategy("SFP HTF Levels + 15m Ready + 1m Entry", overlay=true, pyramiding=0, calc_on_every_tick=true, process_orders_on_close=false, max_labels_count=500)
+
+// Architecture:
+// Source TF for levels/pivots: 1H, 4H, D/W/M.
+// Readiness TF: 15m.
+// Execution TF: current chart, expected 1m.
+// SL: current execution wick +/- buffer.
+// No candle-close confirmation for SFP entry.
+
+mode = input.string("A", "Management Mode", options=["A", "B", "C"])
+
+// HTF levels
+swing1h = input.int(20, "1H swing length", minval=3)
+swing4h = input.int(20, "4H swing length", minval=3)
+use1h = input.bool(true, "Use 1H pivots")
+use4h = input.bool(true, "Use 4H pivots")
+useDwm = input.bool(true, "Use D/W/M levels")
+
+// 15m readiness
+swing15 = input.int(20, "15m readiness swing length", minval=3)
+eqUsd = input.float(100, "15m EQH/EQL threshold USD", minval=1)
+use15Ready = input.bool(true, "Use 15m readiness")
+
+// Entry / confluence
+nearUsd = input.float(150, "Confluence proximity USD", minval=1)
+minConfShort = input.int(1, "Short min confluence", minval=1, maxval=8)
+minConfLong = input.int(1, "Long min confluence", minval=1, maxval=8)
+minSweepUsd = input.float(50, "Min sweep distance USD", minval=0)
+allowSrFlipTouch = input.bool(true, "Allow S/R flip touch entry")
+
+// Risk / TP
+slBuffer = input.float(100, "SL buffer beyond 1m wick USD", minval=0)
+tpStep = input.float(300, "TP step after TP0 USD", minval=1)
+slLock = input.float(150, "SL lock after TP USD", minval=0)
+feeTaker = input.float(0.10, "Taker one-way fee %", step=0.001)
+feeMaker = input.float(0.036, "Maker one-way fee %", step=0.001)
+useTakerTaker = input.bool(true, "Chart uses taker+taker")
+showTable = input.bool(true, "Show table")
+
+feePct = useTakerTaker ? feeTaker * 2 : feeTaker + feeMaker
+feePrice(p) => p * feePct / 100
+near(a, b) => not na(a) and not na(b) and math.abs(a - b) <= nearUsd
+px = close
+
+//==================== 1H / 4H HTF PIVOTS ====================
+ph1hRaw = request.security(syminfo.tickerid, "60", ta.pivothigh(high, swing1h, swing1h), lookahead=barmerge.lookahead_off)
+pl1hRaw = request.security(syminfo.tickerid, "60", ta.pivotlow(low, swing1h, swing1h), lookahead=barmerge.lookahead_off)
+ph4hRaw = request.security(syminfo.tickerid, "240", ta.pivothigh(high, swing4h, swing4h), lookahead=barmerge.lookahead_off)
+pl4hRaw = request.security(syminfo.tickerid, "240", ta.pivotlow(low, swing4h, swing4h), lookahead=barmerge.lookahead_off)
+
+h1 = use1h ? ta.valuewhen(not na(ph1hRaw), ph1hRaw, 0) : na
+l1 = use1h ? ta.valuewhen(not na(pl1hRaw), pl1hRaw, 0) : na
+h4 = use4h ? ta.valuewhen(not na(ph4hRaw), ph4hRaw, 0) : na
+l4 = use4h ? ta.valuewhen(not na(pl4hRaw), pl4hRaw, 0) : na
+
+//==================== D/W/M MAJOR LEVELS ====================
+pdh = useDwm ? request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_off) : na
+pdl = useDwm ? request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_off) : na
+pwh = useDwm ? request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_off) : na
+pwl = useDwm ? request.security(syminfo.tickerid, "W", low[1], lookahead=barmerge.lookahead_off) : na
+pmh = useDwm ? request.security(syminfo.tickerid, "M", high[1], lookahead=barmerge.lookahead_off) : na
+pml = useDwm ? request.security(syminfo.tickerid, "M", low[1], lookahead=barmerge.lookahead_off) : na
+
+//==================== 15M READINESS ONLY ====================
+ph15 = request.security(syminfo.tickerid, "15", ta.pivothigh(high, swing15, swing15), lookahead=barmerge.lookahead_off)
+pl15 = request.security(syminfo.tickerid, "15", ta.pivotlow(low, swing15, swing15), lookahead=barmerge.lookahead_off)
+h15 = ta.valuewhen(not na(ph15), ph15, 0)
+h15p = ta.valuewhen(not na(ph15), ph15, 1)
+l15 = ta.valuewhen(not na(pl15), pl15, 0)
+l15p = ta.valuewhen(not na(pl15), pl15, 1)
+eqh15 = use15Ready and not na(h15) and not na(h15p) and math.abs(h15 - h15p) <= eqUsd ? math.avg(h15, h15p) : na
+eql15 = use15Ready and not na(l15) and not na(l15p) and math.abs(l15 - l15p) <= eqUsd ? math.avg(l15, l15p) : na
+
+// 15m readiness = price is near a local 15m liquidity/readiness area.
+readyShort = not use15Ready or near(px, h15) or near(px, eqh15)
+readyLong = not use15Ready or near(px, l15) or near(px, eql15)
+
+//==================== S/R FLIP FROM HTF PIVOTS ONLY ====================
+var float brokenSupport = na
+var float brokenResistance = na
+
+if not na(l1) and px < l1
+    brokenSupport := l1
+if not na(l4) and px < l4
+    brokenSupport := l4
+if not na(h1) and px > h1
+    brokenResistance := h1
+if not na(h4) and px > h4
+    brokenResistance := h4
+
+//==================== INSTANT 1M ENTRY LOGIC ====================
+// No close-confirmation. On realtime 1m chart, px is current price.
+shortSweep(x) => not na(x) and high >= x + minSweepUsd and px < x
+longSweep(x) => not na(x) and low <= x - minSweepUsd and px > x
+shortTouchFlip(x) => allowSrFlipTouch and not na(x) and high >= x and px < x
+longTouchFlip(x) => allowSrFlipTouch and not na(x) and low <= x and px > x
+
+shortLvl = shortSweep(pmh) ? pmh : shortSweep(pwh) ? pwh : shortSweep(pdh) ? pdh : shortSweep(h4) ? h4 : shortSweep(h1) ? h1 : shortTouchFlip(brokenSupport) ? brokenSupport : na
+longLvl = longSweep(pml) ? pml : longSweep(pwl) ? pwl : longSweep(pdl) ? pdl : longSweep(l4) ? l4 : longSweep(l1) ? l1 : longTouchFlip(brokenResistance) ? brokenResistance : na
+
+confShort(x) =>
+    int c = 0
+    c += near(x, h1) ? 1 : 0
+    c += near(x, h4) ? 1 : 0
+    c += near(x, pdh) ? 1 : 0
+    c += near(x, pwh) ? 1 : 0
+    c += near(x, pmh) ? 1 : 0
+    c += near(x, eqh15) ? 1 : 0
+    c += near(x, brokenSupport) ? 1 : 0
+    c
+
+confLong(x) =>
+    int c = 0
+    c += near(x, l1) ? 1 : 0
+    c += near(x, l4) ? 1 : 0
+    c += near(x, pdl) ? 1 : 0
+    c += near(x, pwl) ? 1 : 0
+    c += near(x, pml) ? 1 : 0
+    c += near(x, eql15) ? 1 : 0
+    c += near(x, brokenResistance) ? 1 : 0
+    c
+
+sc = not na(shortLvl) ? confShort(shortLvl) : 0
+lc = not na(longLvl) ? confLong(longLvl) : 0
+
+//==================== TRADE STATE ====================
+var int dir = 0
+var float ep = na
+var float sl = na
+var float r = na
+var float tp0 = na
+var float tp1 = na
+var float tp2 = na
+var float tp3 = na
+var float tp4 = na
+var float tp5 = na
+var bool got0 = false
+var bool got1 = false
+var bool got2 = false
+var bool got3 = false
+var bool got4 = false
+var bool got5 = false
+
+if strategy.position_size == 0 and dir != 0
+    dir := 0
+    ep := na
+    sl := na
+    r := na
+    tp0 := na
+    tp1 := na
+    tp2 := na
+    tp3 := na
+    tp4 := na
+    tp5 := na
+    got0 := false
+    got1 := false
+    got2 := false
+    got3 := false
+    got4 := false
+    got5 := false
+
+shortR = high + slBuffer - px + feePrice(px)
+longR = px - (low - slBuffer) + feePrice(px)
+shortOk = strategy.position_size == 0 and readyShort and not na(shortLvl) and sc >= minConfShort and shortR > 0
+longOk = strategy.position_size == 0 and readyLong and not na(longLvl) and lc >= minConfLong and longR > 0
+
+if shortOk
+    dir := -1
+    ep := px
+    sl := high + slBuffer
+    r := shortR
+    tp0 := ep - 2 * r
+    tp1 := tp0 - tpStep
+    tp2 := tp0 - 2 * tpStep
+    tp3 := tp0 - 3 * tpStep
+    tp4 := tp0 - 4 * tpStep
+    tp5 := tp0 - 5 * tpStep
+    strategy.entry("S", strategy.short)
+    label.new(bar_index, high, "S 1m entry\nHTF conf " + str.tostring(sc), style=label.style_label_down, color=color.red, textcolor=color.white)
+
+if longOk
+    dir := 1
+    ep := px
+    sl := low - slBuffer
+    r := longR
+    tp0 := ep + 2 * r
+    tp1 := tp0 + tpStep
+    tp2 := tp0 + 2 * tpStep
+    tp3 := tp0 + 3 * tpStep
+    tp4 := tp0 + 4 * tpStep
+    tp5 := tp0 + 5 * tpStep
+    strategy.entry("L", strategy.long)
+    label.new(bar_index, low, "L 1m entry\nHTF conf " + str.tostring(lc), style=label.style_label_up, color=color.green, textcolor=color.white)
+
+//==================== MANAGEMENT A/B/C ====================
+if dir == -1 and strategy.position_size < 0
+    got0 := got0 or low <= tp0
+    got1 := got1 or low <= tp1
+    got2 := got2 or low <= tp2
+    got3 := got3 or low <= tp3
+    got4 := got4 or low <= tp4
+    got5 := got5 or low <= tp5
+    if mode == "C" and got0 and not got1
+        sl := math.min(sl, ep)
+    if got1
+        sl := math.min(sl, tp0 - slLock)
+    if mode == "B" and got2
+        sl := math.min(sl, tp1 - slLock)
+    if mode == "B" and got3
+        sl := math.min(sl, tp2 - slLock)
+    if mode == "B" and got4
+        sl := math.min(sl, tp3 - slLock)
+    if mode == "B" and got5
+        sl := math.min(sl, tp4 - slLock)
+    strategy.exit("S0", "S", qty_percent=50, limit=tp0, stop=sl)
+    strategy.exit("S1", "S", qty_percent=10, limit=tp1, stop=sl)
+    strategy.exit("S2", "S", qty_percent=10, limit=tp2, stop=sl)
+    strategy.exit("S3", "S", qty_percent=10, limit=tp3, stop=sl)
+    strategy.exit("S4", "S", qty_percent=10, limit=tp4, stop=sl)
+    strategy.exit("S5", "S", qty_percent=10, limit=tp5, stop=sl)
+
+if dir == 1 and strategy.position_size > 0
+    got0 := got0 or high >= tp0
+    got1 := got1 or high >= tp1
+    got2 := got2 or high >= tp2
+    got3 := got3 or high >= tp3
+    got4 := got4 or high >= tp4
+    got5 := got5 or high >= tp5
+    if mode == "C" and got0 and not got1
+        sl := math.max(sl, ep)
+    if got1
+        sl := math.max(sl, tp0 + slLock)
+    if mode == "B" and got2
+        sl := math.max(sl, tp1 + slLock)
+    if mode == "B" and got3
+        sl := math.max(sl, tp2 + slLock)
+    if mode == "B" and got4
+        sl := math.max(sl, tp3 + slLock)
+    if mode == "B" and got5
+        sl := math.max(sl, tp4 + slLock)
+    strategy.exit("L0", "L", qty_percent=50, limit=tp0, stop=sl)
+    strategy.exit("L1", "L", qty_percent=10, limit=tp1, stop=sl)
+    strategy.exit("L2", "L", qty_percent=10, limit=tp2, stop=sl)
+    strategy.exit("L3", "L", qty_percent=10, limit=tp3, stop=sl)
+    strategy.exit("L4", "L", qty_percent=10, limit=tp4, stop=sl)
+    strategy.exit("L5", "L", qty_percent=10, limit=tp5, stop=sl)
+
+//==================== VISUALS ====================
+plot(h1, "1H High Pivot", color=color.new(color.red, 25))
+plot(l1, "1H Low Pivot", color=color.new(color.green, 25))
+plot(h4, "4H High Pivot", color=color.new(color.red, 0), linewidth=2)
+plot(l4, "4H Low Pivot", color=color.new(color.green, 0), linewidth=2)
+plot(pdh, "PDH", color=color.new(color.blue, 40))
+plot(pdl, "PDL", color=color.new(color.blue, 40))
+plot(pwh, "PWH", color=color.new(color.purple, 35))
+plot(pwl, "PWL", color=color.new(color.purple, 35))
+plot(pmh, "PMH", color=color.new(color.orange, 35))
+plot(pml, "PML", color=color.new(color.orange, 35))
+plot(eqh15, "15m EQH readiness", color=color.new(color.red, 55))
+plot(eql15, "15m EQL readiness", color=color.new(color.green, 55))
+plot(brokenSupport, "HTF broken support -> resistance", color=color.new(color.red, 40))
+plot(brokenResistance, "HTF broken resistance -> support", color=color.new(color.green, 40))
+plot(strategy.position_size != 0 ? sl : na, "1m Wick SL", color=color.red, linewidth=2, style=plot.style_linebr)
+plot(strategy.position_size != 0 ? tp0 : na, "TP0", color=color.green, linewidth=2, style=plot.style_linebr)
+
+var table tb = table.new(position.top_right, 2, 7, border_width=1)
+if showTable and barstate.islast
+    table.cell(tb, 0, 0, "Architecture")
+    table.cell(tb, 1, 0, "HTF levels / 1m entry")
+    table.cell(tb, 0, 1, "Mode")
+    table.cell(tb, 1, 1, mode)
+    table.cell(tb, 0, 2, "Short conf")
+    table.cell(tb, 1, 2, str.tostring(sc))
+    table.cell(tb, 0, 3, "Long conf")
+    table.cell(tb, 1, 3, str.tostring(lc))
+    table.cell(tb, 0, 4, "Ready S/L")
+    table.cell(tb, 1, 4, str.tostring(readyShort) + " / " + str.tostring(readyLong))
+    table.cell(tb, 0, 5, "minSweep")
+    table.cell(tb, 1, 5, str.tostring(minSweepUsd))
+    table.cell(tb, 0, 6, "Run on")
+    table.cell(tb, 1, 6, "1m chart")
