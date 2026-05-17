@@ -1,8 +1,9 @@
 //@version=6
-indicator("Realtime Persistent SFP TP-USD Stats v0.1", overlay=true, max_labels_count=300)
+indicator("Realtime Persistent SFP TP-USD LTF Stats v0.2", overlay=true, max_labels_count=300)
 
 showDash=input.bool(true,"Show dashboard")
 showSignals=input.bool(true,"Show entries/TP/exit")
+ltf=input.timeframe("1","Lower TF for instant SFP")
 structureLookback=input.int(40,"Realtime structure lookback",minval=5,maxval=300)
 impulseLookback=input.int(80,"Impulse INTO lookback",minval=10,maxval=400)
 minIntoUsd=input.float(1000,"Minimum impulse INTO level",minval=0,step=50)
@@ -79,6 +80,9 @@ newL=not na(pl) and low<pl
 intoH=not na(il)?high-il:na
 intoL=not na(ih)?ih-low:na
 
+ltfHigh=request.security_lower_tf(syminfo.tickerid,ltf,high)
+ltfLow=request.security_lower_tf(syminfo.tickerid,ltf,low)
+
 if newH
     if intoH>=minIntoUsd
         ni=nearIdx(high,true)
@@ -117,20 +121,42 @@ if newL
 
 if array.size(ep)>0
     for i=0 to array.size(ep)-1
-        if array.get(ea,i)
+        if array.get(ea,i) and side==0
             p=array.get(ep,i)
             isH=array.get(eh,i)
-            shortSfp=isH and high>p+sfpBufferUsd and close<p
-            longSfp=not isH and low<p-sfpBufferUsd and close>p
-            if side==0 and (shortSfp or longSfp)
+            bool trig=false
+            bool swept=false
+            float sweepExtreme=na
+            n=array.size(ltfHigh)
+            if n>0
+                for j=0 to n-1
+                    lh=array.get(ltfHigh,j)
+                    ll=array.get(ltfLow,j)
+                    if isH
+                        if lh>p+sfpBufferUsd
+                            swept:=true
+                            sweepExtreme:=na(sweepExtreme)?lh:math.max(sweepExtreme,lh)
+                        if swept and ll<p
+                            trig:=true
+                            break
+                    else
+                        if ll<p-sfpBufferUsd
+                            swept:=true
+                            sweepExtreme:=na(sweepExtreme)?ll:math.min(sweepExtreme,ll)
+                        if swept and lh>p
+                            trig:=true
+                            break
+            shortSfp=isH and trig
+            longSfp=not isH and trig
+            if shortSfp or longSfp
                 ns=shortSfp?-1:1
-                sl=shortSfp?high+stopBufferUsd:low-stopBufferUsd
-                if math.abs(close-sl)>0
+                sl=shortSfp?sweepExtreme+stopBufferUsd:sweepExtreme-stopBufferUsd
+                if math.abs(p-sl)>0
                     side:=ns
                     ebar:=bar_index
-                    trE:=close
+                    trE:=p
                     trSL:=sl
-                    trR:=math.abs(close-sl)
+                    trR:=math.abs(p-sl)
                     h0:=false
                     h1:=false
                     h2:=false
@@ -140,10 +166,10 @@ if array.size(ep)>0
                     longs+=ns==1?1:0
                     shorts+=ns==-1?1:0
                     sfpc+=1
-                    last:=shortSfp?"Short":"Long"
-                    lastp:=close
+                    last:=shortSfp?"LTF Short":"LTF Long"
+                    lastp:=p
                     if showSignals
-                        label.new(bar_index,close,shortSfp?"SHORT":"LONG",style=shortSfp?label.style_label_down:label.style_label_up,color=color.aqua,textcolor=color.black,size=size.tiny)
+                        label.new(bar_index,p,shortSfp?"LTF SHORT":"LTF LONG",style=shortSfp?label.style_label_down:label.style_label_up,color=color.aqua,textcolor=color.black,size=size.tiny)
                 array.set(ea,i,false)
 
 if array.size(ep)>0
@@ -224,7 +250,7 @@ var table tb=table.new(position.top_right,2,12,border_width=1)
 if showDash and barstate.islast
     table.clear(tb,0,0,1,11)
     table.cell(tb,0,0,"Version",text_color=color.white,bgcolor=color.black)
-    table.cell(tb,1,0,"TP-USD Stats v0.1",text_color=color.white,bgcolor=color.black)
+    table.cell(tb,1,0,"TP-USD LTF Stats v0.2",text_color=color.white,bgcolor=color.black)
     table.cell(tb,0,1,"Active",text_color=color.white)
     table.cell(tb,1,1,side==1?"LONG":side==-1?"SHORT":"FLAT",text_color=color.white)
     table.cell(tb,0,2,"Trades L/S",text_color=color.white)
@@ -243,7 +269,7 @@ if showDash and barstate.islast
     table.cell(tb,1,8,str.tostring(ec)+"/"+str.tostring(sfpc),text_color=color.white)
     table.cell(tb,0,9,"Active entries",text_color=color.white)
     table.cell(tb,1,9,str.tostring(activeEntries()),text_color=color.white)
-    table.cell(tb,0,10,"TP step",text_color=color.white)
-    table.cell(tb,1,10,str.tostring(tpStepUsd),text_color=color.white)
+    table.cell(tb,0,10,"LTF / TP step",text_color=color.white)
+    table.cell(tb,1,10,ltf+" / "+str.tostring(tpStepUsd),text_color=color.white)
     table.cell(tb,0,11,"Last",text_color=color.white)
     table.cell(tb,1,11,last+(na(lastp)?"":" "+str.tostring(lastp,format.mintick)),text_color=color.white)
