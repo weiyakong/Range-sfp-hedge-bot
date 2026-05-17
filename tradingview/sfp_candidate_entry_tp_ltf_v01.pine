@@ -19,6 +19,7 @@ stopBufferUsd=input.float(20.0,"Stop behind sweep USD",minval=0,step=10)
 slAfterTp1ExtraUsd=input.float(150.0,"After TP1: SL beyond TP0 USD",minval=0,step=10)
 
 useImpulseFilter=input.bool(true,"Use impulse filter")
+pauseEntriesDuringImpulse=input.bool(true,"Pause entries during impulse")
 impulseAtrLen=input.int(14,"Impulse ATR length",minval=1)
 impulseBodyAtr=input.float(1.2,"Impulse body ATR multiplier",minval=0.1,step=0.1)
 impulseClosePortion=input.float(0.25,"Impulse close near extreme portion",minval=0.05,maxval=0.45,step=0.05)
@@ -87,6 +88,7 @@ var int tp2ExitN=0
 var int tp3ExitN=0
 var int tp4N=0
 var int profitableN=0
+var int pausedImpulseN=0
 var float estR=0.0
 var string lastStatus="None"
 var string lastSource=""
@@ -222,7 +224,8 @@ if array.size(candPrice)>0
                             trigTime:=lt
                             break
             cleanBreak=ch?close>cp+cleanBreakUsdBuffer:close<cp-cleanBreakUsdBuffer
-            if trig and side==0
+            pauseEntry=pauseEntriesDuringImpulse and impulseMode!=0
+            if trig and side==0 and not pauseEntry
                 ns=ch?-1:1
                 sl=ch?sweepExtreme+stopBufferUsd:sweepExtreme-stopBufferUsd
                 if math.abs(cp-sl)>0
@@ -243,7 +246,12 @@ if array.size(candPrice)>0
                     if showEntries
                         label.new(na(trigTime)?time:trigTime,cp,ch?"SHORT":"LONG",xloc=xloc.bar_time,style=ch?label.style_label_down:label.style_label_up,color=color.aqua,textcolor=color.black,size=size.tiny)
                 retireCandidate(i)
-            else if cleanBreak and not trig
+            else if trig and side==0 and pauseEntry
+                pausedImpulseN+=1
+                lastStatus:="Entry paused by impulse"
+                lastSource:=sourceShort(cs)
+                lastPrice:=cp
+            else if cleanBreak
                 lastStatus:=ch?"Candidate High broken":"Candidate Low broken"
                 lastSource:=sourceShort(cs)
                 lastPrice:=cp
@@ -318,10 +326,10 @@ if side!=0 and bar_index>entryBar
             side:=0
 
 avgR=tradesN>0?estR/tradesN:na
-impulseText=impulseMode==-1?"Bearish impulse":impulseMode==1?"Bullish impulse":"Normal"
-var table dash=table.new(position.top_right,2,13,border_width=1)
+impulseText=pauseEntriesDuringImpulse and impulseMode!=0?"PAUSE ENTRY":impulseMode==-1?"Bearish impulse":impulseMode==1?"Bullish impulse":"Normal"
+var table dash=table.new(position.top_right,2,14,border_width=1)
 if showDashboard and barstate.islast
-    table.clear(dash,0,0,1,12)
+    table.clear(dash,0,0,1,13)
     table.cell(dash,0,0,"Version",text_color=color.white,bgcolor=color.black)
     table.cell(dash,1,0,"Candidate Entry TP LTF v0.3",text_color=color.white,bgcolor=color.black)
     table.cell(dash,0,1,"Use",text_color=color.white)
@@ -342,9 +350,11 @@ if showDashboard and barstate.islast
     table.cell(dash,1,8,str.tostring(tp2ExitN)+" / "+str.tostring(tp3ExitN)+" / "+str.tostring(tp4N),text_color=color.white)
     table.cell(dash,0,9,"Est R / Avg",text_color=color.white)
     table.cell(dash,1,9,str.tostring(estR,"#.##")+" / "+(na(avgR)?"na":str.tostring(avgR,"#.##")),text_color=color.white)
-    table.cell(dash,0,10,"TP",text_color=color.white)
-    table.cell(dash,1,10,"2R then +300",text_color=color.white)
-    table.cell(dash,0,11,"Last",text_color=color.white)
-    table.cell(dash,1,11,lastStatus+" "+(na(lastPrice)?"":str.tostring(lastPrice,format.mintick)),text_color=color.white)
-    table.cell(dash,0,12,"Note",text_color=color.white)
-    table.cell(dash,1,12,"Entry label at 1m trigger time",text_color=color.white)
+    table.cell(dash,0,10,"Paused by impulse",text_color=color.white)
+    table.cell(dash,1,10,str.tostring(pausedImpulseN),text_color=color.white)
+    table.cell(dash,0,11,"TP",text_color=color.white)
+    table.cell(dash,1,11,"2R then +300",text_color=color.white)
+    table.cell(dash,0,12,"Last",text_color=color.white)
+    table.cell(dash,1,12,lastStatus+" "+(na(lastPrice)?"":str.tostring(lastPrice,format.mintick)),text_color=color.white)
+    table.cell(dash,0,13,"Note",text_color=color.white)
+    table.cell(dash,1,13,"Entry label at 1m trigger time",text_color=color.white)
