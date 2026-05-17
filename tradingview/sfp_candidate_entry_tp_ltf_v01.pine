@@ -1,0 +1,306 @@
+//@version=6
+indicator("SFP Candidate Entry TP LTF v0.1", overlay=true, max_lines_count=500, max_labels_count=300)
+
+showDashboard=input.bool(true,"Show dashboard")
+showCandidates=input.bool(true,"Show candidates")
+showEntries=input.bool(true,"Show entries/TP/SL")
+ltf=input.timeframe("1","Lower TF for rejection entry")
+
+useCurrentTfSwings=input.bool(true,"Use current TF swings")
+use1HSwings=input.bool(true,"Use 1H swings")
+use4HSwings=input.bool(true,"Use 4H swings")
+currentTfPivotLen=input.int(5,"Current TF pivot length",minval=2,maxval=40)
+htfPivotLen=input.int(3,"HTF pivot length",minval=2,maxval=20)
+minMoveUsd=input.float(700.0,"Minimum move to become Candidate",minval=0,step=50)
+mergeUsd=input.float(120.0,"Merge nearby Candidate USD",minval=0,step=10)
+cleanBreakUsdBuffer=input.float(120.0,"Clean break buffer USD",minval=0,step=10)
+sfpBufferUsd=input.float(20.0,"SFP sweep buffer USD",minval=0,step=10)
+stopBufferUsd=input.float(20.0,"Stop behind sweep USD",minval=0,step=10)
+slAfterTp1ExtraUsd=input.float(150.0,"After TP1: SL beyond TP0 USD",minval=0,step=10)
+
+useImpulseFilter=input.bool(true,"Use impulse filter")
+impulseAtrLen=input.int(14,"Impulse ATR length",minval=1)
+impulseBodyAtr=input.float(1.2,"Impulse body ATR multiplier",minval=0.1,step=0.1)
+impulseClosePortion=input.float(0.25,"Impulse close near extreme portion",minval=0.05,maxval=0.45,step=0.05)
+impulseBarsHold=input.int(6,"Impulse mode minimum bars",minval=1,maxval=50)
+exhaustionWickPortion=input.float(0.45,"Exhaustion wick portion",minval=0.1,maxval=0.8,step=0.05)
+
+maxRawSwings=input.int(160,"Max raw swings stored",minval=20,maxval=400)
+maxCandidates=input.int(120,"Max Candidate levels stored",minval=20,maxval=300)
+
+tp0R=input.float(2.0,"TP0 R",minval=0.1,step=0.1)
+tpStepUsd=input.float(300.0,"TP step USD",minval=50,step=50)
+
+atrImpulse=ta.atr(impulseAtrLen)
+barRange=high-low
+body=math.abs(close-open)
+lowerWick=math.min(open,close)-low
+upperWick=high-math.max(open,close)
+bearImpulseBar=useImpulseFilter and not na(atrImpulse) and close<open and body>=atrImpulse*impulseBodyAtr and barRange>0 and (close-low)<=barRange*impulseClosePortion
+bullImpulseBar=useImpulseFilter and not na(atrImpulse) and close>open and body>=atrImpulse*impulseBodyAtr and barRange>0 and (high-close)<=barRange*impulseClosePortion
+bearExhaustion=barRange>0 and lowerWick>=barRange*exhaustionWickPortion and close>low+barRange*0.45
+bullExhaustion=barRange>0 and upperWick>=barRange*exhaustionWickPortion and close<high-barRange*0.45
+
+var int impulseMode=0
+var int impulseStartedBar=na
+if bearImpulseBar
+    impulseMode:=-1
+    impulseStartedBar:=bar_index
+else if bullImpulseBar
+    impulseMode:=1
+    impulseStartedBar:=bar_index
+else if impulseMode==-1 and not na(impulseStartedBar) and bar_index-impulseStartedBar>=impulseBarsHold and bearExhaustion
+    impulseMode:=0
+    impulseStartedBar:=na
+else if impulseMode==1 and not na(impulseStartedBar) and bar_index-impulseStartedBar>=impulseBarsHold and bullExhaustion
+    impulseMode:=0
+    impulseStartedBar:=na
+
+var float[] rawPrice=array.new<float>()
+var bool[] rawIsHigh=array.new<bool>()
+var string[] rawSource=array.new<string>()
+var bool[] rawActive=array.new<bool>()
+var int[] rawBar=array.new<int>()
+
+var float[] candPrice=array.new<float>()
+var bool[] candIsHigh=array.new<bool>()
+var string[] candSource=array.new<string>()
+var bool[] candActive=array.new<bool>()
+var int[] candOriginBar=array.new<int>()
+var line[] candLine=array.new<line>()
+
+var int side=0
+var int entryBar=na
+var float trEntry=na
+var float trStop=na
+var float trRisk=na
+var bool tp0Hit=false
+var bool tp1Hit=false
+var bool tp2Hit=false
+var bool tp3Hit=false
+var bool tp4Hit=false
+
+var int candidatesN=0
+var int tradesN=0
+var int slN=0
+var int safeExitN=0
+var int tp4N=0
+var string lastStatus="None"
+var string lastSource=""
+var float lastPrice=na
+
+sourceShort(src)=>str.contains(src,"current")?"15m/current":str.contains(src,"1H")?"1H":str.contains(src,"4H")?"4H":src
+levelColor(isHigh,active)=>active?(isHigh?color.rgb(255,80,130):color.lime):color.new(isHigh?color.rgb(255,80,130):color.lime,84)
+rawMove(price,isHigh)=>isHigh?price-low:high-price
+counterTrendBlocked(isHigh)=>(impulseMode==-1 and not isHigh) or (impulseMode==1 and isHigh)
+
+hasDuplicateCandidate(price,isHigh)=>
+    bool duplicate=false
+    if array.size(candPrice)>0
+        for i=0 to array.size(candPrice)-1
+            duplicate:=duplicate or (array.get(candActive,i) and array.get(candIsHigh,i)==isHigh and math.abs(array.get(candPrice,i)-price)<=mergeUsd)
+    duplicate
+
+addRawSwing(price,isHigh,src,originBar)=>
+    if not na(price) and not counterTrendBlocked(isHigh)
+        array.push(rawPrice,price)
+        array.push(rawIsHigh,isHigh)
+        array.push(rawSource,src)
+        array.push(rawActive,true)
+        array.push(rawBar,originBar)
+        if array.size(rawPrice)>maxRawSwings
+            array.shift(rawPrice),array.shift(rawIsHigh),array.shift(rawSource),array.shift(rawActive),array.shift(rawBar)
+
+addCandidate(price,isHigh,src,originBar)=>
+    bool added=false
+    if not hasDuplicateCandidate(price,isHigh)
+        ln=line.new(originBar,price,bar_index+1,price,color=levelColor(isHigh,true),width=2,extend=extend.right)
+        array.push(candPrice,price)
+        array.push(candIsHigh,isHigh)
+        array.push(candSource,src)
+        array.push(candActive,true)
+        array.push(candOriginBar,originBar)
+        array.push(candLine,ln)
+        added:=true
+        candidatesN+=1
+        if showCandidates
+            label.new(originBar,price,(isHigh?"Candidate High":"Candidate Low")+" · "+sourceShort(src),style=isHigh?label.style_label_down:label.style_label_up,color=levelColor(isHigh,true),textcolor=color.white,size=size.tiny)
+        if array.size(candPrice)>maxCandidates
+            oldLine=array.shift(candLine)
+            line.delete(oldLine)
+            array.shift(candPrice),array.shift(candIsHigh),array.shift(candSource),array.shift(candActive),array.shift(candOriginBar)
+    added
+
+retireCandidate(i)=>
+    array.set(candActive,i,false)
+    ln=array.get(candLine,i)
+    line.set_extend(ln,extend.none)
+    line.set_x2(ln,bar_index)
+    line.set_color(ln,levelColor(array.get(candIsHigh,i),false))
+    line.set_width(ln,1)
+    if not showCandidates
+        line.delete(ln)
+
+currentHigh=useCurrentTfSwings?ta.pivothigh(high,currentTfPivotLen,currentTfPivotLen):na
+currentLow=useCurrentTfSwings?ta.pivotlow(low,currentTfPivotLen,currentTfPivotLen):na
+if not na(currentHigh)
+    addRawSwing(currentHigh,true,"current TF swing high",bar_index-currentTfPivotLen)
+if not na(currentLow)
+    addRawSwing(currentLow,false,"current TF swing low",bar_index-currentTfPivotLen)
+
+htfPH(tf)=>request.security(syminfo.tickerid,tf,ta.pivothigh(high,htfPivotLen,htfPivotLen),barmerge.gaps_off,barmerge.lookahead_off)
+htfPL(tf)=>request.security(syminfo.tickerid,tf,ta.pivotlow(low,htfPivotLen,htfPivotLen),barmerge.gaps_off,barmerge.lookahead_off)
+newVal(x)=>not na(x) and na(x[1])
+p1hH=use1HSwings?htfPH("60"):na
+p1hL=use1HSwings?htfPL("60"):na
+p4hH=use4HSwings?htfPH("240"):na
+p4hL=use4HSwings?htfPL("240"):na
+if newVal(p1hH)
+    addRawSwing(p1hH,true,"1H swing high",bar_index)
+if newVal(p1hL)
+    addRawSwing(p1hL,false,"1H swing low",bar_index)
+if newVal(p4hH)
+    addRawSwing(p4hH,true,"4H swing high",bar_index)
+if newVal(p4hL)
+    addRawSwing(p4hL,false,"4H swing low",bar_index)
+
+if array.size(rawPrice)>0
+    for i=0 to array.size(rawPrice)-1
+        if array.get(rawActive,i)
+            rp=array.get(rawPrice,i)
+            rh=array.get(rawIsHigh,i)
+            rs=array.get(rawSource,i)
+            rb=array.get(rawBar,i)
+            moveSize=rawMove(rp,rh)
+            if moveSize>=minMoveUsd and not counterTrendBlocked(rh)
+                wasAdded=addCandidate(rp,rh,rs,rb)
+                array.set(rawActive,i,false)
+                if wasAdded
+                    lastStatus:=rh?"Candidate High":"Candidate Low"
+                    lastSource:=sourceShort(rs)
+                    lastPrice:=rp
+
+ltfHigh=request.security_lower_tf(syminfo.tickerid,ltf,high)
+ltfLow=request.security_lower_tf(syminfo.tickerid,ltf,low)
+
+if array.size(candPrice)>0
+    for i=0 to array.size(candPrice)-1
+        if array.get(candActive,i)
+            cp=array.get(candPrice,i)
+            ch=array.get(candIsHigh,i)
+            cs=array.get(candSource,i)
+            ln=array.get(candLine,i)
+            line.set_x2(ln,bar_index+1)
+            bool trig=false
+            bool swept=false
+            float sweepExtreme=na
+            n=array.size(ltfHigh)
+            if n>0
+                for j=0 to n-1
+                    lh=array.get(ltfHigh,j)
+                    ll=array.get(ltfLow,j)
+                    if ch
+                        if lh>cp+sfpBufferUsd
+                            swept:=true
+                            sweepExtreme:=na(sweepExtreme)?lh:math.max(sweepExtreme,lh)
+                        if swept and ll<cp
+                            trig:=true
+                            break
+                    else
+                        if ll<cp-sfpBufferUsd
+                            swept:=true
+                            sweepExtreme:=na(sweepExtreme)?ll:math.min(sweepExtreme,ll)
+                        if swept and lh>cp
+                            trig:=true
+                            break
+            cleanBreak=ch?close>cp+cleanBreakUsdBuffer:close<cp-cleanBreakUsdBuffer
+            if trig and side==0
+                ns=ch?-1:1
+                sl=ch?sweepExtreme+stopBufferUsd:sweepExtreme-stopBufferUsd
+                if math.abs(cp-sl)>0
+                    side:=ns
+                    entryBar:=bar_index
+                    trEntry:=cp
+                    trStop:=sl
+                    trRisk:=math.abs(cp-sl)
+                    tp0Hit:=false
+                    tp1Hit:=false
+                    tp2Hit:=false
+                    tp3Hit:=false
+                    tp4Hit:=false
+                    tradesN+=1
+                    lastStatus:=ch?"LTF Short entry":"LTF Long entry"
+                    lastSource:=sourceShort(cs)
+                    lastPrice:=cp
+                    if showEntries
+                        label.new(bar_index,cp,ch?"SHORT":"LONG",style=ch?label.style_label_down:label.style_label_up,color=color.aqua,textcolor=color.black,size=size.tiny)
+                retireCandidate(i)
+            else if cleanBreak and not trig
+                lastStatus:=ch?"Candidate High broken":"Candidate Low broken"
+                lastSource:=sourceShort(cs)
+                lastPrice:=cp
+                retireCandidate(i)
+
+if side!=0 and bar_index>entryBar
+    tp0=side==1?trEntry+trRisk*tp0R:trEntry-trRisk*tp0R
+    tp1=side==1?trEntry+tpStepUsd:trEntry-tpStepUsd
+    tp2=side==1?trEntry+tpStepUsd*2:trEntry-tpStepUsd*2
+    tp3=side==1?trEntry+tpStepUsd*3:trEntry-tpStepUsd*3
+    tp4=side==1?trEntry+tpStepUsd*4:trEntry-tpStepUsd*4
+    stopped=side==1?low<=trStop:high>=trStop
+    if stopped
+        safe=tp1Hit
+        if safe
+            safeExitN+=1
+        else
+            slN+=1
+        if showEntries
+            label.new(bar_index,trStop,safe?"SAFE EXIT":"SL / EXIT",style=side==1?label.style_label_down:label.style_label_up,color=safe?color.yellow:color.red,textcolor=safe?color.black:color.white,size=size.tiny)
+        lastStatus:=safe?"Safe exit":"Stop exit"
+        side:=0
+    else
+        if not tp0Hit and (side==1?high>=tp0:low<=tp0)
+            tp0Hit:=true
+            if showEntries
+                label.new(bar_index,tp0,"TP0 2R 50%",style=side==1?label.style_label_down:label.style_label_up,color=color.yellow,textcolor=color.black,size=size.tiny)
+        if not tp1Hit and (side==1?high>=tp1:low<=tp1)
+            tp1Hit:=true
+            trStop:=side==1?tp0+slAfterTp1ExtraUsd:tp0-slAfterTp1ExtraUsd
+            if showEntries
+                label.new(bar_index,tp1,"TP1 +300 15% / SL->TP0+150",style=side==1?label.style_label_down:label.style_label_up,color=color.yellow,textcolor=color.black,size=size.tiny)
+        if not tp2Hit and (side==1?high>=tp2:low<=tp2)
+            tp2Hit:=true
+            if showEntries
+                label.new(bar_index,tp2,"TP2 +600 15%",style=side==1?label.style_label_down:label.style_label_up,color=color.yellow,textcolor=color.black,size=size.tiny)
+        if not tp3Hit and (side==1?high>=tp3:low<=tp3)
+            tp3Hit:=true
+            if showEntries
+                label.new(bar_index,tp3,"TP3 +900 10%",style=side==1?label.style_label_down:label.style_label_up,color=color.yellow,textcolor=color.black,size=size.tiny)
+        if not tp4Hit and (side==1?high>=tp4:low<=tp4)
+            tp4Hit:=true
+            tp4N+=1
+            if showEntries
+                label.new(bar_index,tp4,"TP4 +1200 10% / EXIT",style=side==1?label.style_label_down:label.style_label_up,color=color.yellow,textcolor=color.black,size=size.tiny)
+            lastStatus:="TP4 exit"
+            side:=0
+
+impulseText=impulseMode==-1?"Bearish impulse":impulseMode==1?"Bullish impulse":"Normal"
+var table dash=table.new(position.top_right,2,8,border_width=1)
+if showDashboard and barstate.islast
+    table.clear(dash,0,0,1,7)
+    table.cell(dash,0,0,"Version",text_color=color.white,bgcolor=color.black)
+    table.cell(dash,1,0,"Candidate Entry TP LTF v0.1",text_color=color.white,bgcolor=color.black)
+    table.cell(dash,0,1,"Use",text_color=color.white)
+    table.cell(dash,1,1,"15m candidates / "+ltf+" entry",text_color=color.white)
+    table.cell(dash,0,2,"Impulse mode",text_color=color.white)
+    table.cell(dash,1,2,impulseText,text_color=color.white)
+    table.cell(dash,0,3,"Trade",text_color=color.white)
+    table.cell(dash,1,3,side==1?"LONG":side==-1?"SHORT":"FLAT",text_color=color.white)
+    table.cell(dash,0,4,"Candidates / trades",text_color=color.white)
+    table.cell(dash,1,4,str.tostring(candidatesN)+" / "+str.tostring(tradesN),text_color=color.white)
+    table.cell(dash,0,5,"SL / Safe / TP4",text_color=color.white)
+    table.cell(dash,1,5,str.tostring(slN)+" / "+str.tostring(safeExitN)+" / "+str.tostring(tp4N),text_color=color.white)
+    table.cell(dash,0,6,"TP",text_color=color.white)
+    table.cell(dash,1,6,"2R then +300",text_color=color.white)
+    table.cell(dash,0,7,"Last",text_color=color.white)
+    table.cell(dash,1,7,lastStatus+" "+(na(lastPrice)?"":str.tostring(lastPrice,format.mintick)),text_color=color.white)
