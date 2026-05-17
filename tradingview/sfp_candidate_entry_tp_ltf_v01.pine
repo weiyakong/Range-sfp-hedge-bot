@@ -1,5 +1,5 @@
 //@version=6
-indicator("SFP Candidate Entry TP LTF v0.1", overlay=true, max_lines_count=500, max_labels_count=300)
+indicator("SFP Candidate Entry TP LTF v0.2", overlay=true, max_lines_count=500, max_labels_count=300)
 
 showDashboard=input.bool(true,"Show dashboard")
 showCandidates=input.bool(true,"Show candidates")
@@ -82,9 +82,14 @@ var bool tp4Hit=false
 
 var int candidatesN=0
 var int tradesN=0
-var int slN=0
-var int safeExitN=0
+var int lossN=0
+var int tp0OnlyN=0
+var int safe1N=0
+var int tp2ExitN=0
+var int tp3ExitN=0
 var int tp4N=0
+var int profitableN=0
+var float estR=0.0
 var string lastStatus="None"
 var string lastSource=""
 var float lastPrice=na
@@ -122,7 +127,6 @@ addCandidate(price,isHigh,src,originBar)=>
         array.push(candOriginBar,originBar)
         array.push(candLine,ln)
         added:=true
-        candidatesN+=1
         if showCandidates
             label.new(originBar,price,(isHigh?"Candidate High":"Candidate Low")+" · "+sourceShort(src),style=isHigh?label.style_label_down:label.style_label_up,color=levelColor(isHigh,true),textcolor=color.white,size=size.tiny)
         if array.size(candPrice)>maxCandidates
@@ -176,6 +180,7 @@ if array.size(rawPrice)>0
                 wasAdded=addCandidate(rp,rh,rs,rb)
                 array.set(rawActive,i,false)
                 if wasAdded
+                    candidatesN+=1
                     lastStatus:=rh?"Candidate High":"Candidate Low"
                     lastSource:=sourceShort(rs)
                     lastPrice:=rp
@@ -247,13 +252,35 @@ if side!=0 and bar_index>entryBar
     tp2=side==1?trEntry+tpStepUsd*2:trEntry-tpStepUsd*2
     tp3=side==1?trEntry+tpStepUsd*3:trEntry-tpStepUsd*3
     tp4=side==1?trEntry+tpStepUsd*4:trEntry-tpStepUsd*4
+    r1=tpStepUsd/trRisk
+    r2=tpStepUsd*2/trRisk
+    r3=tpStepUsd*3/trRisk
+    r4=tpStepUsd*4/trRisk
     stopped=side==1?low<=trStop:high>=trStop
     if stopped
-        safe=tp1Hit
-        if safe
-            safeExitN+=1
+        protR=side==1?(trStop-trEntry)/trRisk:(trEntry-trStop)/trRisk
+        outR=0.0
+        if not tp0Hit
+            lossN+=1
+            outR:=-1.0
+        else if not tp1Hit
+            tp0OnlyN+=1
+            profitableN+=1
+            outR:=0.50*tp0R-0.50
+        else if not tp2Hit
+            safe1N+=1
+            profitableN+=1
+            outR:=0.50*tp0R+0.15*r1+0.35*protR
+        else if not tp3Hit
+            tp2ExitN+=1
+            profitableN+=1
+            outR:=0.50*tp0R+0.15*r1+0.15*r2+0.20*protR
         else
-            slN+=1
+            tp3ExitN+=1
+            profitableN+=1
+            outR:=0.50*tp0R+0.15*r1+0.15*r2+0.10*r3+0.10*protR
+        estR+=outR
+        safe=tp1Hit
         if showEntries
             label.new(bar_index,trStop,safe?"SAFE EXIT":"SL / EXIT",style=side==1?label.style_label_down:label.style_label_up,color=safe?color.yellow:color.red,textcolor=safe?color.black:color.white,size=size.tiny)
         lastStatus:=safe?"Safe exit":"Stop exit"
@@ -279,17 +306,21 @@ if side!=0 and bar_index>entryBar
         if not tp4Hit and (side==1?high>=tp4:low<=tp4)
             tp4Hit:=true
             tp4N+=1
+            profitableN+=1
+            outR=0.50*tp0R+0.15*r1+0.15*r2+0.10*r3+0.10*r4
+            estR+=outR
             if showEntries
                 label.new(bar_index,tp4,"TP4 +1200 10% / EXIT",style=side==1?label.style_label_down:label.style_label_up,color=color.yellow,textcolor=color.black,size=size.tiny)
             lastStatus:="TP4 exit"
             side:=0
 
+avgR=tradesN>0?estR/tradesN:na
 impulseText=impulseMode==-1?"Bearish impulse":impulseMode==1?"Bullish impulse":"Normal"
-var table dash=table.new(position.top_right,2,8,border_width=1)
+var table dash=table.new(position.top_right,2,13,border_width=1)
 if showDashboard and barstate.islast
-    table.clear(dash,0,0,1,7)
+    table.clear(dash,0,0,1,12)
     table.cell(dash,0,0,"Version",text_color=color.white,bgcolor=color.black)
-    table.cell(dash,1,0,"Candidate Entry TP LTF v0.1",text_color=color.white,bgcolor=color.black)
+    table.cell(dash,1,0,"Candidate Entry TP LTF v0.2",text_color=color.white,bgcolor=color.black)
     table.cell(dash,0,1,"Use",text_color=color.white)
     table.cell(dash,1,1,"15m candidates / "+ltf+" entry",text_color=color.white)
     table.cell(dash,0,2,"Impulse mode",text_color=color.white)
@@ -298,9 +329,19 @@ if showDashboard and barstate.islast
     table.cell(dash,1,3,side==1?"LONG":side==-1?"SHORT":"FLAT",text_color=color.white)
     table.cell(dash,0,4,"Candidates / trades",text_color=color.white)
     table.cell(dash,1,4,str.tostring(candidatesN)+" / "+str.tostring(tradesN),text_color=color.white)
-    table.cell(dash,0,5,"SL / Safe / TP4",text_color=color.white)
-    table.cell(dash,1,5,str.tostring(slN)+" / "+str.tostring(safeExitN)+" / "+str.tostring(tp4N),text_color=color.white)
-    table.cell(dash,0,6,"TP",text_color=color.white)
-    table.cell(dash,1,6,"2R then +300",text_color=color.white)
-    table.cell(dash,0,7,"Last",text_color=color.white)
-    table.cell(dash,1,7,lastStatus+" "+(na(lastPrice)?"":str.tostring(lastPrice,format.mintick)),text_color=color.white)
+    table.cell(dash,0,5,"Profitable / loss",text_color=color.white)
+    table.cell(dash,1,5,str.tostring(profitableN)+" / "+str.tostring(lossN),text_color=color.white)
+    table.cell(dash,0,6,"TP0 only",text_color=color.white)
+    table.cell(dash,1,6,str.tostring(tp0OnlyN),text_color=color.white)
+    table.cell(dash,0,7,"SAFE after TP1",text_color=color.white)
+    table.cell(dash,1,7,str.tostring(safe1N),text_color=color.white)
+    table.cell(dash,0,8,"TP2 / TP3 / TP4",text_color=color.white)
+    table.cell(dash,1,8,str.tostring(tp2ExitN)+" / "+str.tostring(tp3ExitN)+" / "+str.tostring(tp4N),text_color=color.white)
+    table.cell(dash,0,9,"Est R / Avg",text_color=color.white)
+    table.cell(dash,1,9,str.tostring(estR,"#.##")+" / "+(na(avgR)?"na":str.tostring(avgR,"#.##")),text_color=color.white)
+    table.cell(dash,0,10,"TP",text_color=color.white)
+    table.cell(dash,1,10,"2R then +300",text_color=color.white)
+    table.cell(dash,0,11,"Last",text_color=color.white)
+    table.cell(dash,1,11,lastStatus+" "+(na(lastPrice)?"":str.tostring(lastPrice,format.mintick)),text_color=color.white)
+    table.cell(dash,0,12,"Note",text_color=color.white)
+    table.cell(dash,1,12,"SAFE = protected / near BE",text_color=color.white)
