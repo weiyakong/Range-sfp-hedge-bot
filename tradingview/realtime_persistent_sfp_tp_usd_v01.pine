@@ -1,0 +1,288 @@
+//@version=6
+indicator("Realtime Persistent SFP TP-USD v0.3", overlay=true, max_labels_count=300)
+
+showDash = input.bool(true, "Show dashboard")
+showSfp = input.bool(true, "Show entries")
+showTp = input.bool(true, "Show TP / exit")
+
+structureLookback = input.int(40, "Realtime structure lookback", minval=5, maxval=300)
+impulseLookback = input.int(80, "Impulse INTO lookback", minval=10, maxval=400)
+minIntoUsd = input.float(1000.0, "Minimum impulse INTO level", minval=0, step=50)
+nearUsd = input.float(300.0, "Near existing Entry USD", minval=50, step=50)
+upgradeUsd = input.float(50.0, "Upgrade tolerance USD", minval=0, step=10)
+sfpBufferUsd = input.float(20.0, "SFP sweep buffer USD", minval=0, step=10)
+invalidateUsd = input.float(600.0, "Invalidation beyond level USD", minval=50, step=50)
+anchorUsd = input.float(1500.0, "Anchor impulse USD", minval=0, step=100)
+stopBufferUsd = input.float(20.0, "Stop buffer USD", minval=0, step=10)
+slAfterTp1ExtraUsd = input.float(150.0, "After TP1: SL beyond TP0 USD", minval=0, step=10)
+tp0R = input.float(2.0, "TP0 R", minval=0.1, step=0.1)
+tpStepUsd = input.float(300.0, "TP step USD", minval=50, step=50)
+
+var float[] entryP = array.new<float>()
+var bool[] entryH = array.new<bool>()
+var bool[] entryActive = array.new<bool>()
+var float[] watchP = array.new<float>()
+var bool[] watchH = array.new<bool>()
+var int[] watchB = array.new<int>()
+var bool[] watchActive = array.new<bool>()
+
+var int entryCount = 0
+var int watchCount = 0
+var int sfpCount = 0
+var int anchorCount = 0
+var int invalidEntryCount = 0
+var int invalidWatchCount = 0
+var int xCount = 0
+var string lastStatus = "None"
+var float lastLevel = na
+
+var int side = 0
+var int entryBar = na
+var float trEntry = na
+var float trStop = na
+var float trRisk = na
+var bool tp0Hit = false
+var bool tp1Hit = false
+var bool tp2Hit = false
+var bool tp3Hit = false
+var bool tp4Hit = false
+
+activeEntryCount() =>
+    int n = 0
+    if array.size(entryP) > 0
+        for i = 0 to array.size(entryP) - 1
+            if array.get(entryActive, i)
+                n += 1
+    n
+
+activeWatchCount() =>
+    int n = 0
+    if array.size(watchP) > 0
+        for i = 0 to array.size(watchP) - 1
+            if array.get(watchActive, i)
+                n += 1
+    n
+
+findNearEntry(price, isHigh) =>
+    int idx = -1
+    float best = na
+    if array.size(entryP) > 0
+        for i = 0 to array.size(entryP) - 1
+            if array.get(entryActive, i) and array.get(entryH, i) == isHigh
+                d = math.abs(array.get(entryP, i) - price)
+                if d <= nearUsd and (na(best) or d < best)
+                    best := d
+                    idx := i
+    idx
+
+addEntry(price, isHigh) =>
+    array.push(entryP, price)
+    array.push(entryH, isHigh)
+    array.push(entryActive, true)
+
+upgradeEntry(idx, price) =>
+    array.set(entryP, idx, price)
+
+addWatch(price, isHigh) =>
+    array.push(watchP, price)
+    array.push(watchH, isHigh)
+    array.push(watchB, bar_index)
+    array.push(watchActive, true)
+
+priorHigh = ta.highest(high, structureLookback)[1]
+priorLow = ta.lowest(low, structureLookback)[1]
+impulseLow = ta.lowest(low, impulseLookback)[1]
+impulseHigh = ta.highest(high, impulseLookback)[1]
+
+newRealtimeHigh = not na(priorHigh) and high > priorHigh
+newRealtimeLow = not na(priorLow) and low < priorLow
+impulseIntoHigh = not na(impulseLow) ? high - impulseLow : na
+impulseIntoLow = not na(impulseHigh) ? impulseHigh - low : na
+
+if newRealtimeHigh
+    if impulseIntoHigh >= minIntoUsd
+        idx = findNearEntry(high, true)
+        if idx >= 0
+            old = array.get(entryP, idx)
+            if high > old + upgradeUsd
+                upgradeEntry(idx, high)
+                lastStatus := "Entry High upgraded"
+            else
+                addWatch(high, true)
+                watchCount += 1
+                lastStatus := "Watch H created"
+        else
+            addEntry(high, true)
+            entryCount += 1
+            lastStatus := "Entry High created"
+        lastLevel := high
+    else
+        xCount += 1
+        lastStatus := "x weak high"
+        lastLevel := high
+
+if newRealtimeLow
+    if impulseIntoLow >= minIntoUsd
+        idx = findNearEntry(low, false)
+        if idx >= 0
+            old = array.get(entryP, idx)
+            if low < old - upgradeUsd
+                upgradeEntry(idx, low)
+                lastStatus := "Entry Low upgraded"
+            else
+                addWatch(low, false)
+                watchCount += 1
+                lastStatus := "Watch L created"
+        else
+            addEntry(low, false)
+            entryCount += 1
+            lastStatus := "Entry Low created"
+        lastLevel := low
+    else
+        xCount += 1
+        lastStatus := "x weak low"
+        lastLevel := low
+
+if array.size(entryP) > 0
+    for i = 0 to array.size(entryP) - 1
+        if array.get(entryActive, i)
+            p = array.get(entryP, i)
+            isH = array.get(entryH, i)
+            shortSfp = isH and high > p + sfpBufferUsd and close < p
+            longSfp = not isH and low < p - sfpBufferUsd and close > p
+            if side == 0 and (shortSfp or longSfp)
+                newSide = shortSfp ? -1 : 1
+                stopPrice = shortSfp ? high + stopBufferUsd : low - stopBufferUsd
+                if math.abs(close - stopPrice) > 0
+                    side := newSide
+                    entryBar := bar_index
+                    trEntry := close
+                    trStop := stopPrice
+                    trRisk := math.abs(close - stopPrice)
+                    tp0Hit := false
+                    tp1Hit := false
+                    tp2Hit := false
+                    tp3Hit := false
+                    tp4Hit := false
+                    sfpCount += 1
+                    lastStatus := shortSfp ? "Short Entry" : "Long Entry"
+                    lastLevel := close
+                    if showSfp
+                        label.new(bar_index, close, shortSfp ? "SHORT" : "LONG", style=shortSfp ? label.style_label_down : label.style_label_up, color=color.aqua, textcolor=color.black, size=size.tiny)
+                array.set(entryActive, i, false)
+
+if array.size(entryP) > 0
+    for i = 0 to array.size(entryP) - 1
+        if array.get(entryActive, i)
+            p = array.get(entryP, i)
+            isH = array.get(entryH, i)
+            invalidEntry = isH ? close > p + invalidateUsd : close < p - invalidateUsd
+            if invalidEntry
+                invalidEntryCount += 1
+                lastStatus := isH ? "Entry High invalidated" : "Entry Low invalidated"
+                lastLevel := p
+                array.set(entryActive, i, false)
+
+if array.size(watchP) > 0
+    for i = 0 to array.size(watchP) - 1
+        if array.get(watchActive, i)
+            p = array.get(watchP, i)
+            isH = array.get(watchH, i)
+            invalidWatch = isH ? close > p + invalidateUsd : close < p - invalidateUsd
+            if invalidWatch
+                invalidWatchCount += 1
+                lastStatus := isH ? "Watch H invalidated" : "Watch L invalidated"
+                lastLevel := p
+                array.set(watchActive, i, false)
+
+if array.size(watchP) > 0
+    int bestH = -1
+    int bestHB = na
+    int bestL = -1
+    int bestLB = na
+    for i = 0 to array.size(watchP) - 1
+        if array.get(watchActive, i)
+            p = array.get(watchP, i)
+            isH = array.get(watchH, i)
+            b = array.get(watchB, i)
+            movedEnough = isH ? p - low >= anchorUsd : high - p >= anchorUsd
+            if movedEnough and isH and (bestH == -1 or b > bestHB)
+                bestH := i
+                bestHB := b
+            if movedEnough and not isH and (bestL == -1 or b > bestLB)
+                bestL := i
+                bestLB := b
+    if bestH >= 0
+        p = array.get(watchP, bestH)
+        b = array.get(watchB, bestH)
+        anchorCount += 1
+        lastStatus := "Anchor H"
+        lastLevel := p
+        for k = 0 to array.size(watchP) - 1
+            if array.get(watchActive, k) and array.get(watchH, k) and array.get(watchB, k) <= b
+                array.set(watchActive, k, false)
+    if bestL >= 0
+        p = array.get(watchP, bestL)
+        b = array.get(watchB, bestL)
+        anchorCount += 1
+        lastStatus := "Anchor L"
+        lastLevel := p
+        for k = 0 to array.size(watchP) - 1
+            if array.get(watchActive, k) and not array.get(watchH, k) and array.get(watchB, k) <= b
+                array.set(watchActive, k, false)
+
+if side != 0 and bar_index > entryBar
+    tp0 = side == 1 ? trEntry + trRisk * tp0R : trEntry - trRisk * tp0R
+    tp1 = side == 1 ? trEntry + tpStepUsd : trEntry - tpStepUsd
+    tp2 = side == 1 ? trEntry + tpStepUsd * 2 : trEntry - tpStepUsd * 2
+    tp3 = side == 1 ? trEntry + tpStepUsd * 3 : trEntry - tpStepUsd * 3
+    tp4 = side == 1 ? trEntry + tpStepUsd * 4 : trEntry - tpStepUsd * 4
+    stopped = side == 1 ? low <= trStop : high >= trStop
+    if stopped
+        protectedExit = tp1Hit
+        if showTp
+            label.new(bar_index, trStop, protectedExit ? "PROTECTED EXIT" : "SL / EXIT", style=side == 1 ? label.style_label_down : label.style_label_up, color=protectedExit ? color.yellow : color.red, textcolor=protectedExit ? color.black : color.white, size=size.tiny)
+        lastStatus := protectedExit ? "Protected stop exit" : "Stop exit"
+        side := 0
+    else
+        if not tp0Hit and (side == 1 ? high >= tp0 : low <= tp0)
+            tp0Hit := true
+            if showTp
+                label.new(bar_index, tp0, "TP0 2R 50%", style=side == 1 ? label.style_label_down : label.style_label_up, color=color.yellow, textcolor=color.black, size=size.tiny)
+        if not tp1Hit and (side == 1 ? high >= tp1 : low <= tp1)
+            tp1Hit := true
+            trStop := side == 1 ? tp0 + slAfterTp1ExtraUsd : tp0 - slAfterTp1ExtraUsd
+            if showTp
+                label.new(bar_index, tp1, "TP1 +300 15% / SL->TP0+150", style=side == 1 ? label.style_label_down : label.style_label_up, color=color.yellow, textcolor=color.black, size=size.tiny)
+        if not tp2Hit and (side == 1 ? high >= tp2 : low <= tp2)
+            tp2Hit := true
+            if showTp
+                label.new(bar_index, tp2, "TP2 +600 15%", style=side == 1 ? label.style_label_down : label.style_label_up, color=color.yellow, textcolor=color.black, size=size.tiny)
+        if not tp3Hit and (side == 1 ? high >= tp3 : low <= tp3)
+            tp3Hit := true
+            if showTp
+                label.new(bar_index, tp3, "TP3 +900 10%", style=side == 1 ? label.style_label_down : label.style_label_up, color=color.yellow, textcolor=color.black, size=size.tiny)
+        if not tp4Hit and (side == 1 ? high >= tp4 : low <= tp4)
+            tp4Hit := true
+            if showTp
+                label.new(bar_index, tp4, "TP4 +1200 10% / EXIT", style=side == 1 ? label.style_label_down : label.style_label_up, color=color.yellow, textcolor=color.black, size=size.tiny)
+            lastStatus := "TP4 reached"
+            side := 0
+
+var table dash = table.new(position.top_right, 2, 7, border_width=1)
+if showDash and barstate.islast
+    table.clear(dash, 0, 0, 1, 6)
+    table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.black)
+    table.cell(dash, 1, 0, "TP-USD v0.3", text_color=color.white, bgcolor=color.black)
+    table.cell(dash, 0, 1, "Active trade", text_color=color.white)
+    table.cell(dash, 1, 1, side == 1 ? "LONG" : side == -1 ? "SHORT" : "FLAT", text_color=color.white)
+    table.cell(dash, 0, 2, "Created E/W/SFP/A", text_color=color.white)
+    table.cell(dash, 1, 2, str.tostring(entryCount)+" / "+str.tostring(watchCount)+" / "+str.tostring(sfpCount)+" / "+str.tostring(anchorCount), text_color=color.white)
+    table.cell(dash, 0, 3, "Active E/W", text_color=color.white)
+    table.cell(dash, 1, 3, str.tostring(activeEntryCount())+" / "+str.tostring(activeWatchCount()), text_color=color.white)
+    table.cell(dash, 0, 4, "TP step", text_color=color.white)
+    table.cell(dash, 1, 4, str.tostring(tpStepUsd), text_color=color.white)
+    table.cell(dash, 0, 5, "Last", text_color=color.white)
+    table.cell(dash, 1, 5, lastStatus + (na(lastLevel) ? "" : " " + str.tostring(lastLevel, format.mintick)), text_color=color.white)
+    table.cell(dash, 0, 6, "SL after TP1", text_color=color.white)
+    table.cell(dash, 1, 6, "TP0 +/- " + str.tostring(slAfterTp1ExtraUsd), text_color=color.white)

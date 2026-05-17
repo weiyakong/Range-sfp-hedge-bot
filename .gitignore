@@ -1,0 +1,24 @@
+# Freqtrade runtime artifacts
+freqtrade/user_data/data/
+freqtrade/user_data/backtest_results/
+freqtrade/user_data/logs/
+freqtrade/user_data/hyperopt_results/
+freqtrade/user_data/notebooks/
+freqtrade/user_data/plot/
+freqtrade/user_data/*.json.lock
+freqtrade/user_data/*-backtest*.json
+freqtrade/user_data/*(backtest)*.json
+
+# Third-party strategies (clone separately, see freqtrade/README.md)
+freqtrade/user_data/strategies/NostalgiaForInfinityX*.py
+freqtrade/user_data/strategies/nfi/
+
+# Python / general
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
