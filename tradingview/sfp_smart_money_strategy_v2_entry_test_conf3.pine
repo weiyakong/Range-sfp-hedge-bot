@@ -1,0 +1,255 @@
+//@version=6
+strategy("SFP Smart Money v2 ENTRY TEST CONF3 - instant", overlay=true, pyramiding=0, calc_on_every_tick=true, process_orders_on_close=false, max_labels_count=500)
+
+// Entry-test CONF3 version.
+// Same as v2_entry_test, but default minimum confluence is 3.
+// Use on 1m chart.
+
+mode = input.string("A", "Management Mode", options=["A", "B", "C"])
+swing15 = input.int(20, "15m swing length", minval=3)
+swing4h = input.int(20, "4H swing length", minval=3)
+eqUsd = input.float(100, "EQH/EQL threshold USD", minval=1)
+nearUsd = input.float(150, "Confluence proximity USD", minval=1)
+minConf = input.int(3, "Min confluence", minval=1, maxval=8)
+minSweepUsd = input.float(50, "Min sweep distance USD", minval=0)
+slBuffer = input.float(100, "SL buffer beyond wick USD", minval=0)
+tpStep = input.float(300, "TP step after TP0 USD", minval=1)
+slLock = input.float(150, "SL lock after TP USD", minval=0)
+feeTaker = input.float(0.10, "Taker one-way fee %", step=0.001)
+feeMaker = input.float(0.036, "Maker one-way fee %", step=0.001)
+useTakerTaker = input.bool(true, "Chart uses taker+taker")
+showTable = input.bool(true, "Show table")
+
+feePct = useTakerTaker ? feeTaker * 2 : feeTaker + feeMaker
+feePrice(p) => p * feePct / 100
+near(a, b) => not na(a) and not na(b) and math.abs(a - b) <= nearUsd
+px = close
+
+ph15 = request.security(syminfo.tickerid, "15", ta.pivothigh(high, swing15, swing15), lookahead=barmerge.lookahead_off)
+pl15 = request.security(syminfo.tickerid, "15", ta.pivotlow(low, swing15, swing15), lookahead=barmerge.lookahead_off)
+h15 = ta.valuewhen(not na(ph15), ph15, 0)
+h15p = ta.valuewhen(not na(ph15), ph15, 1)
+l15 = ta.valuewhen(not na(pl15), pl15, 0)
+l15p = ta.valuewhen(not na(pl15), pl15, 1)
+eqh = not na(h15) and not na(h15p) and math.abs(h15 - h15p) <= eqUsd ? math.avg(h15, h15p) : na
+eql = not na(l15) and not na(l15p) and math.abs(l15 - l15p) <= eqUsd ? math.avg(l15, l15p) : na
+
+ph4h = request.security(syminfo.tickerid, "240", ta.pivothigh(high, swing4h, swing4h), lookahead=barmerge.lookahead_off)
+pl4h = request.security(syminfo.tickerid, "240", ta.pivotlow(low, swing4h, swing4h), lookahead=barmerge.lookahead_off)
+h4 = ta.valuewhen(not na(ph4h), ph4h, 0)
+l4 = ta.valuewhen(not na(pl4h), pl4h, 0)
+
+pdh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_off)
+pdl = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_off)
+pwh = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_off)
+pwl = request.security(syminfo.tickerid, "W", low[1], lookahead=barmerge.lookahead_off)
+pmh = request.security(syminfo.tickerid, "M", high[1], lookahead=barmerge.lookahead_off)
+pml = request.security(syminfo.tickerid, "M", low[1], lookahead=barmerge.lookahead_off)
+
+bosUp15 = request.security(syminfo.tickerid, "15", ta.crossover(close, ta.valuewhen(not na(ta.pivothigh(high, swing15, swing15)), ta.pivothigh(high, swing15, swing15), 0)), lookahead=barmerge.lookahead_off)
+bosDn15 = request.security(syminfo.tickerid, "15", ta.crossunder(close, ta.valuewhen(not na(ta.pivotlow(low, swing15, swing15)), ta.pivotlow(low, swing15, swing15), 0)), lookahead=barmerge.lookahead_off)
+lastBearHi = request.security(syminfo.tickerid, "15", ta.valuewhen(close < open, high, 0), lookahead=barmerge.lookahead_off)
+lastBearLo = request.security(syminfo.tickerid, "15", ta.valuewhen(close < open, low, 0), lookahead=barmerge.lookahead_off)
+lastBullHi = request.security(syminfo.tickerid, "15", ta.valuewhen(close > open, high, 0), lookahead=barmerge.lookahead_off)
+lastBullLo = request.security(syminfo.tickerid, "15", ta.valuewhen(close > open, low, 0), lookahead=barmerge.lookahead_off)
+
+var float bullObHi = na
+var float bullObLo = na
+var float bearObHi = na
+var float bearObLo = na
+if bosUp15
+    bullObHi := lastBearHi
+    bullObLo := lastBearLo
+if bosDn15
+    bearObHi := lastBullHi
+    bearObLo := lastBullLo
+if not na(bullObLo) and low < bullObLo
+    bullObHi := na
+    bullObLo := na
+if not na(bearObHi) and high > bearObHi
+    bearObHi := na
+    bearObLo := na
+
+var float brokenSupport = na
+var float brokenResistance = na
+if not na(l15) and px < l15
+    brokenSupport := l15
+if not na(h15) and px > h15
+    brokenResistance := h15
+
+shortSweep(x) => not na(x) and high >= x + minSweepUsd and px < x
+longSweep(x) => not na(x) and low <= x - minSweepUsd and px > x
+shortTouch(x) => not na(x) and high >= x and px < x
+longTouch(x) => not na(x) and low <= x and px > x
+
+shortLvl = shortSweep(pmh) ? pmh : shortSweep(pwh) ? pwh : shortSweep(pdh) ? pdh : shortSweep(h4) ? h4 : shortSweep(eqh) ? eqh : shortSweep(h15) ? h15 : shortSweep(bearObHi) ? bearObHi : shortSweep(bearObLo) ? bearObLo : shortTouch(brokenSupport) ? brokenSupport : na
+longLvl = longSweep(pml) ? pml : longSweep(pwl) ? pwl : longSweep(pdl) ? pdl : longSweep(l4) ? l4 : longSweep(eql) ? eql : longSweep(l15) ? l15 : longSweep(bullObHi) ? bullObHi : longSweep(bullObLo) ? bullObLo : longTouch(brokenResistance) ? brokenResistance : na
+
+confShort(x) =>
+    int c = 0
+    c += near(x, h15) ? 1 : 0
+    c += near(x, eqh) ? 1 : 0
+    c += near(x, pdh) ? 1 : 0
+    c += near(x, pwh) ? 1 : 0
+    c += near(x, pmh) ? 1 : 0
+    c += near(x, h4) ? 1 : 0
+    c += near(x, bearObHi) or near(x, bearObLo) ? 1 : 0
+    c += near(x, brokenSupport) ? 1 : 0
+    c
+
+confLong(x) =>
+    int c = 0
+    c += near(x, l15) ? 1 : 0
+    c += near(x, eql) ? 1 : 0
+    c += near(x, pdl) ? 1 : 0
+    c += near(x, pwl) ? 1 : 0
+    c += near(x, pml) ? 1 : 0
+    c += near(x, l4) ? 1 : 0
+    c += near(x, bullObHi) or near(x, bullObLo) ? 1 : 0
+    c += near(x, brokenResistance) ? 1 : 0
+    c
+
+sc = not na(shortLvl) ? confShort(shortLvl) : 0
+lc = not na(longLvl) ? confLong(longLvl) : 0
+
+var int dir = 0
+var float ep = na
+var float sl = na
+var float r = na
+var float tp0 = na
+var float tp1 = na
+var float tp2 = na
+var float tp3 = na
+var float tp4 = na
+var float tp5 = na
+var bool got0 = false
+var bool got1 = false
+var bool got2 = false
+var bool got3 = false
+var bool got4 = false
+var bool got5 = false
+
+if strategy.position_size == 0 and dir != 0
+    dir := 0
+    ep := na
+    sl := na
+    r := na
+    tp0 := na
+    tp1 := na
+    tp2 := na
+    tp3 := na
+    tp4 := na
+    tp5 := na
+    got0 := false
+    got1 := false
+    got2 := false
+    got3 := false
+    got4 := false
+    got5 := false
+
+shortR = high + slBuffer - px + feePrice(px)
+shortOk = strategy.position_size == 0 and not na(shortLvl) and sc >= minConf and shortR > 0
+longR = px - (low - slBuffer) + feePrice(px)
+longOk = strategy.position_size == 0 and not na(longLvl) and lc >= minConf and longR > 0
+
+if shortOk
+    dir := -1
+    ep := px
+    sl := high + slBuffer
+    r := shortR
+    tp0 := ep - 2 * r
+    tp1 := tp0 - tpStep
+    tp2 := tp0 - 2 * tpStep
+    tp3 := tp0 - 3 * tpStep
+    tp4 := tp0 - 4 * tpStep
+    tp5 := tp0 - 5 * tpStep
+    strategy.entry("S", strategy.short)
+    label.new(bar_index, high, "S CONF3\nconf " + str.tostring(sc), style=label.style_label_down, color=color.red, textcolor=color.white)
+
+if longOk
+    dir := 1
+    ep := px
+    sl := low - slBuffer
+    r := longR
+    tp0 := ep + 2 * r
+    tp1 := tp0 + tpStep
+    tp2 := tp0 + 2 * tpStep
+    tp3 := tp0 + 3 * tpStep
+    tp4 := tp0 + 4 * tpStep
+    tp5 := tp0 + 5 * tpStep
+    strategy.entry("L", strategy.long)
+    label.new(bar_index, low, "L CONF3\nconf " + str.tostring(lc), style=label.style_label_up, color=color.green, textcolor=color.white)
+
+if dir == -1 and strategy.position_size < 0
+    got0 := got0 or low <= tp0
+    got1 := got1 or low <= tp1
+    got2 := got2 or low <= tp2
+    got3 := got3 or low <= tp3
+    got4 := got4 or low <= tp4
+    got5 := got5 or low <= tp5
+    if mode == "C" and got0 and not got1
+        sl := math.min(sl, ep)
+    if got1
+        sl := math.min(sl, tp0 - slLock)
+    if mode == "B" and got2
+        sl := math.min(sl, tp1 - slLock)
+    if mode == "B" and got3
+        sl := math.min(sl, tp2 - slLock)
+    if mode == "B" and got4
+        sl := math.min(sl, tp3 - slLock)
+    if mode == "B" and got5
+        sl := math.min(sl, tp4 - slLock)
+    strategy.exit("S0", "S", qty_percent=50, limit=tp0, stop=sl)
+    strategy.exit("S1", "S", qty_percent=10, limit=tp1, stop=sl)
+    strategy.exit("S2", "S", qty_percent=10, limit=tp2, stop=sl)
+    strategy.exit("S3", "S", qty_percent=10, limit=tp3, stop=sl)
+    strategy.exit("S4", "S", qty_percent=10, limit=tp4, stop=sl)
+    strategy.exit("S5", "S", qty_percent=10, limit=tp5, stop=sl)
+
+if dir == 1 and strategy.position_size > 0
+    got0 := got0 or high >= tp0
+    got1 := got1 or high >= tp1
+    got2 := got2 or high >= tp2
+    got3 := got3 or high >= tp3
+    got4 := got4 or high >= tp4
+    got5 := got5 or high >= tp5
+    if mode == "C" and got0 and not got1
+        sl := math.max(sl, ep)
+    if got1
+        sl := math.max(sl, tp0 + slLock)
+    if mode == "B" and got2
+        sl := math.max(sl, tp1 + slLock)
+    if mode == "B" and got3
+        sl := math.max(sl, tp2 + slLock)
+    if mode == "B" and got4
+        sl := math.max(sl, tp3 + slLock)
+    if mode == "B" and got5
+        sl := math.max(sl, tp4 + slLock)
+    strategy.exit("L0", "L", qty_percent=50, limit=tp0, stop=sl)
+    strategy.exit("L1", "L", qty_percent=10, limit=tp1, stop=sl)
+    strategy.exit("L2", "L", qty_percent=10, limit=tp2, stop=sl)
+    strategy.exit("L3", "L", qty_percent=10, limit=tp3, stop=sl)
+    strategy.exit("L4", "L", qty_percent=10, limit=tp4, stop=sl)
+    strategy.exit("L5", "L", qty_percent=10, limit=tp5, stop=sl)
+
+plot(eqh, "EQH", color=color.new(color.red, 0))
+plot(eql, "EQL", color=color.new(color.green, 0))
+plot(pdh, "PDH", color=color.new(color.blue, 40))
+plot(pdl, "PDL", color=color.new(color.blue, 40))
+plot(brokenSupport, "Broken support", color=color.new(color.red, 30))
+plot(brokenResistance, "Broken resistance", color=color.new(color.green, 30))
+plot(strategy.position_size != 0 ? sl : na, "SL", color=color.red, linewidth=2, style=plot.style_linebr)
+plot(strategy.position_size != 0 ? tp0 : na, "TP0", color=color.green, linewidth=2, style=plot.style_linebr)
+
+var table tb = table.new(position.top_right, 2, 5, border_width=1)
+if showTable and barstate.islast
+    table.cell(tb, 0, 0, "ENTRY CONF3")
+    table.cell(tb, 1, 0, mode)
+    table.cell(tb, 0, 1, "Short conf")
+    table.cell(tb, 1, 1, str.tostring(sc))
+    table.cell(tb, 0, 2, "Long conf")
+    table.cell(tb, 1, 2, str.tostring(lc))
+    table.cell(tb, 0, 3, "minSweep")
+    table.cell(tb, 1, 3, str.tostring(minSweepUsd))
+    table.cell(tb, 0, 4, "minConf")
+    table.cell(tb, 1, 4, str.tostring(minConf))
