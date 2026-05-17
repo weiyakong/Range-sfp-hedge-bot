@@ -1,4 +1,4 @@
-//@version=5
+//@version=6
 indicator("Global Market Regime Filter - Trend / Range / Chop", overlay=true, max_labels_count=500)
 
 // Inputs
@@ -23,18 +23,16 @@ minTouches = input.int(2, "Minimum touches per range side", minval=1)
 showBackground = input.bool(true, "Show background color")
 showLabels = input.bool(true, "Show labels on regime change")
 
-// Daily bias function
 f_daily_bias() =>
     emaFast = ta.ema(close, emaFastLen)
     emaSlow = ta.ema(close, emaSlowLen)
     bullish = close > emaSlow and emaFast > emaSlow
     bearish = close < emaSlow and emaFast < emaSlow
-    bias = bullish ? 1 : bearish ? -1 : 0
-    bias
+    bullish ? 1 : bearish ? -1 : 0
 
 dailyBias = request.security(syminfo.tickerid, tfDaily, f_daily_bias(), lookahead=barmerge.lookahead_off)
 
-// Regime function
+// Regime codes:
 //  2 = trend up
 // -2 = trend down
 //  1 = confirmed range
@@ -43,60 +41,44 @@ dailyBias = request.security(syminfo.tickerid, tfDaily, f_daily_bias(), lookahea
 f_regime() =>
     emaFast = ta.ema(close, emaFastLen)
     emaSlow = ta.ema(close, emaSlowLen)
-
     ph = ta.pivothigh(high, pivotLeft, pivotRight)
     pl = ta.pivotlow(low, pivotLeft, pivotRight)
-
     lastPH = ta.valuewhen(not na(ph), ph, 0)
     prevPH = ta.valuewhen(not na(ph), ph, 1)
     lastPL = ta.valuewhen(not na(pl), pl, 0)
     prevPL = ta.valuewhen(not na(pl), pl, 1)
-
     hasSwings = not na(lastPH) and not na(prevPH) and not na(lastPL) and not na(prevPL)
-
     structuralUp = hasSwings and lastPH > prevPH and lastPL > prevPL
     structuralDown = hasSwings and lastPH < prevPH and lastPL < prevPL
-
     emaUp = close > emaSlow and emaFast > emaSlow
     emaDown = close < emaSlow and emaFast < emaSlow
-
     trendUp = structuralUp and emaUp
     trendDown = structuralDown and emaDown
-
     rangeHigh = ta.highest(high, rangeLen)
     rangeLow = ta.lowest(low, rangeLen)
     rangeSize = rangeHigh - rangeLow
     rangePct = rangeSize / close * 100
-
     rangeBigEnough = rangeSize >= minRangeUsd and rangePct >= minRangePct
-
     upperEdge = rangeHigh - rangeSize * edgeZonePct
     lowerEdge = rangeLow + rangeSize * edgeZonePct
-
     touchUpper = high >= upperEdge
     touchLower = low <= lowerEdge
-
-    // Compatibility replacement for ta.sum(): count touches through SMA * length.
     upperTouches = ta.sma(touchUpper ? 1.0 : 0.0, rangeLen) * rangeLen
     lowerTouches = ta.sma(touchLower ? 1.0 : 0.0, rangeLen) * rangeLen
-
     confirmedRange = rangeBigEnough and upperTouches >= minTouches and lowerTouches >= minTouches and not trendUp and not trendDown
     chop = not rangeBigEnough
-
     regime = chop ? -1 : trendUp ? 2 : trendDown ? -2 : confirmedRange ? 1 : 0
     [regime, rangeHigh, rangeLow, rangeSize, upperTouches, lowerTouches]
 
 [regMain, mainHigh, mainLow, mainRange, mainUpperTouches, mainLowerTouches] = request.security(syminfo.tickerid, tfMain, f_regime(), lookahead=barmerge.lookahead_off)
 [regWork, workHigh, workLow, workRange, workUpperTouches, workLowerTouches] = request.security(syminfo.tickerid, tfWork, f_regime(), lookahead=barmerge.lookahead_off)
 
-// Final regime logic
 finalRegime = regMain == 2 ? 2 : regMain == -2 ? -2 : regMain == 1 and regWork != -1 ? 1 : regMain == -1 and regWork == -1 ? -1 : 0
 
 regimeText = finalRegime == 2 ? "TREND UP" : finalRegime == -2 ? "TREND DOWN" : finalRegime == 1 ? "RANGE" : finalRegime == -1 ? "CHOP / NO TRADE" : "TRANSITION"
 dailyText = dailyBias == 1 ? "1D BULLISH" : dailyBias == -1 ? "1D BEARISH" : "1D NEUTRAL"
 
 bgColor = finalRegime == 2 ? color.new(color.green, 86) : finalRegime == -2 ? color.new(color.red, 86) : finalRegime == 1 ? color.new(color.blue, 86) : finalRegime == -1 ? color.new(color.gray, 82) : color.new(color.orange, 86)
-
 bgcolor(showBackground ? bgColor : na)
 
 regimeChanged = finalRegime != finalRegime[1]
@@ -105,7 +87,6 @@ if showLabels and regimeChanged
     labelColor = finalRegime == 2 ? color.green : finalRegime == -2 ? color.red : finalRegime == 1 ? color.blue : finalRegime == -1 ? color.gray : color.orange
     label.new(bar_index, high, regimeText + "\n" + dailyText, style=label.style_label_down, textcolor=color.white, color=labelColor, size=size.small)
 
-// Current state table
 var table t = table.new(position.top_right, 2, 6, border_width=1)
 
 if barstate.islast
