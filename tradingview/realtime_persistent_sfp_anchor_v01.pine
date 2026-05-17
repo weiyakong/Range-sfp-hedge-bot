@@ -1,0 +1,258 @@
+//@version=6
+indicator("Realtime Persistent SFP Anchor v0.1", overlay=true, max_labels_count=300)
+
+// Realtime-only Entry/Watch/SFP logic: no pivothigh/pivotlow, no future bars.
+// structureLookback only detects a new realtime candidate from current + previous bars.
+// Active Entry/Watch levels persist until explicit invalidation, SFP consumption, or Watch anchoring.
+// Anchor is the only postfactum role and can come ONLY from Watch, never from Entry.
+
+showDash = input.bool(true, "Show dashboard")
+showEntry = input.bool(true, "Show Entry candidates")
+showWatch = input.bool(true, "Show Watch")
+showSfp = input.bool(true, "Show SFP triggers")
+showAnchor = input.bool(true, "Show Anchor")
+showX = input.bool(false, "Show x labels")
+
+structureLookback = input.int(40, "Realtime structure lookback", minval=5, maxval=300)
+impulseLookback = input.int(80, "Impulse INTO lookback", minval=10, maxval=400)
+minIntoUsd = input.float(1000.0, "Minimum impulse INTO level", minval=0, step=50)
+nearUsd = input.float(300.0, "Near existing Entry USD", minval=50, step=50)
+upgradeUsd = input.float(50.0, "Upgrade tolerance USD", minval=0, step=10)
+sfpBufferUsd = input.float(20.0, "SFP sweep buffer USD", minval=0, step=10)
+invalidateUsd = input.float(600.0, "Invalidation beyond level USD", minval=50, step=50)
+anchorUsd = input.float(1500.0, "Anchor impulse USD", minval=0, step=100)
+var float[] entryP = array.new<float>()
+var bool[] entryH = array.new<bool>()
+var bool[] entryActive = array.new<bool>()
+var label[] entryLbl = array.new<label>()
+
+var float[] watchP = array.new<float>()
+var bool[] watchH = array.new<bool>()
+var int[] watchB = array.new<int>()
+var bool[] watchActive = array.new<bool>()
+
+var int entryCount = 0
+var int watchCount = 0
+var int sfpCount = 0
+var int anchorCount = 0
+var int invalidEntryCount = 0
+var int invalidWatchCount = 0
+var int xCount = 0
+var string lastStatus = "None"
+var float lastLevel = na
+
+activeEntryCount() =>
+    int n = 0
+    if array.size(entryP) > 0
+        for i = 0 to array.size(entryP) - 1
+            if array.get(entryActive, i)
+                n += 1
+    n
+
+activeWatchCount() =>
+    int n = 0
+    if array.size(watchP) > 0
+        for i = 0 to array.size(watchP) - 1
+            if array.get(watchActive, i)
+                n += 1
+    n
+
+findNearEntry(price, isHigh) =>
+    int idx = -1
+    float best = na
+    if array.size(entryP) > 0
+        for i = 0 to array.size(entryP) - 1
+            if array.get(entryActive, i) and array.get(entryH, i) == isHigh
+                d = math.abs(array.get(entryP, i) - price)
+                if d <= nearUsd and (na(best) or d < best)
+                    best := d
+                    idx := i
+    idx
+
+addEntry(price, isHigh) =>
+    lbl = showEntry ? label.new(bar_index, price, isHigh ? "Entry High" : "Entry Low", style=isHigh ? label.style_label_down : label.style_label_up, color=isHigh ? color.red : color.lime, textcolor=color.white, size=size.tiny) : na
+    array.push(entryP, price)
+    array.push(entryH, isHigh)
+    array.push(entryActive, true)
+    array.push(entryLbl, lbl)
+
+upgradeEntry(idx, price, isHigh) =>
+    oldLbl = array.get(entryLbl, idx)
+    if not na(oldLbl)
+        label.delete(oldLbl)
+    lbl = showEntry ? label.new(bar_index, price, isHigh ? "Entry High" : "Entry Low", style=isHigh ? label.style_label_down : label.style_label_up, color=isHigh ? color.red : color.lime, textcolor=color.white, size=size.tiny) : na
+    array.set(entryP, idx, price)
+    array.set(entryLbl, idx, lbl)
+
+addWatch(price, isHigh) =>
+    if showWatch
+        label.new(bar_index, price, isHigh ? "Watch H" : "Watch L", style=isHigh ? label.style_label_down : label.style_label_up, color=color.orange, textcolor=color.white, size=size.tiny)
+    array.push(watchP, price)
+    array.push(watchH, isHigh)
+    array.push(watchB, bar_index)
+    array.push(watchActive, true)
+
+priorHigh = ta.highest(high, structureLookback)[1]
+priorLow = ta.lowest(low, structureLookback)[1]
+impulseLow = ta.lowest(low, impulseLookback)[1]
+impulseHigh = ta.highest(high, impulseLookback)[1]
+
+newRealtimeHigh = not na(priorHigh) and high > priorHigh
+newRealtimeLow = not na(priorLow) and low < priorLow
+impulseIntoHigh = not na(impulseLow) ? high - impulseLow : na
+impulseIntoLow = not na(impulseHigh) ? impulseHigh - low : na
+
+// Realtime Entry High / Watch H. Current bar + previous bars only.
+if newRealtimeHigh
+    if impulseIntoHigh >= minIntoUsd
+        idx = findNearEntry(high, true)
+        if idx >= 0
+            old = array.get(entryP, idx)
+            if high > old + upgradeUsd
+                upgradeEntry(idx, high, true)
+                lastStatus := "Entry High upgraded"
+            else
+                addWatch(high, true)
+                watchCount += 1
+                lastStatus := "Watch H created"
+        else
+            addEntry(high, true)
+            entryCount += 1
+            lastStatus := "Entry High created"
+        lastLevel := high
+    else
+        xCount += 1
+        lastStatus := "x weak high"
+        lastLevel := high
+        if showX
+            label.new(bar_index, high, "x weak H", style=label.style_label_down, color=color.gray, textcolor=color.white, size=size.tiny)
+
+// Realtime Entry Low / Watch L. Current bar + previous bars only.
+if newRealtimeLow
+    if impulseIntoLow >= minIntoUsd
+        idx = findNearEntry(low, false)
+        if idx >= 0
+            old = array.get(entryP, idx)
+            if low < old - upgradeUsd
+                upgradeEntry(idx, low, false)
+                lastStatus := "Entry Low upgraded"
+            else
+                addWatch(low, false)
+                watchCount += 1
+                lastStatus := "Watch L created"
+        else
+            addEntry(low, false)
+            entryCount += 1
+            lastStatus := "Entry Low created"
+        lastLevel := low
+    else
+        xCount += 1
+        lastStatus := "x weak low"
+        lastLevel := low
+        if showX
+            label.new(bar_index, low, "x weak L", style=label.style_label_up, color=color.gray, textcolor=color.white, size=size.tiny)
+
+// SFP checks every active stored Entry level on every bar.
+if array.size(entryP) > 0
+    for i = 0 to array.size(entryP) - 1
+        if array.get(entryActive, i)
+            p = array.get(entryP, i)
+            isH = array.get(entryH, i)
+            shortSfp = isH and high > p + sfpBufferUsd and close < p
+            longSfp = not isH and low < p - sfpBufferUsd and close > p
+            if shortSfp or longSfp
+                sfpCount += 1
+                lastStatus := shortSfp ? "SFP Short Entry" : "SFP Long Entry"
+                lastLevel := p
+                if showSfp
+                    label.new(bar_index, p, shortSfp ? "SFP Short" : "SFP Long", style=shortSfp ? label.style_label_down : label.style_label_up, color=color.aqua, textcolor=color.black, size=size.tiny)
+                array.set(entryActive, i, false)
+
+// Explicit Entry invalidation only beyond the stored level by invalidateUsd.
+if array.size(entryP) > 0
+    for i = 0 to array.size(entryP) - 1
+        if array.get(entryActive, i)
+            p = array.get(entryP, i)
+            isH = array.get(entryH, i)
+            invalidEntry = isH ? close > p + invalidateUsd : close < p - invalidateUsd
+            if invalidEntry
+                invalidEntryCount += 1
+                lastStatus := isH ? "Entry High invalidated" : "Entry Low invalidated"
+                lastLevel := p
+                array.set(entryActive, i, false)
+
+// Explicit Watch invalidation only beyond the stored level by invalidateUsd.
+if array.size(watchP) > 0
+    for i = 0 to array.size(watchP) - 1
+        if array.get(watchActive, i)
+            p = array.get(watchP, i)
+            isH = array.get(watchH, i)
+            invalidWatch = isH ? close > p + invalidateUsd : close < p - invalidateUsd
+            if invalidWatch
+                invalidWatchCount += 1
+                lastStatus := isH ? "Watch H invalidated" : "Watch L invalidated"
+                lastLevel := p
+                array.set(watchActive, i, false)
+
+// Anchor only from active Watch, postfactum allowed. Entry arrays are never touched here.
+if array.size(watchP) > 0
+    int bestH = -1
+    int bestHB = na
+    int bestL = -1
+    int bestLB = na
+    for i = 0 to array.size(watchP) - 1
+        if array.get(watchActive, i)
+            p = array.get(watchP, i)
+            isH = array.get(watchH, i)
+            b = array.get(watchB, i)
+            movedEnough = isH ? p - low >= anchorUsd : high - p >= anchorUsd
+            if movedEnough and isH and (bestH == -1 or b > bestHB)
+                bestH := i
+                bestHB := b
+            if movedEnough and not isH and (bestL == -1 or b > bestLB)
+                bestL := i
+                bestLB := b
+    if bestH >= 0
+        p = array.get(watchP, bestH)
+        b = array.get(watchB, bestH)
+        anchorCount += 1
+        lastStatus := "Anchor H"
+        lastLevel := p
+        if showAnchor
+            label.new(b, p, "Anchor H", style=label.style_label_down, color=color.rgb(255, 0, 180), textcolor=color.white, size=size.tiny)
+        for k = 0 to array.size(watchP) - 1
+            if array.get(watchActive, k) and array.get(watchH, k) and array.get(watchB, k) <= b
+                array.set(watchActive, k, false)
+    if bestL >= 0
+        p = array.get(watchP, bestL)
+        b = array.get(watchB, bestL)
+        anchorCount += 1
+        lastStatus := "Anchor L"
+        lastLevel := p
+        if showAnchor
+            label.new(b, p, "Anchor L", style=label.style_label_up, color=color.rgb(255, 0, 180), textcolor=color.white, size=size.tiny)
+        for k = 0 to array.size(watchP) - 1
+            if array.get(watchActive, k) and not array.get(watchH, k) and array.get(watchB, k) <= b
+                array.set(watchActive, k, false)
+
+var table dash = table.new(position.top_right, 2, 9, border_width=1)
+if showDash and barstate.islast
+    table.clear(dash, 0, 0, 1, 8)
+    table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.black)
+    table.cell(dash, 1, 0, "Realtime Persistent SFP Anchor v0.1", text_color=color.white, bgcolor=color.black)
+    table.cell(dash, 0, 1, "Created E/W/SFP/A", text_color=color.white)
+    table.cell(dash, 1, 1, str.tostring(entryCount) + " / " + str.tostring(watchCount) + " / " + str.tostring(sfpCount) + " / " + str.tostring(anchorCount), text_color=color.white)
+    table.cell(dash, 0, 2, "Active Entry / Watch", text_color=color.white)
+    table.cell(dash, 1, 2, str.tostring(activeEntryCount()) + " / " + str.tostring(activeWatchCount()), text_color=color.white)
+    table.cell(dash, 0, 3, "Invalidated E/W", text_color=color.white)
+    table.cell(dash, 1, 3, str.tostring(invalidEntryCount) + " / " + str.tostring(invalidWatchCount), text_color=color.white)
+    table.cell(dash, 0, 4, "Into USD", text_color=color.white)
+    table.cell(dash, 1, 4, str.tostring(minIntoUsd), text_color=color.white)
+    table.cell(dash, 0, 5, "Detector lookback", text_color=color.white)
+    table.cell(dash, 1, 5, str.tostring(structureLookback), text_color=color.white)
+    table.cell(dash, 0, 6, "Impulse lookback", text_color=color.white)
+    table.cell(dash, 1, 6, str.tostring(impulseLookback), text_color=color.white)
+    table.cell(dash, 0, 7, "Near / inv / buffer", text_color=color.white)
+    table.cell(dash, 1, 7, str.tostring(nearUsd) + " / " + str.tostring(invalidateUsd) + " / " + str.tostring(sfpBufferUsd), text_color=color.white)
+    table.cell(dash, 0, 8, "Last", text_color=color.white)
+    table.cell(dash, 1, 8, lastStatus + (na(lastLevel) ? "" : " " + str.tostring(lastLevel, format.mintick)), text_color=color.white)
