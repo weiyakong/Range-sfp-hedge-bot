@@ -1,5 +1,5 @@
 //@version=6
-indicator("SFP Candidate Entry TP LTF v0.2", overlay=true, max_lines_count=500, max_labels_count=300)
+indicator("SFP Candidate Entry TP LTF v0.3", overlay=true, max_lines_count=500, max_labels_count=300)
 
 showDashboard=input.bool(true,"Show dashboard")
 showCandidates=input.bool(true,"Show candidates")
@@ -27,7 +27,6 @@ exhaustionWickPortion=input.float(0.45,"Exhaustion wick portion",minval=0.1,maxv
 
 maxRawSwings=input.int(160,"Max raw swings stored",minval=20,maxval=400)
 maxCandidates=input.int(120,"Max Candidate levels stored",minval=20,maxval=300)
-
 tp0R=input.float(2.0,"TP0 R",minval=0.1,step=0.1)
 tpStepUsd=input.float(300.0,"TP step USD",minval=50,step=50)
 
@@ -61,7 +60,6 @@ var bool[] rawIsHigh=array.new<bool>()
 var string[] rawSource=array.new<string>()
 var bool[] rawActive=array.new<bool>()
 var int[] rawBar=array.new<int>()
-
 var float[] candPrice=array.new<float>()
 var bool[] candIsHigh=array.new<bool>()
 var string[] candSource=array.new<string>()
@@ -187,6 +185,7 @@ if array.size(rawPrice)>0
 
 ltfHigh=request.security_lower_tf(syminfo.tickerid,ltf,high)
 ltfLow=request.security_lower_tf(syminfo.tickerid,ltf,low)
+ltfTime=request.security_lower_tf(syminfo.tickerid,ltf,time)
 
 if array.size(candPrice)>0
     for i=0 to array.size(candPrice)-1
@@ -199,17 +198,20 @@ if array.size(candPrice)>0
             bool trig=false
             bool swept=false
             float sweepExtreme=na
+            int trigTime=na
             n=array.size(ltfHigh)
             if n>0
                 for j=0 to n-1
                     lh=array.get(ltfHigh,j)
                     ll=array.get(ltfLow,j)
+                    lt=array.get(ltfTime,j)
                     if ch
                         if lh>cp+sfpBufferUsd
                             swept:=true
                             sweepExtreme:=na(sweepExtreme)?lh:math.max(sweepExtreme,lh)
                         if swept and ll<cp
                             trig:=true
+                            trigTime:=lt
                             break
                     else
                         if ll<cp-sfpBufferUsd
@@ -217,6 +219,7 @@ if array.size(candPrice)>0
                             sweepExtreme:=na(sweepExtreme)?ll:math.min(sweepExtreme,ll)
                         if swept and lh>cp
                             trig:=true
+                            trigTime:=lt
                             break
             cleanBreak=ch?close>cp+cleanBreakUsdBuffer:close<cp-cleanBreakUsdBuffer
             if trig and side==0
@@ -238,7 +241,7 @@ if array.size(candPrice)>0
                     lastSource:=sourceShort(cs)
                     lastPrice:=cp
                     if showEntries
-                        label.new(bar_index,cp,ch?"SHORT":"LONG",style=ch?label.style_label_down:label.style_label_up,color=color.aqua,textcolor=color.black,size=size.tiny)
+                        label.new(na(trigTime)?time:trigTime,cp,ch?"SHORT":"LONG",xloc=xloc.bar_time,style=ch?label.style_label_down:label.style_label_up,color=color.aqua,textcolor=color.black,size=size.tiny)
                 retireCandidate(i)
             else if cleanBreak and not trig
                 lastStatus:=ch?"Candidate High broken":"Candidate Low broken"
@@ -320,7 +323,7 @@ var table dash=table.new(position.top_right,2,13,border_width=1)
 if showDashboard and barstate.islast
     table.clear(dash,0,0,1,12)
     table.cell(dash,0,0,"Version",text_color=color.white,bgcolor=color.black)
-    table.cell(dash,1,0,"Candidate Entry TP LTF v0.2",text_color=color.white,bgcolor=color.black)
+    table.cell(dash,1,0,"Candidate Entry TP LTF v0.3",text_color=color.white,bgcolor=color.black)
     table.cell(dash,0,1,"Use",text_color=color.white)
     table.cell(dash,1,1,"15m candidates / "+ltf+" entry",text_color=color.white)
     table.cell(dash,0,2,"Impulse mode",text_color=color.white)
@@ -344,4 +347,4 @@ if showDashboard and barstate.islast
     table.cell(dash,0,11,"Last",text_color=color.white)
     table.cell(dash,1,11,lastStatus+" "+(na(lastPrice)?"":str.tostring(lastPrice,format.mintick)),text_color=color.white)
     table.cell(dash,0,12,"Note",text_color=color.white)
-    table.cell(dash,1,12,"SAFE = protected / near BE",text_color=color.white)
+    table.cell(dash,1,12,"Entry label at 1m trigger time",text_color=color.white)
