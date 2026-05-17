@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.freqtrade.io/schema.json",
+  "bot_name": "sfp_candidate_debug_btc_backtest",
+  "dry_run": true,
+  "dry_run_wallet": 1000,
+  "initial_state": "running",
+  "trading_mode": "futures",
+  "margin_mode": "isolated",
+  "max_open_trades": 2,
+  "stake_currency": "USDT",
+  "stake_amount": "unlimited",
+  "tradable_balance_ratio": 1.0,
+  "fiat_display_currency": "USD",
+  "timeframe": "1m",
+  "cancel_open_orders_on_exit": true,
+  "dataformat_ohlcv": "json",
+  "exchange": {
+    "name": "binance",
+    "key": "",
+    "secret": "",
+    "ccxt_config": {
+      "enableRateLimit": true
+    },
+    "ccxt_async_config": {
+      "enableRateLimit": true
+    },
+    "pair_whitelist": [
+      "BTC/USDT:USDT"
+    ],
+    "pair_blacklist": []
+  },
+  "pairlists": [
+    {
+      "method": "StaticPairList"
+    }
+  ],
+  "entry_pricing": {
+    "price_side": "same",
+    "use_order_book": false
+  },
+  "exit_pricing": {
+    "price_side": "same",
+    "use_order_book": false
+  },
+  "order_time_in_force": {
+    "entry": "GTC",
+    "exit": "GTC"
+  },
+  "unfilledtimeout": {
+    "entry": 10,
+    "exit": 10,
+    "unit": "minutes"
+  },
+  "internals": {
+    "process_throttle_secs": 5
+  }
+}
