@@ -106,7 +106,7 @@ f_dailyImpulse() =>
     macroLow = ta.lowest(low, lookbackDays)
     macroMid = (macroHigh + macroLow) / 2.0
 
-    retr = na
+    float retr = na
     if impulseIsRecent and impulseDir == 1 and not na(impulseStart) and not na(impulseEnd) and impulseEnd > impulseStart
         retr := (impulseEnd - close) / (impulseEnd - impulseStart)
     if impulseIsRecent and impulseDir == -1 and not na(impulseStart) and not na(impulseEnd) and impulseStart > impulseEnd
