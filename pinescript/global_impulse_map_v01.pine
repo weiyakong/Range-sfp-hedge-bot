@@ -1,17 +1,17 @@
 //@version=6
-indicator("Global Impulse Map v0.1", overlay=true, max_labels_count=100, max_lines_count=50)
+indicator("Global Impulse Map v0.2", overlay=true, max_labels_count=100, max_lines_count=50)
 
 // -----------------------------------------------------------------------------
-// Global Impulse Map v0.1
+// Global Impulse Map v0.2
 // Layer 1 only: daily/global impulse diagnostics.
 // No entries, no SFP, no TP/SL, no risk management, no automation.
 //
-// Purpose:
-// - find the last significant 1D impulse inside a fixed daily lookback;
-// - show Impulse Start / Impulse End;
-// - show size in USD, percent and ATR;
-// - show where current price is relative to the impulse retracement;
-// - fall back to MACRO RANGE when no valid impulse is found.
+// v0.2 fix:
+// - A move is not accepted as GLOBAL bullish impulse if its end remains in the
+//   lower part of the 244D macro range.
+// - A move is not accepted as GLOBAL bearish impulse if its end remains in the
+//   upper part of the 244D macro range.
+// - Dashboard separates Last Global Impulse from Current Context.
 // -----------------------------------------------------------------------------
 
 showDashboard = input.bool(true, "Show dashboard")
@@ -26,6 +26,8 @@ atrLenD = input.int(14, "1D ATR length", minval=1, maxval=100)
 minImpulsePct = input.float(15.0, "Min impulse %", minval=1.0, step=0.5)
 minImpulseAtr = input.float(5.0, "Min impulse ATR", minval=1.0, step=0.5)
 minImpulseBars = input.int(3, "Min daily bars in impulse", minval=1, maxval=60)
+minMacroEndPosition = input.float(0.45, "Min macro position for bullish impulse end", minval=0.20, maxval=0.80, step=0.05)
+maxMacroEndPosition = input.float(0.55, "Max macro position for bearish impulse end", minval=0.20, maxval=0.80, step=0.05)
 
 fibNearTolerance = input.float(0.035, "Fib near tolerance", minval=0.005, maxval=0.15, step=0.005)
 
@@ -33,6 +35,11 @@ f_dailyImpulse() =>
     atrD = ta.atr(atrLenD)
     ph = ta.pivothigh(high, pivotLenD, pivotLenD)
     pl = ta.pivotlow(low, pivotLenD, pivotLenD)
+
+    macroHigh = ta.highest(high, lookbackDays)
+    macroLow = ta.lowest(low, lookbackDays)
+    macroMid = (macroHigh + macroLow) / 2.0
+    macroSize = macroHigh - macroLow
 
     var float lastSwingHigh = na
     var float lastSwingLow = na
@@ -50,6 +57,7 @@ f_dailyImpulse() =>
     var int impulseEndTime = na
     var float impulsePct = na
     var float impulseAtr = na
+    var string rejectionReason = "None"
 
     if not na(ph)
         phBar = bar_index - pivotLenD
@@ -59,8 +67,11 @@ f_dailyImpulse() =>
             size = ph - lastSwingLow
             pct = lastSwingLow != 0.0 ? size / lastSwingLow * 100.0 : na
             atrs = not na(atrD[pivotLenD]) and atrD[pivotLenD] > 0.0 ? size / atrD[pivotLenD] : na
+            endPos = macroSize > 0 ? (ph - macroLow) / macroSize : na
             brokePreviousHigh = na(lastSwingHigh) or ph > lastSwingHigh
-            validBull = size > 0 and bars >= minImpulseBars and brokePreviousHigh and ((not na(pct) and pct >= minImpulsePct) or (not na(atrs) and atrs >= minImpulseAtr))
+            sizeOk = size > 0 and bars >= minImpulseBars and ((not na(pct) and pct >= minImpulsePct) or (not na(atrs) and atrs >= minImpulseAtr))
+            macroOk = not na(endPos) and endPos >= minMacroEndPosition
+            validBull = sizeOk and brokePreviousHigh and macroOk
             if validBull
                 impulseDir := 1
                 impulseStart := lastSwingLow
@@ -71,6 +82,9 @@ f_dailyImpulse() =>
                 impulseEndTime := phTime
                 impulsePct := pct
                 impulseAtr := atrs
+                rejectionReason := "None"
+            else if sizeOk and brokePreviousHigh and not macroOk
+                rejectionReason := "Bull move rejected: end still low in macro range"
         lastSwingHigh := ph
         lastSwingHighBar := phBar
         lastSwingHighTime := phTime
@@ -83,8 +97,11 @@ f_dailyImpulse() =>
             size = lastSwingHigh - pl
             pct = lastSwingHigh != 0.0 ? size / lastSwingHigh * 100.0 : na
             atrs = not na(atrD[pivotLenD]) and atrD[pivotLenD] > 0.0 ? size / atrD[pivotLenD] : na
+            endPos = macroSize > 0 ? (pl - macroLow) / macroSize : na
             brokePreviousLow = na(lastSwingLow) or pl < lastSwingLow
-            validBear = size > 0 and bars >= minImpulseBars and brokePreviousLow and ((not na(pct) and pct >= minImpulsePct) or (not na(atrs) and atrs >= minImpulseAtr))
+            sizeOk = size > 0 and bars >= minImpulseBars and ((not na(pct) and pct >= minImpulsePct) or (not na(atrs) and atrs >= minImpulseAtr))
+            macroOk = not na(endPos) and endPos <= maxMacroEndPosition
+            validBear = sizeOk and brokePreviousLow and macroOk
             if validBear
                 impulseDir := -1
                 impulseStart := lastSwingHigh
@@ -95,16 +112,15 @@ f_dailyImpulse() =>
                 impulseEndTime := plTime
                 impulsePct := pct
                 impulseAtr := atrs
+                rejectionReason := "None"
+            else if sizeOk and brokePreviousLow and not macroOk
+                rejectionReason := "Bear move rejected: end still high in macro range"
         lastSwingLow := pl
         lastSwingLowBar := plBar
         lastSwingLowTime := plTime
 
     impulseAge = not na(impulseEndBar) ? bar_index - impulseEndBar : na
     impulseIsRecent = not na(impulseAge) and impulseAge <= lookbackDays
-
-    macroHigh = ta.highest(high, lookbackDays)
-    macroLow = ta.lowest(low, lookbackDays)
-    macroMid = (macroHigh + macroLow) / 2.0
 
     float retr = na
     if impulseIsRecent and impulseDir == 1 and not na(impulseStart) and not na(impulseEnd) and impulseEnd > impulseStart
@@ -113,9 +129,9 @@ f_dailyImpulse() =>
         retr := (close - impulseEnd) / (impulseStart - impulseEnd)
 
     activeDir = impulseIsRecent ? impulseDir : 0
-    [activeDir, impulseStart, impulseEnd, impulseStartTime, impulseEndTime, impulsePct, impulseAtr, retr, macroHigh, macroLow, macroMid]
+    [activeDir, impulseStart, impulseEnd, impulseStartTime, impulseEndTime, impulsePct, impulseAtr, retr, macroHigh, macroLow, macroMid, rejectionReason]
 
-[globalDir, impulseStart, impulseEnd, impulseStartTime, impulseEndTime, impulsePct, impulseAtr, retracement, macroHigh, macroLow, macroMid] = request.security(syminfo.tickerid, "D", f_dailyImpulse(), barmerge.gaps_off, barmerge.lookahead_off)
+[globalDir, impulseStart, impulseEnd, impulseStartTime, impulseEndTime, impulsePct, impulseAtr, retracement, macroHigh, macroLow, macroMid, rejectionReason] = request.security(syminfo.tickerid, "D", f_dailyImpulse(), barmerge.gaps_off, barmerge.lookahead_off)
 
 rangeSize = macroHigh - macroLow
 rangePosition = rangeSize > 0 ? (close - macroLow) / rangeSize : na
@@ -125,15 +141,21 @@ fibText = "na"
 if not na(retracement)
     fibText := retracement < 0 ? "continuation / beyond end" : math.abs(retracement - 0.382) <= fibNearTolerance ? "near 0.382" : math.abs(retracement - 0.5) <= fibNearTolerance ? "near 0.5" : math.abs(retracement - 0.618) <= fibNearTolerance ? "near 0.618" : math.abs(retracement - 0.705) <= fibNearTolerance ? "near 0.705" : math.abs(retracement - 0.786) <= fibNearTolerance ? "near 0.786" : retracement > 0.786 ? "deep correction" : "between fib levels"
 
-stateText = globalDir == 1 ? "DAILY_BULLISH_IMPULSE" : globalDir == -1 ? "DAILY_BEARISH_IMPULSE" : "MACRO_RANGE"
+lastImpulseText = globalDir == 1 ? "LAST GLOBAL IMPULSE UP" : globalDir == -1 ? "LAST GLOBAL IMPULSE DOWN" : "NO VALID GLOBAL IMPULSE"
+currentContext = "MACRO_RANGE_" + str.upper(str.replace(rangeText, " ", "_"))
+if globalDir == 1
+    currentContext := na(retracement) ? "BULLISH_IMPULSE_CONTEXT" : retracement < 0 ? "BULLISH_CONTINUATION" : retracement <= 0.382 ? "BULLISH_SHALLOW_CORRECTION" : retracement <= 0.618 ? "BULLISH_CORRECTION" : retracement <= 0.786 ? "BULLISH_DEEP_CORRECTION" : "BULLISH_IMPULSE_BROKEN_OR_RANGE"
+if globalDir == -1
+    currentContext := na(retracement) ? "BEARISH_IMPULSE_CONTEXT" : retracement < 0 ? "BEARISH_CONTINUATION" : retracement <= 0.382 ? "BEARISH_SHALLOW_CORRECTION" : retracement <= 0.618 ? "BEARISH_CORRECTION" : retracement <= 0.786 ? "BEARISH_DEEP_CORRECTION" : "BEARISH_IMPULSE_BROKEN_OR_RANGE"
+
 dirText = globalDir == 1 ? "UP" : globalDir == -1 ? "DOWN" : "NONE"
 
 plot(showMacroRange ? macroHigh : na, "Macro Range High", color=color.new(color.red, 30), linewidth=1, style=plot.style_linebr)
 plot(showMacroRange ? macroLow : na, "Macro Range Low", color=color.new(color.lime, 30), linewidth=1, style=plot.style_linebr)
 plot(showMacroRange ? macroMid : na, "Macro Range Mid", color=color.new(color.gray, 45), linewidth=1, style=plot.style_linebr)
 
-bgcolor(showRangeBackground and globalDir == 0 and rangePosition >= 0.66 ? color.new(color.red, 92) : na)
-bgcolor(showRangeBackground and globalDir == 0 and rangePosition <= 0.33 ? color.new(color.lime, 92) : na)
+bgcolor(showRangeBackground and rangePosition >= 0.66 ? color.new(color.red, 92) : na)
+bgcolor(showRangeBackground and rangePosition <= 0.33 ? color.new(color.lime, 92) : na)
 
 var line impulseLine = na
 var label startLabel = na
@@ -154,28 +176,30 @@ if barstate.islast and showImpulseLabels and globalDir != 0 and not na(impulseSt
     startLabel := label.new(impulseStartTime, impulseStart, "Impulse Start\n" + str.tostring(impulseStart, format.mintick), xloc=xloc.bar_time, style=globalDir == 1 ? label.style_label_up : label.style_label_down, color=color.new(color.blue, 0), textcolor=color.white, size=size.small)
     endLabel := label.new(impulseEndTime, impulseEnd, "Impulse End\n" + str.tostring(impulseEnd, format.mintick), xloc=xloc.bar_time, style=globalDir == 1 ? label.style_label_down : label.style_label_up, color=globalDir == 1 ? color.new(color.lime, 0) : color.new(color.red, 0), textcolor=color.white, size=size.small)
 
-var table dash = table.new(position.top_right, 2, 11, border_width=1)
+var table dash = table.new(position.top_right, 2, 12, border_width=1)
 if showDashboard and barstate.islast
-    table.clear(dash, 0, 0, 1, 10)
+    table.clear(dash, 0, 0, 1, 11)
     table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.black)
-    table.cell(dash, 1, 0, "Global Impulse Map v0.1", text_color=color.white, bgcolor=color.black)
-    table.cell(dash, 0, 1, "State", text_color=color.white)
-    table.cell(dash, 1, 1, stateText, text_color=color.white)
-    table.cell(dash, 0, 2, "Direction", text_color=color.white)
-    table.cell(dash, 1, 2, dirText, text_color=color.white)
-    table.cell(dash, 0, 3, "Impulse Start", text_color=color.white)
-    table.cell(dash, 1, 3, na(impulseStart) or globalDir == 0 ? "na" : str.tostring(impulseStart, format.mintick), text_color=color.white)
-    table.cell(dash, 0, 4, "Impulse End", text_color=color.white)
-    table.cell(dash, 1, 4, na(impulseEnd) or globalDir == 0 ? "na" : str.tostring(impulseEnd, format.mintick), text_color=color.white)
-    table.cell(dash, 0, 5, "Size % / ATR", text_color=color.white)
-    table.cell(dash, 1, 5, globalDir == 0 ? "na" : str.tostring(impulsePct, "#.##") + "% / " + str.tostring(impulseAtr, "#.##"), text_color=color.white)
-    table.cell(dash, 0, 6, "Fib position", text_color=color.white)
-    table.cell(dash, 1, 6, globalDir == 0 ? "na" : fibText, text_color=color.white)
-    table.cell(dash, 0, 7, "Retracement", text_color=color.white)
-    table.cell(dash, 1, 7, globalDir == 0 or na(retracement) ? "na" : str.tostring(retracement, "#.###"), text_color=color.white)
-    table.cell(dash, 0, 8, "Macro Range H/L", text_color=color.white)
-    table.cell(dash, 1, 8, str.tostring(macroHigh, format.mintick) + " / " + str.tostring(macroLow, format.mintick), text_color=color.white)
-    table.cell(dash, 0, 9, "Range position", text_color=color.white)
-    table.cell(dash, 1, 9, rangeText, text_color=color.white)
-    table.cell(dash, 0, 10, "Scope", text_color=color.white)
-    table.cell(dash, 1, 10, "1D only, no entries", text_color=color.white)
+    table.cell(dash, 1, 0, "Global Impulse Map v0.2", text_color=color.white, bgcolor=color.black)
+    table.cell(dash, 0, 1, "Last impulse", text_color=color.white)
+    table.cell(dash, 1, 1, lastImpulseText, text_color=color.white)
+    table.cell(dash, 0, 2, "Current context", text_color=color.white)
+    table.cell(dash, 1, 2, currentContext, text_color=color.white)
+    table.cell(dash, 0, 3, "Direction", text_color=color.white)
+    table.cell(dash, 1, 3, dirText, text_color=color.white)
+    table.cell(dash, 0, 4, "Impulse Start", text_color=color.white)
+    table.cell(dash, 1, 4, na(impulseStart) or globalDir == 0 ? "na" : str.tostring(impulseStart, format.mintick), text_color=color.white)
+    table.cell(dash, 0, 5, "Impulse End", text_color=color.white)
+    table.cell(dash, 1, 5, na(impulseEnd) or globalDir == 0 ? "na" : str.tostring(impulseEnd, format.mintick), text_color=color.white)
+    table.cell(dash, 0, 6, "Size % / ATR", text_color=color.white)
+    table.cell(dash, 1, 6, globalDir == 0 ? "na" : str.tostring(impulsePct, "#.##") + "% / " + str.tostring(impulseAtr, "#.##"), text_color=color.white)
+    table.cell(dash, 0, 7, "Fib position", text_color=color.white)
+    table.cell(dash, 1, 7, globalDir == 0 ? "na" : fibText, text_color=color.white)
+    table.cell(dash, 0, 8, "Retracement", text_color=color.white)
+    table.cell(dash, 1, 8, globalDir == 0 or na(retracement) ? "na" : str.tostring(retracement, "#.###"), text_color=color.white)
+    table.cell(dash, 0, 9, "Macro Range H/L", text_color=color.white)
+    table.cell(dash, 1, 9, str.tostring(macroHigh, format.mintick) + " / " + str.tostring(macroLow, format.mintick), text_color=color.white)
+    table.cell(dash, 0, 10, "Range position", text_color=color.white)
+    table.cell(dash, 1, 10, rangeText, text_color=color.white)
+    table.cell(dash, 0, 11, "Rejected candidate", text_color=color.white)
+    table.cell(dash, 1, 11, rejectionReason, text_color=color.white)
