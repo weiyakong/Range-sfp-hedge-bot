@@ -1,15 +1,13 @@
 //@version=6
-indicator("Impulse Fib From Rejection v0.2", overlay=true, max_labels_count=80, max_lines_count=80)
+indicator("Global + Local Impulse Fib v0.3", overlay=true, max_labels_count=120, max_lines_count=80)
 
 // -----------------------------------------------------------------------------
-// Impulse Fib From Rejection v0.2
-// Fix of previous bad sloped-range experiment.
+// Global + Local Impulse Fib v0.3
 //
-// What this file does now:
-// 1) Restores the previous global impulse measurement logic from the 1D map.
-// 2) Draws the measured impulse line: impulse start -> impulse rejection point.
-// 3) Builds HORIZONTAL Fibonacci levels from the impulse rejection point back
-//    toward the impulse start.
+// 1) Keeps the previous global impulse measurement from the 1D map.
+// 2) Builds GLOBAL horizontal fibs from impulse rejection back to impulse start.
+// 3) Builds LOCAL horizontal fibs from the same impulse rejection low/high
+//    to the current recovery extreme after that rejection.
 //
 // No entries, no TP/SL, no automation.
 // -----------------------------------------------------------------------------
@@ -17,8 +15,10 @@ indicator("Impulse Fib From Rejection v0.2", overlay=true, max_labels_count=80, 
 showDashboard = input.bool(true, "Show dashboard")
 showImpulseLine = input.bool(true, "Show impulse measurement")
 showImpulseLabels = input.bool(true, "Show impulse labels")
-showFibLevels = input.bool(true, "Show horizontal fib levels")
-showTouchMarks = input.bool(true, "Show touch marks")
+showGlobalFib = input.bool(true, "Show GLOBAL fib")
+showLocalFib = input.bool(true, "Show LOCAL fib")
+showFibLabels = input.bool(true, "Show fib price labels")
+showTouchMarks = input.bool(false, "Show touch marks")
 
 // === Global impulse settings ===
 lookbackDays = input.int(244, "Daily lookback", minval=50, maxval=500)
@@ -32,8 +32,9 @@ maxMacroEndPosition = input.float(0.55, "Max macro position for bearish impulse 
 
 // === Fib settings ===
 fibNearTolerancePct = input.float(0.0035, "Fib near tolerance, % of impulse", minval=0.0005, maxval=0.02, step=0.0005)
+labelOffsetBars = input.int(10, "Fib label offset bars", minval=1, maxval=100)
 
-// === Daily global impulse function: restored previous measurement ===
+// === Daily global impulse function ===
 f_dailyImpulse() =>
     atrD = ta.atr(atrLenD)
     ph = ta.pivothigh(high, pivotLenD, pivotLenD)
@@ -127,96 +128,178 @@ f_dailyImpulse() =>
 
 [globalDir, impulseStart, impulseEnd, impulseStartTime, impulseEndTime, impulsePct, impulseAtr, macroHigh, macroLow, macroMid, rejectionReason] = request.security(syminfo.tickerid, "D", f_dailyImpulse(), barmerge.gaps_off, barmerge.lookahead_off)
 
-// === Horizontal fib from impulse rejection point ===
-// Rejection point = impulseEnd.
-// Fib is built from impulseEnd back toward impulseStart.
-impulseSizeAbs = not na(impulseStart) and not na(impulseEnd) ? math.abs(impulseStart - impulseEnd) : na
-fibValid = showFibLevels and globalDir != 0 and not na(impulseSizeAbs) and impulseSizeAbs > 0
-fibBase = impulseEnd
-fibTarget = impulseStart
+// === GLOBAL fib: full big impulse ===
+globalSize = not na(impulseStart) and not na(impulseEnd) ? math.abs(impulseStart - impulseEnd) : na
+globalFibValid = showGlobalFib and globalDir != 0 and not na(globalSize) and globalSize > 0
+gBase = impulseEnd
+gTarget = impulseStart
+f_gfib(r) => globalFibValid ? gBase + (gTarget - gBase) * r : na
 
-f_fib(r) =>
-    fibValid ? fibBase + (fibTarget - fibBase) * r : na
+g0 = f_gfib(0.0)
+g236 = f_gfib(0.236)
+g382 = f_gfib(0.382)
+g500 = f_gfib(0.5)
+g618 = f_gfib(0.618)
+g700 = f_gfib(0.7)
+g786 = f_gfib(0.786)
+g886 = f_gfib(0.886)
+g1 = f_gfib(1.0)
 
-fib000 = f_fib(0.0)
-fib236 = f_fib(0.236)
-fib382 = f_fib(0.382)
-fib500 = f_fib(0.5)
-fib618 = f_fib(0.618)
-fib700 = f_fib(0.7)
-fib786 = f_fib(0.786)
-fib886 = f_fib(0.886)
-fib100 = f_fib(1.0)
+// === LOCAL fib: from impulse rejection to recovery extreme after rejection ===
+var int storedImpulseEndTime = na
+var float localExtreme = na
 
-tolPrice = fibValid ? impulseSizeAbs * fibNearTolerancePct : na
+newImpulse = not na(impulseEndTime) and impulseEndTime != storedImpulseEndTime
+if newImpulse
+    storedImpulseEndTime := impulseEndTime
+    localExtreme := na
 
-f_dist(level) =>
-    math.abs(close - level)
+if globalDir != 0 and not na(impulseEndTime) and time >= impulseEndTime
+    if globalDir == -1
+        localExtreme := na(localExtreme) ? high : math.max(localExtreme, high)
+    if globalDir == 1
+        localExtreme := na(localExtreme) ? low : math.min(localExtreme, low)
+
+localSize = not na(localExtreme) and not na(impulseEnd) ? math.abs(localExtreme - impulseEnd) : na
+localFibValid = showLocalFib and globalDir != 0 and not na(localSize) and localSize > syminfo.mintick
+lBase = impulseEnd
+lTarget = localExtreme
+f_lfib(r) => localFibValid ? lBase + (lTarget - lBase) * r : na
+
+l0 = f_lfib(0.0)
+l236 = f_lfib(0.236)
+l382 = f_lfib(0.382)
+l500 = f_lfib(0.5)
+l618 = f_lfib(0.618)
+l700 = f_lfib(0.7)
+l786 = f_lfib(0.786)
+l886 = f_lfib(0.886)
+l1 = f_lfib(1.0)
+
+// === Nearest fib checks: local has priority if enabled ===
+activeSize = localFibValid ? localSize : globalSize
+tolPrice = not na(activeSize) ? activeSize * fibNearTolerancePct : na
+
+f_dist(level) => math.abs(close - level)
 
 float nearestFib = na
 string nearestFibName = "na"
+string nearestSet = localFibValid ? "LOCAL" : globalFibValid ? "GLOBAL" : "na"
 float nearestDist = na
-if fibValid
-    nearestFib := fib000
+
+f_check(level, name) =>
+    [f_dist(level), name, level]
+
+if localFibValid
+    nearestFib := l0
     nearestFibName := "0"
-    nearestDist := f_dist(fib000)
-    if f_dist(fib236) < nearestDist
-        nearestFib := fib236
+    nearestDist := f_dist(l0)
+    if f_dist(l236) < nearestDist
+        nearestFib := l236
         nearestFibName := "0.236"
-        nearestDist := f_dist(fib236)
-    if f_dist(fib382) < nearestDist
-        nearestFib := fib382
+        nearestDist := f_dist(l236)
+    if f_dist(l382) < nearestDist
+        nearestFib := l382
         nearestFibName := "0.382"
-        nearestDist := f_dist(fib382)
-    if f_dist(fib500) < nearestDist
-        nearestFib := fib500
+        nearestDist := f_dist(l382)
+    if f_dist(l500) < nearestDist
+        nearestFib := l500
         nearestFibName := "0.5"
-        nearestDist := f_dist(fib500)
-    if f_dist(fib618) < nearestDist
-        nearestFib := fib618
+        nearestDist := f_dist(l500)
+    if f_dist(l618) < nearestDist
+        nearestFib := l618
         nearestFibName := "0.618"
-        nearestDist := f_dist(fib618)
-    if f_dist(fib700) < nearestDist
-        nearestFib := fib700
+        nearestDist := f_dist(l618)
+    if f_dist(l700) < nearestDist
+        nearestFib := l700
         nearestFibName := "0.7"
-        nearestDist := f_dist(fib700)
-    if f_dist(fib786) < nearestDist
-        nearestFib := fib786
+        nearestDist := f_dist(l700)
+    if f_dist(l786) < nearestDist
+        nearestFib := l786
         nearestFibName := "0.786"
-        nearestDist := f_dist(fib786)
-    if f_dist(fib886) < nearestDist
-        nearestFib := fib886
+        nearestDist := f_dist(l786)
+    if f_dist(l886) < nearestDist
+        nearestFib := l886
         nearestFibName := "0.886"
-        nearestDist := f_dist(fib886)
-    if f_dist(fib100) < nearestDist
-        nearestFib := fib100
+        nearestDist := f_dist(l886)
+    if f_dist(l1) < nearestDist
+        nearestFib := l1
         nearestFibName := "1"
-        nearestDist := f_dist(fib100)
+        nearestDist := f_dist(l1)
+else if globalFibValid
+    nearestFib := g0
+    nearestFibName := "0"
+    nearestDist := f_dist(g0)
+    if f_dist(g236) < nearestDist
+        nearestFib := g236
+        nearestFibName := "0.236"
+        nearestDist := f_dist(g236)
+    if f_dist(g382) < nearestDist
+        nearestFib := g382
+        nearestFibName := "0.382"
+        nearestDist := f_dist(g382)
+    if f_dist(g500) < nearestDist
+        nearestFib := g500
+        nearestFibName := "0.5"
+        nearestDist := f_dist(g500)
+    if f_dist(g618) < nearestDist
+        nearestFib := g618
+        nearestFibName := "0.618"
+        nearestDist := f_dist(g618)
+    if f_dist(g700) < nearestDist
+        nearestFib := g700
+        nearestFibName := "0.7"
+        nearestDist := f_dist(g700)
+    if f_dist(g786) < nearestDist
+        nearestFib := g786
+        nearestFibName := "0.786"
+        nearestDist := f_dist(g786)
+    if f_dist(g886) < nearestDist
+        nearestFib := g886
+        nearestFibName := "0.886"
+        nearestDist := f_dist(g886)
+    if f_dist(g1) < nearestDist
+        nearestFib := g1
+        nearestFibName := "1"
+        nearestDist := f_dist(g1)
 
-nearNearestFib = fibValid and not na(nearestFib) and nearestDist <= tolPrice
-touchedNearestFib = fibValid and not na(nearestFib) and low <= nearestFib and high >= nearestFib
-wickPiercedNearestFib = fibValid and not na(nearestFib) and ((low < nearestFib and close > nearestFib) or (high > nearestFib and close < nearestFib))
+nearNearestFib = not na(nearestFib) and not na(tolPrice) and nearestDist <= tolPrice
+touchedNearestFib = not na(nearestFib) and low <= nearestFib and high >= nearestFib
+wickPiercedNearestFib = not na(nearestFib) and ((low < nearestFib and close > nearestFib) or (high > nearestFib and close < nearestFib))
 
-// === Context text ===
+// === Text helpers ===
+f_levelText(name, price) => name + " (" + str.tostring(price, format.mintick) + ")"
+
 lastImpulseText = globalDir == 1 ? "LAST GLOBAL IMPULSE UP" : globalDir == -1 ? "LAST GLOBAL IMPULSE DOWN" : "NO VALID GLOBAL IMPULSE"
 dirText = globalDir == 1 ? "UP" : globalDir == -1 ? "DOWN" : "NONE"
-anchorText = globalDir == -1 ? "bear impulse low / rejection" : globalDir == 1 ? "bull impulse high / rejection" : "na"
+localAnchorText = globalDir == -1 ? "rejection low → recovery high" : globalDir == 1 ? "rejection high → recovery low" : "na"
 
-// === Plots: macro context ===
-plot(macroHigh, "244D Macro Range High", color=color.new(color.red, 70), linewidth=1, style=plot.style_linebr)
-plot(macroLow, "244D Macro Range Low", color=color.new(color.lime, 70), linewidth=1, style=plot.style_linebr)
-plot(macroMid, "244D Macro Range Mid", color=color.new(color.gray, 75), linewidth=1, style=plot.style_linebr)
+// === Macro context ===
+plot(macroHigh, "244D Macro Range High", color=color.new(color.red, 80), linewidth=1, style=plot.style_linebr)
+plot(macroLow, "244D Macro Range Low", color=color.new(color.lime, 80), linewidth=1, style=plot.style_linebr)
+plot(macroMid, "244D Macro Range Mid", color=color.new(color.gray, 85), linewidth=1, style=plot.style_linebr)
 
-// === Plots: horizontal fibs ===
-plot(fib000, "Fib 0 rejection", color=color.new(color.white, 20), linewidth=2, style=plot.style_linebr)
-plot(fib236, "Fib 0.236", color=color.new(color.white, 65), linewidth=1, style=plot.style_linebr)
-plot(fib382, "Fib 0.382", color=color.new(color.white, 55), linewidth=1, style=plot.style_linebr)
-plot(fib500, "Fib 0.5", color=color.new(color.white, 45), linewidth=1, style=plot.style_linebr)
-plot(fib618, "Fib 0.618", color=color.new(color.yellow, 30), linewidth=1, style=plot.style_linebr)
-plot(fib700, "Fib 0.7", color=color.new(color.yellow, 20), linewidth=1, style=plot.style_linebr)
-plot(fib786, "Fib 0.786", color=color.new(color.orange, 10), linewidth=2, style=plot.style_linebr)
-plot(fib886, "Fib 0.886", color=color.new(color.red, 5), linewidth=2, style=plot.style_linebr)
-plot(fib100, "Fib 1 impulse start", color=color.new(color.white, 30), linewidth=1, style=plot.style_linebr)
+// === GLOBAL fib plots: thinner / darker ===
+plot(g0, "GLOBAL 0", color=color.new(color.white, 35), linewidth=2, style=plot.style_linebr)
+plot(g236, "GLOBAL 0.236", color=color.new(color.red, 70), linewidth=1, style=plot.style_linebr)
+plot(g382, "GLOBAL 0.382", color=color.new(color.orange, 70), linewidth=1, style=plot.style_linebr)
+plot(g500, "GLOBAL 0.5", color=color.new(color.white, 70), linewidth=1, style=plot.style_linebr)
+plot(g618, "GLOBAL 0.618", color=color.new(color.green, 70), linewidth=1, style=plot.style_linebr)
+plot(g700, "GLOBAL 0.7", color=color.new(color.yellow, 65), linewidth=1, style=plot.style_linebr)
+plot(g786, "GLOBAL 0.786", color=color.new(color.aqua, 60), linewidth=1, style=plot.style_linebr)
+plot(g886, "GLOBAL 0.886", color=color.new(color.red, 55), linewidth=1, style=plot.style_linebr)
+plot(g1, "GLOBAL 1", color=color.new(color.white, 50), linewidth=1, style=plot.style_linebr)
+
+// === LOCAL fib plots: brighter ===
+plot(l0, "LOCAL 0", color=color.new(color.white, 10), linewidth=2, style=plot.style_linebr)
+plot(l236, "LOCAL 0.236", color=color.new(color.red, 15), linewidth=1, style=plot.style_linebr)
+plot(l382, "LOCAL 0.382", color=color.new(color.orange, 10), linewidth=1, style=plot.style_linebr)
+plot(l500, "LOCAL 0.5", color=color.new(color.white, 10), linewidth=1, style=plot.style_linebr)
+plot(l618, "LOCAL 0.618", color=color.new(color.green, 5), linewidth=1, style=plot.style_linebr)
+plot(l700, "LOCAL 0.7", color=color.new(color.yellow, 0), linewidth=1, style=plot.style_linebr)
+plot(l786, "LOCAL 0.786", color=color.new(color.aqua, 0), linewidth=2, style=plot.style_linebr)
+plot(l886, "LOCAL 0.886", color=color.new(color.red, 0), linewidth=2, style=plot.style_linebr)
+plot(l1, "LOCAL 1", color=color.new(color.white, 0), linewidth=2, style=plot.style_linebr)
 
 plotshape(showTouchMarks and touchedNearestFib, title="Nearest fib touched", style=shape.circle, location=location.abovebar, size=size.tiny, color=color.new(color.yellow, 0), text="fib")
 plotshape(showTouchMarks and wickPiercedNearestFib, title="Nearest fib pierced/reclaimed", style=shape.triangleup, location=location.belowbar, size=size.tiny, color=color.new(color.lime, 0), text="re")
@@ -241,12 +324,57 @@ if barstate.islast and showImpulseLabels and globalDir != 0 and not na(impulseSt
     startLabel := label.new(impulseStartTime, impulseStart, "Impulse Start\n" + str.tostring(impulseStart, format.mintick), xloc=xloc.bar_time, style=globalDir == 1 ? label.style_label_up : label.style_label_down, color=color.new(color.blue, 0), textcolor=color.white, size=size.small)
     endLabel := label.new(impulseEndTime, impulseEnd, "Impulse Rejection\n" + str.tostring(impulseEnd, format.mintick), xloc=xloc.bar_time, style=globalDir == 1 ? label.style_label_down : label.style_label_up, color=globalDir == 1 ? color.new(color.lime, 0) : color.new(color.red, 0), textcolor=color.white, size=size.small)
 
+// === Right-side fib labels ===
+var label gLab0 = na
+var label gLab236 = na
+var label gLab382 = na
+var label gLab500 = na
+var label gLab618 = na
+var label gLab700 = na
+var label gLab786 = na
+var label gLab886 = na
+var label gLab1 = na
+var label lLab0 = na
+var label lLab236 = na
+var label lLab382 = na
+var label lLab500 = na
+var label lLab618 = na
+var label lLab700 = na
+var label lLab786 = na
+var label lLab886 = na
+var label lLab1 = na
+
+if barstate.islast and showFibLabels
+    label.delete(gLab0), label.delete(gLab236), label.delete(gLab382), label.delete(gLab500), label.delete(gLab618), label.delete(gLab700), label.delete(gLab786), label.delete(gLab886), label.delete(gLab1)
+    label.delete(lLab0), label.delete(lLab236), label.delete(lLab382), label.delete(lLab500), label.delete(lLab618), label.delete(lLab700), label.delete(lLab786), label.delete(lLab886), label.delete(lLab1)
+    x = bar_index + labelOffsetBars
+    if globalFibValid
+        gLab0 := label.new(x, g0, "G 0 (" + str.tostring(g0, format.mintick) + ")", style=label.style_label_left, textcolor=color.white, color=color.new(color.gray, 55))
+        gLab236 := label.new(x, g236, "G 0.236 (" + str.tostring(g236, format.mintick) + ")", style=label.style_label_left, textcolor=color.white, color=color.new(color.red, 70))
+        gLab382 := label.new(x, g382, "G 0.382 (" + str.tostring(g382, format.mintick) + ")", style=label.style_label_left, textcolor=color.white, color=color.new(color.orange, 70))
+        gLab500 := label.new(x, g500, "G 0.5 (" + str.tostring(g500, format.mintick) + ")", style=label.style_label_left, textcolor=color.white, color=color.new(color.gray, 70))
+        gLab618 := label.new(x, g618, "G 0.618 (" + str.tostring(g618, format.mintick) + ")", style=label.style_label_left, textcolor=color.white, color=color.new(color.green, 70))
+        gLab700 := label.new(x, g700, "G 0.7 (" + str.tostring(g700, format.mintick) + ")", style=label.style_label_left, textcolor=color.white, color=color.new(color.yellow, 70))
+        gLab786 := label.new(x, g786, "G 0.786 (" + str.tostring(g786, format.mintick) + ")", style=label.style_label_left, textcolor=color.white, color=color.new(color.aqua, 65))
+        gLab886 := label.new(x, g886, "G 0.886 (" + str.tostring(g886, format.mintick) + ")", style=label.style_label_left, textcolor=color.white, color=color.new(color.red, 60))
+        gLab1 := label.new(x, g1, "G 1 (" + str.tostring(g1, format.mintick) + ")", style=label.style_label_left, textcolor=color.white, color=color.new(color.gray, 55))
+    if localFibValid
+        lLab0 := label.new(x, l0, "L 0 (" + str.tostring(l0, format.mintick) + ")", style=label.style_label_left, textcolor=color.white, color=color.new(color.gray, 20))
+        lLab236 := label.new(x, l236, "L 0.236 (" + str.tostring(l236, format.mintick) + ")", style=label.style_label_left, textcolor=color.white, color=color.new(color.red, 20))
+        lLab382 := label.new(x, l382, "L 0.382 (" + str.tostring(l382, format.mintick) + ")", style=label.style_label_left, textcolor=color.white, color=color.new(color.orange, 15))
+        lLab500 := label.new(x, l500, "L 0.5 (" + str.tostring(l500, format.mintick) + ")", style=label.style_label_left, textcolor=color.white, color=color.new(color.gray, 20))
+        lLab618 := label.new(x, l618, "L 0.618 (" + str.tostring(l618, format.mintick) + ")", style=label.style_label_left, textcolor=color.white, color=color.new(color.green, 15))
+        lLab700 := label.new(x, l700, "L 0.7 (" + str.tostring(l700, format.mintick) + ")", style=label.style_label_left, textcolor=color.black, color=color.new(color.yellow, 0))
+        lLab786 := label.new(x, l786, "L 0.786 (" + str.tostring(l786, format.mintick) + ")", style=label.style_label_left, textcolor=color.black, color=color.new(color.aqua, 0))
+        lLab886 := label.new(x, l886, "L 0.886 (" + str.tostring(l886, format.mintick) + ")", style=label.style_label_left, textcolor=color.white, color=color.new(color.red, 0))
+        lLab1 := label.new(x, l1, "L 1 (" + str.tostring(l1, format.mintick) + ")", style=label.style_label_left, textcolor=color.white, color=color.new(color.gray, 5))
+
 // === Dashboard ===
-var table dash = table.new(position.top_right, 2, 15, border_width=1)
+var table dash = table.new(position.top_right, 2, 18, border_width=1)
 if showDashboard and barstate.islast
-    table.clear(dash, 0, 0, 1, 14)
+    table.clear(dash, 0, 0, 1, 17)
     table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.black)
-    table.cell(dash, 1, 0, "Impulse Fib From Rejection v0.2", text_color=color.white, bgcolor=color.black)
+    table.cell(dash, 1, 0, "Global + Local Impulse Fib v0.3", text_color=color.white, bgcolor=color.black)
     table.cell(dash, 0, 1, "Last impulse", text_color=color.white)
     table.cell(dash, 1, 1, lastImpulseText, text_color=color.white)
     table.cell(dash, 0, 2, "Direction", text_color=color.white)
@@ -255,23 +383,29 @@ if showDashboard and barstate.islast
     table.cell(dash, 1, 3, globalDir == 0 ? "na" : str.tostring(impulseStart, format.mintick), text_color=color.white)
     table.cell(dash, 0, 4, "Impulse Rejection", text_color=color.white)
     table.cell(dash, 1, 4, globalDir == 0 ? "na" : str.tostring(impulseEnd, format.mintick), text_color=color.white)
-    table.cell(dash, 0, 5, "Anchor", text_color=color.white)
-    table.cell(dash, 1, 5, anchorText, text_color=color.white)
-    table.cell(dash, 0, 6, "Size % / ATR", text_color=color.white)
-    table.cell(dash, 1, 6, globalDir == 0 ? "na" : str.tostring(impulsePct, "#.##") + "% / " + str.tostring(impulseAtr, "#.##"), text_color=color.white)
-    table.cell(dash, 0, 7, "Nearest fib", text_color=color.white)
-    table.cell(dash, 1, 7, nearestFibName + " / " + str.tostring(nearestFib, format.mintick), text_color=color.white)
-    table.cell(dash, 0, 8, "Near?", text_color=color.white)
-    table.cell(dash, 1, 8, nearNearestFib ? "YES" : "NO", text_color=color.white)
-    table.cell(dash, 0, 9, "Touched?", text_color=color.white)
-    table.cell(dash, 1, 9, touchedNearestFib ? "YES" : "NO", text_color=color.white)
-    table.cell(dash, 0, 10, "Pierced/reclaimed?", text_color=color.white)
-    table.cell(dash, 1, 10, wickPiercedNearestFib ? "YES" : "NO", text_color=color.white)
-    table.cell(dash, 0, 11, "0.786", text_color=color.white)
-    table.cell(dash, 1, 11, str.tostring(fib786, format.mintick), text_color=color.white)
-    table.cell(dash, 0, 12, "0.886", text_color=color.white)
-    table.cell(dash, 1, 12, str.tostring(fib886, format.mintick), text_color=color.white)
-    table.cell(dash, 0, 13, "Macro H/L", text_color=color.white)
-    table.cell(dash, 1, 13, str.tostring(macroHigh, format.mintick) + " / " + str.tostring(macroLow, format.mintick), text_color=color.white)
-    table.cell(dash, 0, 14, "Rejected candidate", text_color=color.white)
-    table.cell(dash, 1, 14, rejectionReason, text_color=color.white)
+    table.cell(dash, 0, 5, "Global fib", text_color=color.white, bgcolor=color.new(color.gray, 80))
+    table.cell(dash, 1, 5, globalFibValid ? str.tostring(g0, format.mintick) + " → " + str.tostring(g1, format.mintick) : "na", text_color=color.white, bgcolor=color.new(color.gray, 80))
+    table.cell(dash, 0, 6, "Local fib", text_color=color.white, bgcolor=color.new(color.gray, 80))
+    table.cell(dash, 1, 6, localFibValid ? str.tostring(l0, format.mintick) + " → " + str.tostring(l1, format.mintick) : "na", text_color=color.white, bgcolor=color.new(color.gray, 80))
+    table.cell(dash, 0, 7, "Local anchor", text_color=color.white)
+    table.cell(dash, 1, 7, localAnchorText, text_color=color.white)
+    table.cell(dash, 0, 8, "Size % / ATR", text_color=color.white)
+    table.cell(dash, 1, 8, globalDir == 0 ? "na" : str.tostring(impulsePct, "#.##") + "% / " + str.tostring(impulseAtr, "#.##"), text_color=color.white)
+    table.cell(dash, 0, 9, "Nearest set", text_color=color.white)
+    table.cell(dash, 1, 9, nearestSet, text_color=color.white)
+    table.cell(dash, 0, 10, "Nearest fib", text_color=color.white)
+    table.cell(dash, 1, 10, nearestFibName + " / " + str.tostring(nearestFib, format.mintick), text_color=color.white)
+    table.cell(dash, 0, 11, "Touched?", text_color=color.white)
+    table.cell(dash, 1, 11, touchedNearestFib ? "YES" : "NO", text_color=color.white)
+    table.cell(dash, 0, 12, "LOCAL 0.618", text_color=color.white)
+    table.cell(dash, 1, 12, f_levelText("0.618", l618), text_color=color.white)
+    table.cell(dash, 0, 13, "LOCAL 0.786", text_color=color.white)
+    table.cell(dash, 1, 13, f_levelText("0.786", l786), text_color=color.white)
+    table.cell(dash, 0, 14, "LOCAL 0.886", text_color=color.white)
+    table.cell(dash, 1, 14, f_levelText("0.886", l886), text_color=color.white)
+    table.cell(dash, 0, 15, "GLOBAL 0.786", text_color=color.white)
+    table.cell(dash, 1, 15, f_levelText("0.786", g786), text_color=color.white)
+    table.cell(dash, 0, 16, "GLOBAL 0.886", text_color=color.white)
+    table.cell(dash, 1, 16, f_levelText("0.886", g886), text_color=color.white)
+    table.cell(dash, 0, 17, "Rejected candidate", text_color=color.white)
+    table.cell(dash, 1, 17, rejectionReason, text_color=color.white)
