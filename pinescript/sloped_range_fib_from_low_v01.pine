@@ -1,0 +1,186 @@
+//@version=6
+indicator("Sloped Range + Fib From Low v0.1", overlay=true, max_labels_count=80, max_lines_count=80)
+
+// -----------------------------------------------------------------------------
+// Sloped Range + Fib From Low v0.1
+// Separate debug file.
+//
+// Purpose:
+// 1) Detect a tilted / sloped local range as a regression channel.
+// 2) Mark upper/lower rejection zones around the sloped boundaries.
+// 3) Build a Fibonacci grid from the lower rejection zone upward.
+// 4) Show factual level checks: nearest fib, touched/not touched, price position.
+//
+// No entries, no automation, no TP/SL, no risk management.
+// -----------------------------------------------------------------------------
+
+showDashboard = input.bool(true, "Show dashboard")
+showSlopedRange = input.bool(true, "Show sloped range")
+showRejectionZones = input.bool(true, "Show rejection zones")
+showFib = input.bool(true, "Show fib from lower rejection zone")
+showTouchMarks = input.bool(true, "Show fib touch marks")
+
+// === Sloped range settings ===
+rangeLen = input.int(120, "Sloped range lookback", minval=30, maxval=500)
+atrLen = input.int(14, "ATR length", minval=1, maxval=100)
+zoneAtr = input.float(0.25, "Rejection zone width in ATR", minval=0.05, maxval=2.0, step=0.05)
+touchTolAtr = input.float(0.20, "Boundary touch tolerance in ATR", minval=0.05, maxval=1.0, step=0.05)
+minTouchesPerSide = input.int(2, "Min touches per side", minval=1, maxval=10)
+minChannelAtr = input.float(2.0, "Min channel height in ATR", minval=0.5, step=0.5)
+maxSlopeAtrPerBar = input.float(0.08, "Max slope per bar in ATR", minval=0.01, maxval=0.50, step=0.01)
+
+// === Fib settings ===
+fibLowSource = input.string("Lower boundary", "Fib 0 anchor", options=["Lower zone bottom", "Lower boundary", "Lower zone top"])
+fibHighSource = input.string("Upper boundary", "Fib 1 anchor", options=["Upper boundary", "Highest high in lookback"])
+fibNearAtr = input.float(0.20, "Fib near tolerance in ATR", minval=0.05, maxval=2.0, step=0.05)
+
+atr = ta.atr(atrLen)
+
+// === Sloped range as regression channel ===
+upper = ta.linreg(high, rangeLen, 0)
+lower = ta.linreg(low, rangeLen, 0)
+mid = (upper + lower) / 2.0
+height = upper - lower
+heightAtr = atr > 0 ? height / atr : na
+slope = mid - mid[1]
+slopeAtr = atr > 0 ? math.abs(slope) / atr : na
+
+upperZoneTop = upper + atr * zoneAtr
+upperZoneBottom = upper - atr * zoneAtr
+lowerZoneTop = lower + atr * zoneAtr
+lowerZoneBottom = lower - atr * zoneAtr
+
+// === Boundary touch diagnostics ===
+tol = atr * touchTolAtr
+int upperTouches = 0
+int lowerTouches = 0
+for i = 0 to rangeLen - 1
+    upperTouches += high[i] >= upper[i] - tol[i] ? 1 : 0
+    lowerTouches += low[i] <= lower[i] + tol[i] ? 1 : 0
+
+enoughTouches = upperTouches >= minTouchesPerSide and lowerTouches >= minTouchesPerSide
+enoughHeight = not na(heightAtr) and heightAtr >= minChannelAtr
+slopeOk = not na(slopeAtr) and slopeAtr <= maxSlopeAtrPerBar
+insideChannel = close <= upperZoneTop and close >= lowerZoneBottom
+validSlopedRange = enoughTouches and enoughHeight and slopeOk and insideChannel
+
+rangeStatus = validSlopedRange ? "VALID_SLOPED_RANGE" : not enoughHeight ? "RANGE_TOO_SMALL" : not enoughTouches ? "NOT_ENOUGH_TOUCHES" : not slopeOk ? "TOO_STEEP / IMPULSE" : close > upperZoneTop ? "ABOVE_RANGE" : close < lowerZoneBottom ? "BELOW_RANGE" : "UNCLEAR"
+
+rangePos = height > 0 ? (close - lower) / height : na
+rangePosText = na(rangePos) ? "na" : rangePos >= 0.66 ? "upper third" : rangePos <= 0.33 ? "lower third" : "middle"
+
+// === Fib from lower rejection zone ===
+fibLow = fibLowSource == "Lower zone bottom" ? lowerZoneBottom : fibLowSource == "Lower zone top" ? lowerZoneTop : lower
+fibHigh = fibHighSource == "Highest high in lookback" ? ta.highest(high, rangeLen) : upper
+fibSize = fibHigh - fibLow
+fibValid = showFib and fibSize > 0 and not na(fibSize)
+
+fib236 = fibValid ? fibLow + fibSize * 0.236 : na
+fib382 = fibValid ? fibLow + fibSize * 0.382 : na
+fib500 = fibValid ? fibLow + fibSize * 0.500 : na
+fib618 = fibValid ? fibLow + fibSize * 0.618 : na
+fib705 = fibValid ? fibLow + fibSize * 0.705 : na
+fib786 = fibValid ? fibLow + fibSize * 0.786 : na
+fib886 = fibValid ? fibLow + fibSize * 0.886 : na
+
+f_dist(level) =>
+    math.abs(close - level)
+
+float nearestFib = na
+string nearestFibName = "na"
+float nearestDist = na
+if fibValid
+    nearestFib := fib236
+    nearestFibName := "0.236"
+    nearestDist := f_dist(fib236)
+    if f_dist(fib382) < nearestDist
+        nearestFib := fib382
+        nearestFibName := "0.382"
+        nearestDist := f_dist(fib382)
+    if f_dist(fib500) < nearestDist
+        nearestFib := fib500
+        nearestFibName := "0.5"
+        nearestDist := f_dist(fib500)
+    if f_dist(fib618) < nearestDist
+        nearestFib := fib618
+        nearestFibName := "0.618"
+        nearestDist := f_dist(fib618)
+    if f_dist(fib705) < nearestDist
+        nearestFib := fib705
+        nearestFibName := "0.705"
+        nearestDist := f_dist(fib705)
+    if f_dist(fib786) < nearestDist
+        nearestFib := fib786
+        nearestFibName := "0.786"
+        nearestDist := f_dist(fib786)
+    if f_dist(fib886) < nearestDist
+        nearestFib := fib886
+        nearestFibName := "0.886"
+        nearestDist := f_dist(fib886)
+
+nearNearestFib = fibValid and not na(nearestFib) and nearestDist <= atr * fibNearAtr
+touchedNearestFib = fibValid and not na(nearestFib) and low <= nearestFib and high >= nearestFib
+wickPiercedNearestFib = fibValid and not na(nearestFib) and ((low < nearestFib and close > nearestFib) or (high > nearestFib and close < nearestFib))
+
+// === Plots: sloped range ===
+pUpper = plot(showSlopedRange ? upper : na, "Sloped Range Upper", color=color.new(color.orange, 0), linewidth=2)
+pLower = plot(showSlopedRange ? lower : na, "Sloped Range Lower", color=color.new(color.aqua, 0), linewidth=2)
+pMid = plot(showSlopedRange ? mid : na, "Sloped Range Mid", color=color.new(color.gray, 40), linewidth=1)
+fill(pUpper, pLower, color=showSlopedRange ? color.new(color.gray, 92) : na, title="Sloped Range Fill")
+
+pUzTop = plot(showRejectionZones ? upperZoneTop : na, "Upper Rejection Zone Top", color=color.new(color.red, 70), linewidth=1)
+pUzBot = plot(showRejectionZones ? upperZoneBottom : na, "Upper Rejection Zone Bottom", color=color.new(color.red, 70), linewidth=1)
+fill(pUzTop, pUzBot, color=showRejectionZones ? color.new(color.red, 90) : na, title="Upper Rejection Zone")
+
+pLzTop = plot(showRejectionZones ? lowerZoneTop : na, "Lower Rejection Zone Top", color=color.new(color.lime, 70), linewidth=1)
+pLzBot = plot(showRejectionZones ? lowerZoneBottom : na, "Lower Rejection Zone Bottom", color=color.new(color.lime, 70), linewidth=1)
+fill(pLzTop, pLzBot, color=showRejectionZones ? color.new(color.lime, 90) : na, title="Lower Rejection Zone")
+
+// === Plots: fib grid from low ===
+plot(fibValid ? fibLow : na, "Fib 0 from lower zone", color=color.new(color.white, 35), linewidth=1)
+plot(fib236, "Fib 0.236", color=color.new(color.white, 65), linewidth=1)
+plot(fib382, "Fib 0.382", color=color.new(color.white, 55), linewidth=1)
+plot(fib500, "Fib 0.5", color=color.new(color.white, 45), linewidth=1)
+plot(fib618, "Fib 0.618", color=color.new(color.yellow, 35), linewidth=1)
+plot(fib705, "Fib 0.705", color=color.new(color.yellow, 25), linewidth=1)
+plot(fib786, "Fib 0.786", color=color.new(color.orange, 15), linewidth=2)
+plot(fib886, "Fib 0.886", color=color.new(color.red, 10), linewidth=2)
+plot(fibValid ? fibHigh : na, "Fib 1 target", color=color.new(color.white, 35), linewidth=1)
+
+plotshape(showTouchMarks and touchedNearestFib, title="Nearest fib touched", style=shape.circle, location=location.abovebar, size=size.tiny, color=color.new(color.yellow, 0), text="fib")
+plotshape(showTouchMarks and wickPiercedNearestFib, title="Nearest fib pierced/reclaimed", style=shape.triangleup, location=location.belowbar, size=size.tiny, color=color.new(color.lime, 0), text="re")
+
+// === Dashboard ===
+var table dash = table.new(position.top_right, 2, 15, border_width=1)
+if showDashboard and barstate.islast
+    table.clear(dash, 0, 0, 1, 14)
+    table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.black)
+    table.cell(dash, 1, 0, "Sloped Range + Fib From Low v0.1", text_color=color.white, bgcolor=color.black)
+    table.cell(dash, 0, 1, "Range status", text_color=color.white)
+    table.cell(dash, 1, 1, rangeStatus, text_color=color.white)
+    table.cell(dash, 0, 2, "Position", text_color=color.white)
+    table.cell(dash, 1, 2, rangePosText + " / " + str.tostring(rangePos, "#.###"), text_color=color.white)
+    table.cell(dash, 0, 3, "Upper / Lower", text_color=color.white)
+    table.cell(dash, 1, 3, str.tostring(upper, format.mintick) + " / " + str.tostring(lower, format.mintick), text_color=color.white)
+    table.cell(dash, 0, 4, "Height / Slope", text_color=color.white)
+    table.cell(dash, 1, 4, str.tostring(heightAtr, "#.##") + " ATR / " + str.tostring(slopeAtr, "#.###") + " ATR/bar", text_color=color.white)
+    table.cell(dash, 0, 5, "Touches", text_color=color.white)
+    table.cell(dash, 1, 5, "U " + str.tostring(upperTouches) + " / L " + str.tostring(lowerTouches), text_color=color.white)
+    table.cell(dash, 0, 6, "Fib anchors", text_color=color.white, bgcolor=color.new(color.gray, 80))
+    table.cell(dash, 1, 6, str.tostring(fibLow, format.mintick) + " → " + str.tostring(fibHigh, format.mintick), text_color=color.white, bgcolor=color.new(color.gray, 80))
+    table.cell(dash, 0, 7, "Nearest fib", text_color=color.white)
+    table.cell(dash, 1, 7, nearestFibName + " / " + str.tostring(nearestFib, format.mintick), text_color=color.white)
+    table.cell(dash, 0, 8, "Near?", text_color=color.white)
+    table.cell(dash, 1, 8, nearNearestFib ? "YES" : "NO", text_color=color.white)
+    table.cell(dash, 0, 9, "Touched?", text_color=color.white)
+    table.cell(dash, 1, 9, touchedNearestFib ? "YES" : "NO", text_color=color.white)
+    table.cell(dash, 0, 10, "Pierced/reclaimed?", text_color=color.white)
+    table.cell(dash, 1, 10, wickPiercedNearestFib ? "YES" : "NO", text_color=color.white)
+    table.cell(dash, 0, 11, "0.786", text_color=color.white)
+    table.cell(dash, 1, 11, str.tostring(fib786, format.mintick), text_color=color.white)
+    table.cell(dash, 0, 12, "0.886", text_color=color.white)
+    table.cell(dash, 1, 12, str.tostring(fib886, format.mintick), text_color=color.white)
+    table.cell(dash, 0, 13, "Lower zone", text_color=color.white)
+    table.cell(dash, 1, 13, str.tostring(lowerZoneBottom, format.mintick) + " – " + str.tostring(lowerZoneTop, format.mintick), text_color=color.white)
+    table.cell(dash, 0, 14, "Upper zone", text_color=color.white)
+    table.cell(dash, 1, 14, str.tostring(upperZoneBottom, format.mintick) + " – " + str.tostring(upperZoneTop, format.mintick), text_color=color.white)
