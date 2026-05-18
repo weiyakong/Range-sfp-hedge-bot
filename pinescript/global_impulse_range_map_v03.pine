@@ -1,0 +1,262 @@
+//@version=6
+indicator("Global Impulse + Range Map v0.3", overlay=true, max_labels_count=120, max_lines_count=80)
+
+// -----------------------------------------------------------------------------
+// Global Impulse + Range Map v0.3
+// Separate file. The old global_impulse_map_v01.pine stays untouched.
+//
+// Layers included:
+// 1) Global Impulse Map v0.2 logic on 1D.
+// 2) Range Map layer on selectable local timeframe.
+//
+// No entries, no SFP execution, no TP/SL, no risk management, no automation.
+// -----------------------------------------------------------------------------
+
+showDashboard = input.bool(true, "Show dashboard")
+showImpulseLine = input.bool(true, "Show global impulse line")
+showImpulseLabels = input.bool(true, "Show global impulse labels")
+showMacroRange = input.bool(true, "Show 244D macro range")
+showLocalRange = input.bool(true, "Show local range")
+showLocalRangeBg = input.bool(false, "Show local range position background")
+
+// === Global impulse settings ===
+lookbackDays = input.int(244, "Daily lookback", minval=50, maxval=500)
+pivotLenD = input.int(5, "1D pivot length", minval=2, maxval=30)
+atrLenD = input.int(14, "1D ATR length", minval=1, maxval=100)
+minImpulsePct = input.float(15.0, "Min impulse %", minval=1.0, step=0.5)
+minImpulseAtr = input.float(5.0, "Min impulse ATR", minval=1.0, step=0.5)
+minImpulseBars = input.int(3, "Min daily bars in impulse", minval=1, maxval=60)
+minMacroEndPosition = input.float(0.45, "Min macro position for bullish impulse end", minval=0.20, maxval=0.80, step=0.05)
+maxMacroEndPosition = input.float(0.55, "Max macro position for bearish impulse end", minval=0.20, maxval=0.80, step=0.05)
+fibNearTolerance = input.float(0.035, "Fib near tolerance", minval=0.005, maxval=0.15, step=0.005)
+
+// === Local range settings ===
+localRangeTf = input.timeframe("60", "Local range timeframe")
+localRangeLookback = input.int(96, "Local range lookback bars", minval=20, maxval=400)
+localAtrLen = input.int(14, "Local ATR length", minval=1, maxval=100)
+minLocalRangeAtr = input.float(4.0, "Min local range size in ATR", minval=0.5, step=0.5)
+rangeTouchToleranceAtr = input.float(0.35, "Range edge tolerance in ATR", minval=0.05, step=0.05)
+minEdgeTouches = input.int(2, "Min touches per edge", minval=1, maxval=10)
+breakoutBufferAtr = input.float(0.25, "Breakout buffer in ATR", minval=0.0, step=0.05)
+
+// === Daily global impulse function ===
+f_dailyImpulse() =>
+    atrD = ta.atr(atrLenD)
+    ph = ta.pivothigh(high, pivotLenD, pivotLenD)
+    pl = ta.pivotlow(low, pivotLenD, pivotLenD)
+
+    macroHigh = ta.highest(high, lookbackDays)
+    macroLow = ta.lowest(low, lookbackDays)
+    macroMid = (macroHigh + macroLow) / 2.0
+    macroSize = macroHigh - macroLow
+
+    var float lastSwingHigh = na
+    var float lastSwingLow = na
+    var int lastSwingHighBar = na
+    var int lastSwingLowBar = na
+    var int lastSwingHighTime = na
+    var int lastSwingLowTime = na
+
+    var int impulseDir = 0
+    var float impulseStart = na
+    var float impulseEnd = na
+    var int impulseEndBar = na
+    var int impulseStartTime = na
+    var int impulseEndTime = na
+    var float impulsePct = na
+    var float impulseAtr = na
+    var string rejectionReason = "None"
+
+    if not na(ph)
+        phBar = bar_index - pivotLenD
+        phTime = time[pivotLenD]
+        if not na(lastSwingLow)
+            bars = phBar - lastSwingLowBar
+            size = ph - lastSwingLow
+            pct = lastSwingLow != 0.0 ? size / lastSwingLow * 100.0 : na
+            atrs = not na(atrD[pivotLenD]) and atrD[pivotLenD] > 0.0 ? size / atrD[pivotLenD] : na
+            endPos = macroSize > 0 ? (ph - macroLow) / macroSize : na
+            brokePreviousHigh = na(lastSwingHigh) or ph > lastSwingHigh
+            sizeOk = size > 0 and bars >= minImpulseBars and ((not na(pct) and pct >= minImpulsePct) or (not na(atrs) and atrs >= minImpulseAtr))
+            macroOk = not na(endPos) and endPos >= minMacroEndPosition
+            validBull = sizeOk and brokePreviousHigh and macroOk
+            if validBull
+                impulseDir := 1
+                impulseStart := lastSwingLow
+                impulseEnd := ph
+                impulseEndBar := phBar
+                impulseStartTime := lastSwingLowTime
+                impulseEndTime := phTime
+                impulsePct := pct
+                impulseAtr := atrs
+                rejectionReason := "None"
+            else if sizeOk and brokePreviousHigh and not macroOk
+                rejectionReason := "Bull move rejected: end still low in macro range"
+        lastSwingHigh := ph
+        lastSwingHighBar := phBar
+        lastSwingHighTime := phTime
+
+    if not na(pl)
+        plBar = bar_index - pivotLenD
+        plTime = time[pivotLenD]
+        if not na(lastSwingHigh)
+            bars = plBar - lastSwingHighBar
+            size = lastSwingHigh - pl
+            pct = lastSwingHigh != 0.0 ? size / lastSwingHigh * 100.0 : na
+            atrs = not na(atrD[pivotLenD]) and atrD[pivotLenD] > 0.0 ? size / atrD[pivotLenD] : na
+            endPos = macroSize > 0 ? (pl - macroLow) / macroSize : na
+            brokePreviousLow = na(lastSwingLow) or pl < lastSwingLow
+            sizeOk = size > 0 and bars >= minImpulseBars and ((not na(pct) and pct >= minImpulsePct) or (not na(atrs) and atrs >= minImpulseAtr))
+            macroOk = not na(endPos) and endPos <= maxMacroEndPosition
+            validBear = sizeOk and brokePreviousLow and macroOk
+            if validBear
+                impulseDir := -1
+                impulseStart := lastSwingHigh
+                impulseEnd := pl
+                impulseEndBar := plBar
+                impulseStartTime := lastSwingHighTime
+                impulseEndTime := plTime
+                impulsePct := pct
+                impulseAtr := atrs
+                rejectionReason := "None"
+            else if sizeOk and brokePreviousLow and not macroOk
+                rejectionReason := "Bear move rejected: end still high in macro range"
+        lastSwingLow := pl
+        lastSwingLowBar := plBar
+        lastSwingLowTime := plTime
+
+    impulseAge = not na(impulseEndBar) ? bar_index - impulseEndBar : na
+    impulseIsRecent = not na(impulseAge) and impulseAge <= lookbackDays
+
+    float retr = na
+    if impulseIsRecent and impulseDir == 1 and not na(impulseStart) and not na(impulseEnd) and impulseEnd > impulseStart
+        retr := (impulseEnd - close) / (impulseEnd - impulseStart)
+    if impulseIsRecent and impulseDir == -1 and not na(impulseStart) and not na(impulseEnd) and impulseStart > impulseEnd
+        retr := (close - impulseEnd) / (impulseStart - impulseEnd)
+
+    activeDir = impulseIsRecent ? impulseDir : 0
+    [activeDir, impulseStart, impulseEnd, impulseStartTime, impulseEndTime, impulsePct, impulseAtr, retr, macroHigh, macroLow, macroMid, rejectionReason]
+
+// === Local range function ===
+f_localRange() =>
+    atrL = ta.atr(localAtrLen)
+    rHigh = ta.highest(high, localRangeLookback)
+    rLow = ta.lowest(low, localRangeLookback)
+    rMid = (rHigh + rLow) / 2.0
+    rSize = rHigh - rLow
+    rAtr = atrL > 0.0 ? rSize / atrL : na
+    tol = atrL * rangeTouchToleranceAtr
+    breakBuf = atrL * breakoutBufferAtr
+
+    int highTouches = 0
+    int lowTouches = 0
+    for i = 0 to localRangeLookback - 1
+        highTouches += high[i] >= rHigh - tol ? 1 : 0
+        lowTouches += low[i] <= rLow + tol ? 1 : 0
+
+    pos = rSize > 0.0 ? (close - rLow) / rSize : na
+    enoughSize = not na(rAtr) and rAtr >= minLocalRangeAtr
+    enoughTouches = highTouches >= minEdgeTouches and lowTouches >= minEdgeTouches
+    inside = close <= rHigh + breakBuf and close >= rLow - breakBuf
+    validRange = enoughSize and enoughTouches and inside
+
+    status = validRange ? "VALID_RANGE" : not enoughSize ? "RANGE_TOO_SMALL" : not enoughTouches ? "NOT_ENOUGH_EDGE_TOUCHES" : close > rHigh + breakBuf ? "BREAKOUT_UP" : close < rLow - breakBuf ? "BREAKOUT_DOWN" : "UNCLEAR_RANGE"
+    positionText = na(pos) ? "na" : pos >= 0.66 ? "upper third" : pos <= 0.33 ? "lower third" : "middle"
+    interest = validRange ? (pos >= 0.66 ? "upper edge interest" : pos <= 0.33 ? "lower edge interest" : "middle / low interest") : "no valid range"
+
+    [rHigh, rLow, rMid, pos, rAtr, highTouches, lowTouches, status, positionText, interest]
+
+// === MTF calls ===
+[globalDir, impulseStart, impulseEnd, impulseStartTime, impulseEndTime, impulsePct, impulseAtr, retracement, macroHigh, macroLow, macroMid, rejectionReason] = request.security(syminfo.tickerid, "D", f_dailyImpulse(), barmerge.gaps_off, barmerge.lookahead_off)
+[localHigh, localLow, localMid, localPos, localRangeAtr, localHighTouches, localLowTouches, localRangeStatus, localRangePositionText, localInterest] = request.security(syminfo.tickerid, localRangeTf, f_localRange(), barmerge.gaps_off, barmerge.lookahead_off)
+
+// === Text contexts ===
+macroSize = macroHigh - macroLow
+macroPosition = macroSize > 0 ? (close - macroLow) / macroSize : na
+macroPositionText = na(macroPosition) ? "na" : macroPosition >= 0.66 ? "upper third" : macroPosition <= 0.33 ? "lower third" : "middle"
+
+fibText = "na"
+if not na(retracement)
+    fibText := retracement < 0 ? "continuation / beyond end" : math.abs(retracement - 0.382) <= fibNearTolerance ? "near 0.382" : math.abs(retracement - 0.5) <= fibNearTolerance ? "near 0.5" : math.abs(retracement - 0.618) <= fibNearTolerance ? "near 0.618" : math.abs(retracement - 0.705) <= fibNearTolerance ? "near 0.705" : math.abs(retracement - 0.786) <= fibNearTolerance ? "near 0.786" : retracement > 0.786 ? "deep correction" : "between fib levels"
+
+lastImpulseText = globalDir == 1 ? "LAST GLOBAL IMPULSE UP" : globalDir == -1 ? "LAST GLOBAL IMPULSE DOWN" : "NO VALID GLOBAL IMPULSE"
+currentContext = "MACRO_RANGE_" + str.upper(str.replace(macroPositionText, " ", "_"))
+if globalDir == 1
+    currentContext := na(retracement) ? "BULLISH_IMPULSE_CONTEXT" : retracement < 0 ? "BULLISH_CONTINUATION" : retracement <= 0.382 ? "BULLISH_SHALLOW_CORRECTION" : retracement <= 0.618 ? "BULLISH_CORRECTION" : retracement <= 0.786 ? "BULLISH_DEEP_CORRECTION" : "BULLISH_IMPULSE_BROKEN_OR_RANGE"
+if globalDir == -1
+    currentContext := na(retracement) ? "BEARISH_IMPULSE_CONTEXT" : retracement < 0 ? "BEARISH_CONTINUATION" : retracement <= 0.382 ? "BEARISH_SHALLOW_CORRECTION" : retracement <= 0.618 ? "BEARISH_CORRECTION" : retracement <= 0.786 ? "BEARISH_DEEP_CORRECTION" : "BEARISH_IMPULSE_BROKEN_OR_RANGE"
+
+dirText = globalDir == 1 ? "UP" : globalDir == -1 ? "DOWN" : "NONE"
+
+// === Plots ===
+plot(showMacroRange ? macroHigh : na, "244D Macro Range High", color=color.new(color.red, 30), linewidth=1, style=plot.style_linebr)
+plot(showMacroRange ? macroLow : na, "244D Macro Range Low", color=color.new(color.lime, 30), linewidth=1, style=plot.style_linebr)
+plot(showMacroRange ? macroMid : na, "244D Macro Range Mid", color=color.new(color.gray, 45), linewidth=1, style=plot.style_linebr)
+
+plot(showLocalRange ? localHigh : na, "Local Range High", color=color.new(color.orange, 0), linewidth=2, style=plot.style_linebr)
+plot(showLocalRange ? localLow : na, "Local Range Low", color=color.new(color.aqua, 0), linewidth=2, style=plot.style_linebr)
+plot(showLocalRange ? localMid : na, "Local Range Mid", color=color.new(color.white, 50), linewidth=1, style=plot.style_linebr)
+
+bgcolor(showLocalRangeBg and localPos >= 0.66 ? color.new(color.red, 92) : na)
+bgcolor(showLocalRangeBg and localPos <= 0.33 ? color.new(color.lime, 92) : na)
+
+// === Global impulse visuals ===
+var line impulseLine = na
+var label startLabel = na
+var label endLabel = na
+
+if barstate.islast and showImpulseLine and globalDir != 0 and not na(impulseStartTime) and not na(impulseEndTime)
+    if na(impulseLine)
+        impulseLine := line.new(impulseStartTime, impulseStart, impulseEndTime, impulseEnd, xloc=xloc.bar_time, color=globalDir == 1 ? color.lime : color.red, width=3)
+    else
+        line.set_xy1(impulseLine, impulseStartTime, impulseStart)
+        line.set_xy2(impulseLine, impulseEndTime, impulseEnd)
+        line.set_color(impulseLine, globalDir == 1 ? color.lime : color.red)
+        line.set_width(impulseLine, 3)
+
+if barstate.islast and showImpulseLabels and globalDir != 0 and not na(impulseStartTime) and not na(impulseEndTime)
+    label.delete(startLabel)
+    label.delete(endLabel)
+    startLabel := label.new(impulseStartTime, impulseStart, "Impulse Start\n" + str.tostring(impulseStart, format.mintick), xloc=xloc.bar_time, style=globalDir == 1 ? label.style_label_up : label.style_label_down, color=color.new(color.blue, 0), textcolor=color.white, size=size.small)
+    endLabel := label.new(impulseEndTime, impulseEnd, "Impulse End\n" + str.tostring(impulseEnd, format.mintick), xloc=xloc.bar_time, style=globalDir == 1 ? label.style_label_down : label.style_label_up, color=globalDir == 1 ? color.new(color.lime, 0) : color.new(color.red, 0), textcolor=color.white, size=size.small)
+
+// === Dashboard ===
+var table dash = table.new(position.top_right, 2, 18, border_width=1)
+if showDashboard and barstate.islast
+    table.clear(dash, 0, 0, 1, 17)
+    table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.black)
+    table.cell(dash, 1, 0, "Global Impulse + Range Map v0.3", text_color=color.white, bgcolor=color.black)
+    table.cell(dash, 0, 1, "Last impulse", text_color=color.white)
+    table.cell(dash, 1, 1, lastImpulseText, text_color=color.white)
+    table.cell(dash, 0, 2, "Current context", text_color=color.white)
+    table.cell(dash, 1, 2, currentContext, text_color=color.white)
+    table.cell(dash, 0, 3, "Direction", text_color=color.white)
+    table.cell(dash, 1, 3, dirText, text_color=color.white)
+    table.cell(dash, 0, 4, "Impulse Start", text_color=color.white)
+    table.cell(dash, 1, 4, na(impulseStart) or globalDir == 0 ? "na" : str.tostring(impulseStart, format.mintick), text_color=color.white)
+    table.cell(dash, 0, 5, "Impulse End", text_color=color.white)
+    table.cell(dash, 1, 5, na(impulseEnd) or globalDir == 0 ? "na" : str.tostring(impulseEnd, format.mintick), text_color=color.white)
+    table.cell(dash, 0, 6, "Size % / ATR", text_color=color.white)
+    table.cell(dash, 1, 6, globalDir == 0 ? "na" : str.tostring(impulsePct, "#.##") + "% / " + str.tostring(impulseAtr, "#.##"), text_color=color.white)
+    table.cell(dash, 0, 7, "Fib position", text_color=color.white)
+    table.cell(dash, 1, 7, globalDir == 0 ? "na" : fibText, text_color=color.white)
+    table.cell(dash, 0, 8, "Retracement", text_color=color.white)
+    table.cell(dash, 1, 8, globalDir == 0 or na(retracement) ? "na" : str.tostring(retracement, "#.###"), text_color=color.white)
+    table.cell(dash, 0, 9, "Macro Range H/L", text_color=color.white)
+    table.cell(dash, 1, 9, str.tostring(macroHigh, format.mintick) + " / " + str.tostring(macroLow, format.mintick), text_color=color.white)
+    table.cell(dash, 0, 10, "Macro position", text_color=color.white)
+    table.cell(dash, 1, 10, macroPositionText, text_color=color.white)
+    table.cell(dash, 0, 11, "Rejected candidate", text_color=color.white)
+    table.cell(dash, 1, 11, rejectionReason, text_color=color.white)
+    table.cell(dash, 0, 12, "Local TF", text_color=color.white, bgcolor=color.new(color.gray, 80))
+    table.cell(dash, 1, 12, localRangeTf, text_color=color.white, bgcolor=color.new(color.gray, 80))
+    table.cell(dash, 0, 13, "Local range", text_color=color.white)
+    table.cell(dash, 1, 13, localRangeStatus, text_color=color.white)
+    table.cell(dash, 0, 14, "Local H/M/L", text_color=color.white)
+    table.cell(dash, 1, 14, str.tostring(localHigh, format.mintick) + " / " + str.tostring(localMid, format.mintick) + " / " + str.tostring(localLow, format.mintick), text_color=color.white)
+    table.cell(dash, 0, 15, "Local position", text_color=color.white)
+    table.cell(dash, 1, 15, localRangePositionText + " / " + str.tostring(localPos, "#.###"), text_color=color.white)
+    table.cell(dash, 0, 16, "Range ATR / touches", text_color=color.white)
+    table.cell(dash, 1, 16, str.tostring(localRangeAtr, "#.##") + " ATR / H " + str.tostring(localHighTouches) + " L " + str.tostring(localLowTouches), text_color=color.white)
+    table.cell(dash, 0, 17, "Interest", text_color=color.white)
+    table.cell(dash, 1, 17, localInterest, text_color=color.white)
