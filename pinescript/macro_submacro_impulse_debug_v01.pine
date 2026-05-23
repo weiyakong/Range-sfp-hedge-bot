@@ -1,5 +1,5 @@
 //@version=6
-indicator("Macro + Sub-macro Impulse Debug v0.3 HISTORICAL BOS", overlay=true, max_lines_count=300, max_labels_count=300)
+indicator("Macro + Sub-macro Impulse Debug v0.4 SEQUENCE", overlay=true, max_lines_count=300, max_labels_count=300)
 
 pivotLen = input.int(4, "Pivot length", minval=2, maxval=10)
 lookbackDays = input.int(1825, "Lookback days", minval=100, maxval=3000)
@@ -20,6 +20,10 @@ bearSubColor = input.color(color.new(color.red, 55), "Bear sub-macro color")
 var int[] pivBars = array.new_int()
 var float[] pivPrices = array.new_float()
 var int[] pivTypes = array.new_int() // 1 = high, -1 = low
+
+var int[] macroStartIdx = array.new_int()
+var int[] macroEndIdx = array.new_int()
+var int[] macroDir = array.new_int()
 
 var line[] lines = array.new_line()
 var label[] labels = array.new_label()
@@ -110,6 +114,79 @@ f_drawSubMacrosForMacro(_macroStartIndex, _macroEndIndex, _dir, _macroStartPrice
                         drawnSub += 1
     true
 
+f_buildSequences() =>
+    array.clear(macroStartIdx)
+    array.clear(macroEndIdx)
+    array.clear(macroDir)
+
+    int pivCount = array.size(pivBars)
+    int dir = 0
+    int seqStart = na
+    int seqEnd = na
+    int lastHigh = na
+    int lastLow = na
+
+    if pivCount >= 2
+        for i = 0 to pivCount - 1
+            int t = array.get(pivTypes, i)
+            float p = array.get(pivPrices, i)
+
+            if t == 1
+                if dir == 1
+                    if na(seqEnd) or p > array.get(pivPrices, seqEnd)
+                        seqEnd := i
+                else if dir == -1
+                    bool bullBreak = not na(lastHigh) and p > array.get(pivPrices, lastHigh)
+                    if bullBreak
+                        if not na(seqStart) and not na(seqEnd)
+                            float finishedMove = f_movePct(array.get(pivPrices, seqStart), array.get(pivPrices, seqEnd), -1)
+                            if finishedMove >= macroMinMovePct
+                                array.push(macroStartIdx, seqStart)
+                                array.push(macroEndIdx, seqEnd)
+                                array.push(macroDir, -1)
+                        seqStart := lastLow
+                        seqEnd := i
+                        dir := 1
+                else
+                    bool bullStart = not na(lastHigh) and p > array.get(pivPrices, lastHigh) and not na(lastLow)
+                    if bullStart
+                        seqStart := lastLow
+                        seqEnd := i
+                        dir := 1
+                lastHigh := i
+
+            if t == -1
+                if dir == -1
+                    if na(seqEnd) or p < array.get(pivPrices, seqEnd)
+                        seqEnd := i
+                else if dir == 1
+                    bool bearBreak = not na(lastLow) and p < array.get(pivPrices, lastLow)
+                    if bearBreak
+                        if not na(seqStart) and not na(seqEnd)
+                            float finishedMove = f_movePct(array.get(pivPrices, seqStart), array.get(pivPrices, seqEnd), 1)
+                            if finishedMove >= macroMinMovePct
+                                array.push(macroStartIdx, seqStart)
+                                array.push(macroEndIdx, seqEnd)
+                                array.push(macroDir, 1)
+                        seqStart := lastHigh
+                        seqEnd := i
+                        dir := -1
+                else
+                    bool bearStart = not na(lastLow) and p < array.get(pivPrices, lastLow) and not na(lastHigh)
+                    if bearStart
+                        seqStart := lastHigh
+                        seqEnd := i
+                        dir := -1
+                lastLow := i
+
+        if dir != 0 and not na(seqStart) and not na(seqEnd)
+            float liveMove = f_movePct(array.get(pivPrices, seqStart), array.get(pivPrices, seqEnd), dir)
+            if liveMove >= macroMinMovePct
+                array.push(macroStartIdx, seqStart)
+                array.push(macroEndIdx, seqEnd)
+                array.push(macroDir, dir)
+    true
+
 ph = ta.pivothigh(high, pivotLen, pivotLen)
 pl = ta.pivotlow(low, pivotLen, pivotLen)
 
@@ -125,45 +202,25 @@ if not na(pl)
 
 if barstate.islast
     f_clearDrawings()
-    int pivCount = array.size(pivBars)
-    int drawnMacro = 0
-    int activeDir = 0
-    int lastHighIdx = na
-    int lastLowIdx = na
+    f_buildSequences()
 
-    if pivCount >= 2
-        for i = 0 to pivCount - 1
-            int pType = array.get(pivTypes, i)
-            float pPrice = array.get(pivPrices, i)
-
-            if pType == 1
-                bool bullBos = not na(lastHighIdx) and not na(lastLowIdx) and pPrice > array.get(pivPrices, lastHighIdx)
-                if bullBos and activeDir != 1 and drawnMacro < maxMacroImpulses
-                    int startIdx = f_findExtremeIndex(lastHighIdx, i, -1)
-                    if not na(startIdx)
-                        float startPrice = array.get(pivPrices, startIdx)
-                        float move = f_movePct(startPrice, pPrice, 1)
-                        bool insideLookback = bar_index - array.get(pivBars, startIdx) <= lookbackDays
-                        if insideLookback and move >= macroMinMovePct
-                            string suffix = drawnMacro == 0 ? " latest" : ""
-                            f_drawLine(array.get(pivBars, startIdx), startPrice, array.get(pivBars, i), pPrice, 1, true, move, suffix)
-                            f_drawSubMacrosForMacro(startIdx, i, 1, startPrice, pPrice, array.get(pivBars, i))
-                            drawnMacro += 1
-                            activeDir := 1
-                lastHighIdx := i
-
-            if pType == -1
-                bool bearBos = not na(lastLowIdx) and not na(lastHighIdx) and pPrice < array.get(pivPrices, lastLowIdx)
-                if bearBos and activeDir != -1 and drawnMacro < maxMacroImpulses
-                    int startIdx = f_findExtremeIndex(lastLowIdx, i, 1)
-                    if not na(startIdx)
-                        float startPrice = array.get(pivPrices, startIdx)
-                        float move = f_movePct(startPrice, pPrice, -1)
-                        bool insideLookback = bar_index - array.get(pivBars, startIdx) <= lookbackDays
-                        if insideLookback and move >= macroMinMovePct
-                            string suffix = drawnMacro == 0 ? " latest" : ""
-                            f_drawLine(array.get(pivBars, startIdx), startPrice, array.get(pivBars, i), pPrice, -1, true, move, suffix)
-                            f_drawSubMacrosForMacro(startIdx, i, -1, startPrice, pPrice, array.get(pivBars, i))
-                            drawnMacro += 1
-                            activeDir := -1
-                lastLowIdx := i
+    int count = array.size(macroStartIdx)
+    int drawn = 0
+    if count > 0
+        for n = 0 to count - 1
+            int k = count - 1 - n
+            if drawn < maxMacroImpulses
+                int sIdx = array.get(macroStartIdx, k)
+                int eIdx = array.get(macroEndIdx, k)
+                int dir = array.get(macroDir, k)
+                int sBar = array.get(pivBars, sIdx)
+                int eBar = array.get(pivBars, eIdx)
+                bool insideLookback = bar_index - sBar <= lookbackDays
+                if insideLookback
+                    float sPrice = array.get(pivPrices, sIdx)
+                    float ePrice = array.get(pivPrices, eIdx)
+                    float move = f_movePct(sPrice, ePrice, dir)
+                    string suffix = drawn == 0 ? " latest" : ""
+                    f_drawLine(sBar, sPrice, eBar, ePrice, dir, true, move, suffix)
+                    f_drawSubMacrosForMacro(sIdx, eIdx, dir, sPrice, ePrice, eBar)
+                    drawn += 1
