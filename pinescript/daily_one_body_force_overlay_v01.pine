@@ -1,7 +1,7 @@
 //@version=6
-indicator("Daily One Body Levels v0.4", overlay=true, max_lines_count=300, max_labels_count=300)
+indicator("Daily One Body Levels v0.5", overlay=true, max_lines_count=300, max_labels_count=300)
 
-// Daily One Body logic v0.4
+// Daily One Body logic v0.5
 // 1) Adjacent CLOSED Daily candles only.
 // 2) Opposite-color pairs only: one bullish candle and one bearish candle.
 // 3) Matching body edges only:
@@ -14,7 +14,7 @@ indicator("Daily One Body Levels v0.4", overlay=true, max_lines_count=300, max_l
 toleranceUsd = input.float(100.0, "Daily tolerance USD", minval=1.0, step=1.0)
 lookbackPairs = input.int(40, "Daily pairs lookback", minval=2, maxval=150)
 maxLevels = input.int(30, "Max Daily levels", minval=1, maxval=100)
-labelOffsetBars = input.int(6, "Label offset", minval=1, maxval=200)
+labelOffsetBars = input.int(80, "Label offset", minval=1, maxval=500)
 labelOffsetUsd = input.float(15.0, "Label vertical offset USD", minval=0.0, step=1.0)
 invalidateBufferUsd = input.float(5.0, "Invalidation buffer USD", minval=0.0, step=1.0)
 
@@ -25,6 +25,9 @@ showLabels = input.bool(true, "Show labels")
 var line[] dailyLines = array.new_line()
 var label[] dailyLabels = array.new_label()
 var float[] dailyPrices = array.new_float()
+
+f_labelText(_price) =>
+    "Daily — " + str.tostring(_price, format.mintick)
 
 f_clear() =>
     int lineCount = array.size(dailyLines)
@@ -61,7 +64,7 @@ f_addLevel(_price, _startBar) =>
             label lb = label.new(
                  x=bar_index + labelOffsetBars,
                  y=_price + labelOffsetUsd,
-                 text="Daily",
+                 text=f_labelText(_price),
                  xloc=xloc.bar_index,
                  style=label.style_none,
                  textcolor=levelColor,
@@ -139,4 +142,4 @@ if barstate.islast
             float p = array.get(dailyPrices, i)
             label.set_x(lb, bar_index + labelOffsetBars)
             label.set_y(lb, p + labelOffsetUsd)
-            label.set_text(lb, "Daily")
+            label.set_text(lb, f_labelText(p))
