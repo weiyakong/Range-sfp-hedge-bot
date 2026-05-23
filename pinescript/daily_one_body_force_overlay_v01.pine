@@ -1,11 +1,20 @@
 //@version=6
-indicator("Daily One Body Levels v0.1", overlay=true, max_lines_count=300, max_labels_count=300)
+indicator("Daily One Body Levels v0.2", overlay=true, max_lines_count=300, max_labels_count=300)
+
+// Daily One Body logic v0.2
+// 1) Uses only adjacent CLOSED Daily candles.
+// 2) Accepts only opposite-color pairs: one bullish candle and one bearish candle.
+// 3) Checks only matching body edges:
+//    - body high vs body high
+//    - body low vs body low
+// This removes staircase levels from same-direction candles.
 
 toleranceUsd = input.float(100.0, "Daily tolerance USD", minval=1.0, step=1.0)
 lookbackPairs = input.int(40, "Daily pairs lookback", minval=2, maxval=150)
-minDistanceUsd = input.float(150.0, "Min distance between levels USD", minval=0.0, step=10.0)
+minDistanceUsd = input.float(120.0, "Min distance between levels USD", minval=0.0, step=10.0)
 maxLevels = input.int(20, "Max Daily levels", minval=1, maxval=100)
 labelOffsetBars = input.int(30, "Label offset", minval=1, maxval=200)
+labelOffsetUsd = input.float(15.0, "Label vertical offset USD", minval=0.0, step=1.0)
 
 levelColor = input.color(color.new(color.lime, 0), "Daily color")
 levelWidth = input.int(1, "Line width", minval=1, maxval=3)
@@ -58,19 +67,19 @@ f_addLevel(_price, _startBar) =>
         if showLabels
             label lb = label.new(
                  x=bar_index + labelOffsetBars,
-                 y=_price,
-                 text="Daily — " + str.tostring(_price, format.mintick),
+                 y=_price + labelOffsetUsd,
+                 text="Daily",
                  xloc=xloc.bar_index,
-                 style=label.style_label_left,
-                 textcolor=color.black,
-                 color=color.new(levelColor, 0),
+                 style=label.style_none,
+                 textcolor=levelColor,
+                 color=color.new(color.white, 100),
                  size=size.small,
                  force_overlay=true
             )
             array.push(dailyLabels, lb)
     true
 
-f_checkPair(_p1, _p2, _startBar) =>
+f_checkEdge(_p1, _p2, _startBar) =>
     float diff = math.abs(_p1 - _p2)
     if diff <= toleranceUsd
         float level = (_p1 + _p2) / 2.0
@@ -87,10 +96,20 @@ if barstate.islast
         float c2 = close[i + 1]
         int startBar = bar_index - (i + 1)
 
-        f_checkPair(o1, o2, startBar)
-        f_checkPair(o1, c2, startBar)
-        f_checkPair(c1, o2, startBar)
-        f_checkPair(c1, c2, startBar)
+        bool bull1 = c1 > o1
+        bool bear1 = c1 < o1
+        bool bull2 = c2 > o2
+        bool bear2 = c2 < o2
+        bool oppositeColors = (bull1 and bear2) or (bear1 and bull2)
+
+        if oppositeColors
+            float high1 = math.max(o1, c1)
+            float low1 = math.min(o1, c1)
+            float high2 = math.max(o2, c2)
+            float low2 = math.min(o2, c2)
+
+            f_checkEdge(high1, high2, startBar)
+            f_checkEdge(low1, low2, startBar)
 
     int labelCount = array.size(dailyLabels)
     if labelCount > 0
@@ -98,5 +117,5 @@ if barstate.islast
             label lb = array.get(dailyLabels, i)
             float p = array.get(dailyPrices, i)
             label.set_x(lb, bar_index + labelOffsetBars)
-            label.set_y(lb, p)
-            label.set_text(lb, "Daily — " + str.tostring(p, format.mintick))
+            label.set_y(lb, p + labelOffsetUsd)
+            label.set_text(lb, "Daily")
