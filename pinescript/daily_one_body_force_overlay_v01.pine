@@ -1,19 +1,19 @@
 //@version=6
-indicator("Daily One Body Levels v0.2", overlay=true, max_lines_count=300, max_labels_count=300)
+indicator("Daily One Body Levels v0.3", overlay=true, max_lines_count=300, max_labels_count=300)
 
-// Daily One Body logic v0.2
-// 1) Uses only adjacent CLOSED Daily candles.
-// 2) Accepts only opposite-color pairs: one bullish candle and one bearish candle.
-// 3) Checks only matching body edges:
+// Daily One Body logic v0.3
+// 1) Adjacent CLOSED Daily candles only.
+// 2) Opposite-color pairs only: one bullish candle and one bearish candle.
+// 3) Matching body edges only:
 //    - body high vs body high
 //    - body low vs body low
-// This removes staircase levels from same-direction candles.
+// 4) line.new(... force_overlay=true) is required so levels behave like price-overlay drawings.
 
 toleranceUsd = input.float(100.0, "Daily tolerance USD", minval=1.0, step=1.0)
 lookbackPairs = input.int(40, "Daily pairs lookback", minval=2, maxval=150)
-minDistanceUsd = input.float(120.0, "Min distance between levels USD", minval=0.0, step=10.0)
-maxLevels = input.int(20, "Max Daily levels", minval=1, maxval=100)
-labelOffsetBars = input.int(30, "Label offset", minval=1, maxval=200)
+minDistanceUsd = input.float(250.0, "Min distance between separate levels USD", minval=0.0, step=10.0)
+maxLevels = input.int(12, "Max Daily levels", minval=1, maxval=100)
+labelOffsetBars = input.int(6, "Label offset", minval=1, maxval=200)
 labelOffsetUsd = input.float(15.0, "Label vertical offset USD", minval=0.0, step=1.0)
 
 levelColor = input.color(color.new(color.lime, 0), "Daily color")
@@ -47,8 +47,9 @@ f_isNearExisting(_price) =>
                 near := true
     near
 
-f_addLevel(_price, _startBar) =>
-    if array.size(dailyPrices) < maxLevels and not f_isNearExisting(_price)
+f_addLevel(_price, _startBar, _bypassDistance) =>
+    bool canAdd = array.size(dailyPrices) < maxLevels and (_bypassDistance or not f_isNearExisting(_price))
+    if canAdd
         line ln = line.new(
              x1=_startBar,
              y1=_price,
@@ -79,13 +80,6 @@ f_addLevel(_price, _startBar) =>
             array.push(dailyLabels, lb)
     true
 
-f_checkEdge(_p1, _p2, _startBar) =>
-    float diff = math.abs(_p1 - _p2)
-    if diff <= toleranceUsd
-        float level = (_p1 + _p2) / 2.0
-        f_addLevel(level, _startBar)
-    true
-
 if barstate.islast
     f_clear()
 
@@ -108,8 +102,20 @@ if barstate.islast
             float high2 = math.max(o2, c2)
             float low2 = math.min(o2, c2)
 
-            f_checkEdge(high1, high2, startBar)
-            f_checkEdge(low1, low2, startBar)
+            float highDiff = math.abs(high1 - high2)
+            float lowDiff = math.abs(low1 - low2)
+            bool highMatch = highDiff <= toleranceUsd
+            bool lowMatch = lowDiff <= toleranceUsd
+
+            if highMatch
+                float highLevel = (high1 + high2) / 2.0
+                f_addLevel(highLevel, startBar, false)
+
+            if lowMatch
+                float lowLevel = (low1 + low2) / 2.0
+                // If both top and bottom of the SAME opposite-color pair match,
+                // draw both edges even when they are closer than minDistanceUsd.
+                f_addLevel(lowLevel, startBar, highMatch)
 
     int labelCount = array.size(dailyLabels)
     if labelCount > 0
