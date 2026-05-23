@@ -1,19 +1,21 @@
 //@version=6
-indicator("G/R/L Fixed Fib Levels v0.8", overlay=true, max_labels_count=160, max_lines_count=160)
+indicator("G/R/L Fixed Fib Levels v0.9", overlay=true, max_labels_count=160, max_lines_count=160)
 
-// G/R/L Fixed Fib Levels v0.8
+// G/R/L Fixed Fib Levels v0.9
 // Fib set: 0 / 0.236 / 0.382 / 0.5 / 0.618 / 0.7 / 0.786 / 0.88 / 0.9 / 1
 // G = global fib: full big 1D impulse, impulse rejection -> impulse start.
 // R = range fib: current range boundaries from a rolling lookback, not max recovery.
-// L = local fib: latest local chart-timeframe impulse.
-// All fib levels are drawn as fixed horizontal lines with text-only labels above the line.
-// Labels are pushed to the right by default so prices do not sit on top of candles.
+// L = local fib: latest confirmed local chart-timeframe impulse.
+// Labels are staggered horizontally: G / R / L use different right offsets.
+// Source lines show where G / R / L fibs are built from.
 
 showG = input.bool(true, "Show G - global fib")
 showR = input.bool(true, "Show R - range fib")
 showL = input.bool(false, "Show L - latest local impulse fib")
 showDashboard = input.bool(false, "Show dashboard")
-showImpulseLine = input.bool(true, "Show global impulse measurement")
+showGlobalImpulseLine = input.bool(true, "Show G source line")
+showRangeSourceLine = input.bool(true, "Show R source line")
+showLocalImpulseLine = input.bool(true, "Show L source line")
 showImpulseLabels = input.bool(false, "Show impulse labels")
 
 lookbackDays = input.int(244, "Daily lookback", minval=50, maxval=500)
@@ -35,7 +37,9 @@ minLocalImpulseAtr = input.float(2.0, "Min local impulse ATR", minval=0.2, step=
 
 lineBackBars = input.int(260, "Fib line starts N bars back", minval=10, maxval=5000)
 lineForwardBars = input.int(260, "Fib line extends N bars forward", minval=20, maxval=5000)
-labelOffsetBars = input.int(80, "Fib label offset bars", minval=1, maxval=500)
+gLabelOffsetBars = input.int(80, "G label offset bars", minval=1, maxval=500)
+rLabelOffsetBars = input.int(120, "R label offset bars", minval=1, maxval=500)
+lLabelOffsetBars = input.int(160, "L label offset bars", minval=1, maxval=500)
 labelYOffsetTicks = input.int(18, "Label vertical offset, ticks", minval=0, maxval=500)
 
 // === Global impulse from 1D ===
@@ -148,10 +152,16 @@ g1 = f_level(gBase, gTarget, 1.0, gValid)
 // === R fib: current range boundaries, fixed on current calculation ===
 rollingHigh = ta.highest(high, rangeLookbackBars)
 rollingLow = ta.lowest(low, rangeLookbackBars)
+rHighBarsAgo = ta.highestbars(high, rangeLookbackBars)
+rLowBarsAgo = ta.lowestbars(low, rangeLookbackBars)
+rHighBarIndex = bar_index - rHighBarsAgo
+rLowBarIndex = bar_index - rLowBarsAgo
 rLowCandidate = rangeUseImpulseLowAsFloor and globalDir == -1 and not na(impulseEnd) ? math.min(rollingLow, impulseEnd) : rollingLow
 rHighCandidate = rangeUseImpulseLowAsFloor and globalDir == 1 and not na(impulseEnd) ? math.max(rollingHigh, impulseEnd) : rollingHigh
 rBase = globalDir == 1 ? rHighCandidate : rLowCandidate
 rTarget = globalDir == 1 ? rLowCandidate : rHighCandidate
+rBaseBarIndex = globalDir == 1 ? rHighBarIndex : rLowBarIndex
+rTargetBarIndex = globalDir == 1 ? rLowBarIndex : rHighBarIndex
 rSize = not na(rBase) and not na(rTarget) ? math.abs(rTarget - rBase) : na
 rValid = showR and globalDir != 0 and not na(rSize) and rSize > syminfo.mintick
 r0 = f_level(rBase, rTarget, 0.0, rValid)
@@ -165,7 +175,7 @@ r880 = f_level(rBase, rTarget, 0.88, rValid)
 r900 = f_level(rBase, rTarget, 0.9, rValid)
 r1 = f_level(rBase, rTarget, 1.0, rValid)
 
-// === L fib: latest local impulse on current chart timeframe ===
+// === L fib: latest confirmed local impulse on current chart timeframe ===
 atrLocal = ta.atr(localAtrLen)
 phL = ta.pivothigh(high, localPivotLen, localPivotLen)
 plL = ta.pivotlow(low, localPivotLen, localPivotLen)
@@ -239,7 +249,7 @@ f_clearDrawings() =>
     while array.size(fibLabels) > 0
         label.delete(array.pop(fibLabels))
 
-f_drawLevel(_prefix, _ratioText, _price, _isValid, _lineColor, _textColor, _width) =>
+f_drawLevel(_prefix, _ratioText, _price, _isValid, _lineColor, _textColor, _width, _labelOffsetBars) =>
     if _isValid and not na(_price)
         x1 = bar_index - lineBackBars
         x2 = bar_index + lineForwardBars
@@ -247,75 +257,110 @@ f_drawLevel(_prefix, _ratioText, _price, _isValid, _lineColor, _textColor, _widt
         array.push(fibLines, l)
         yOffset = syminfo.mintick * labelYOffsetTicks
         txt = _prefix + " " + _ratioText + " (" + str.tostring(_price, format.mintick) + ")"
-        lab = label.new(bar_index + labelOffsetBars, _price + yOffset, txt, xloc=xloc.bar_index, style=label.style_none, textcolor=_textColor, color=color.new(color.white, 100), size=size.small)
+        lab = label.new(bar_index + _labelOffsetBars, _price + yOffset, txt, xloc=xloc.bar_index, style=label.style_none, textcolor=_textColor, color=color.new(color.white, 100), size=size.small)
         array.push(fibLabels, lab)
 
 if barstate.islast
     f_clearDrawings()
 
-    // G = darker / background context
-    f_drawLevel("G", "0", g0, gValid, color.new(color.white, 55), color.new(color.white, 20), 1)
-    f_drawLevel("G", "0.236", g236, gValid, color.new(color.red, 65), color.new(color.red, 20), 1)
-    f_drawLevel("G", "0.382", g382, gValid, color.new(color.orange, 65), color.new(color.orange, 20), 1)
-    f_drawLevel("G", "0.5", g500, gValid, color.new(color.white, 65), color.new(color.white, 20), 1)
-    f_drawLevel("G", "0.618", g618, gValid, color.new(color.green, 65), color.new(color.green, 20), 1)
-    f_drawLevel("G", "0.7", g700, gValid, color.new(color.yellow, 60), color.new(color.yellow, 20), 1)
-    f_drawLevel("G", "0.786", g786, gValid, color.new(color.aqua, 58), color.new(color.aqua, 20), 1)
-    f_drawLevel("G", "0.88", g880, gValid, color.new(color.fuchsia, 58), color.new(color.fuchsia, 20), 1)
-    f_drawLevel("G", "0.9", g900, gValid, color.new(color.red, 58), color.new(color.red, 20), 1)
-    f_drawLevel("G", "1", g1, gValid, color.new(color.white, 55), color.new(color.white, 20), 1)
+    // G = darker / background context; labels closest to current price among the three families.
+    f_drawLevel("G", "0", g0, gValid, color.new(color.blue, 55), color.new(color.blue, 20), 1, gLabelOffsetBars)
+    f_drawLevel("G", "0.236", g236, gValid, color.new(color.blue, 65), color.new(color.blue, 20), 1, gLabelOffsetBars)
+    f_drawLevel("G", "0.382", g382, gValid, color.new(color.blue, 65), color.new(color.blue, 20), 1, gLabelOffsetBars)
+    f_drawLevel("G", "0.5", g500, gValid, color.new(color.blue, 65), color.new(color.blue, 20), 1, gLabelOffsetBars)
+    f_drawLevel("G", "0.618", g618, gValid, color.new(color.blue, 60), color.new(color.blue, 20), 1, gLabelOffsetBars)
+    f_drawLevel("G", "0.7", g700, gValid, color.new(color.blue, 58), color.new(color.blue, 20), 1, gLabelOffsetBars)
+    f_drawLevel("G", "0.786", g786, gValid, color.new(color.blue, 55), color.new(color.blue, 20), 1, gLabelOffsetBars)
+    f_drawLevel("G", "0.88", g880, gValid, color.new(color.blue, 50), color.new(color.blue, 15), 1, gLabelOffsetBars)
+    f_drawLevel("G", "0.9", g900, gValid, color.new(color.blue, 45), color.new(color.blue, 10), 1, gLabelOffsetBars)
+    f_drawLevel("G", "1", g1, gValid, color.new(color.blue, 50), color.new(color.blue, 15), 1, gLabelOffsetBars)
 
-    // R = medium strength range context
-    f_drawLevel("R", "0", r0, rValid, color.new(color.white, 25), color.white, 2)
-    f_drawLevel("R", "0.236", r236, rValid, color.new(color.red, 40), color.red, 1)
-    f_drawLevel("R", "0.382", r382, rValid, color.new(color.orange, 25), color.orange, 1)
-    f_drawLevel("R", "0.5", r500, rValid, color.new(color.white, 35), color.white, 1)
-    f_drawLevel("R", "0.618", r618, rValid, color.new(color.green, 25), color.green, 1)
-    f_drawLevel("R", "0.7", r700, rValid, color.new(color.yellow, 18), color.yellow, 1)
-    f_drawLevel("R", "0.786", r786, rValid, color.new(color.aqua, 15), color.aqua, 1)
-    f_drawLevel("R", "0.88", r880, rValid, color.new(color.fuchsia, 15), color.fuchsia, 1)
-    f_drawLevel("R", "0.9", r900, rValid, color.new(color.red, 15), color.red, 1)
-    f_drawLevel("R", "1", r1, rValid, color.new(color.white, 25), color.white, 2)
+    // R = range context; labels are shifted further right than G.
+    f_drawLevel("R", "0", r0, rValid, color.new(color.orange, 25), color.orange, 2, rLabelOffsetBars)
+    f_drawLevel("R", "0.236", r236, rValid, color.new(color.orange, 40), color.orange, 1, rLabelOffsetBars)
+    f_drawLevel("R", "0.382", r382, rValid, color.new(color.orange, 25), color.orange, 1, rLabelOffsetBars)
+    f_drawLevel("R", "0.5", r500, rValid, color.new(color.orange, 35), color.orange, 1, rLabelOffsetBars)
+    f_drawLevel("R", "0.618", r618, rValid, color.new(color.orange, 25), color.orange, 1, rLabelOffsetBars)
+    f_drawLevel("R", "0.7", r700, rValid, color.new(color.orange, 18), color.orange, 1, rLabelOffsetBars)
+    f_drawLevel("R", "0.786", r786, rValid, color.new(color.orange, 15), color.orange, 1, rLabelOffsetBars)
+    f_drawLevel("R", "0.88", r880, rValid, color.new(color.orange, 15), color.orange, 1, rLabelOffsetBars)
+    f_drawLevel("R", "0.9", r900, rValid, color.new(color.orange, 10), color.orange, 1, rLabelOffsetBars)
+    f_drawLevel("R", "1", r1, rValid, color.new(color.orange, 25), color.orange, 2, rLabelOffsetBars)
 
-    // L = bright local context
-    f_drawLevel("L", "0", l0, lValid, color.new(color.white, 5), color.white, 2)
-    f_drawLevel("L", "0.236", l236, lValid, color.new(color.red, 5), color.red, 1)
-    f_drawLevel("L", "0.382", l382, lValid, color.new(color.orange, 0), color.orange, 1)
-    f_drawLevel("L", "0.5", l500, lValid, color.new(color.white, 5), color.white, 1)
-    f_drawLevel("L", "0.618", l618, lValid, color.new(color.green, 0), color.green, 1)
-    f_drawLevel("L", "0.7", l700, lValid, color.new(color.yellow, 0), color.yellow, 1)
-    f_drawLevel("L", "0.786", l786, lValid, color.new(color.aqua, 0), color.aqua, 2)
-    f_drawLevel("L", "0.88", l880, lValid, color.new(color.fuchsia, 0), color.fuchsia, 2)
-    f_drawLevel("L", "0.9", l900, lValid, color.new(color.red, 0), color.red, 2)
-    f_drawLevel("L", "1", l1, lValid, color.new(color.white, 0), color.white, 2)
+    // L = bright local context; labels are shifted furthest right.
+    f_drawLevel("L", "0", l0, lValid, color.new(color.fuchsia, 5), color.fuchsia, 2, lLabelOffsetBars)
+    f_drawLevel("L", "0.236", l236, lValid, color.new(color.fuchsia, 5), color.fuchsia, 1, lLabelOffsetBars)
+    f_drawLevel("L", "0.382", l382, lValid, color.new(color.fuchsia, 0), color.fuchsia, 1, lLabelOffsetBars)
+    f_drawLevel("L", "0.5", l500, lValid, color.new(color.fuchsia, 5), color.fuchsia, 1, lLabelOffsetBars)
+    f_drawLevel("L", "0.618", l618, lValid, color.new(color.fuchsia, 0), color.fuchsia, 1, lLabelOffsetBars)
+    f_drawLevel("L", "0.7", l700, lValid, color.new(color.fuchsia, 0), color.fuchsia, 1, lLabelOffsetBars)
+    f_drawLevel("L", "0.786", l786, lValid, color.new(color.fuchsia, 0), color.fuchsia, 2, lLabelOffsetBars)
+    f_drawLevel("L", "0.88", l880, lValid, color.new(color.fuchsia, 0), color.fuchsia, 2, lLabelOffsetBars)
+    f_drawLevel("L", "0.9", l900, lValid, color.new(color.fuchsia, 0), color.fuchsia, 2, lLabelOffsetBars)
+    f_drawLevel("L", "1", l1, lValid, color.new(color.fuchsia, 0), color.fuchsia, 2, lLabelOffsetBars)
 
-// === Global impulse measurement line ===
-var line impulseLine = na
-var label startLabel = na
-var label endLabel = na
-if barstate.islast and showImpulseLine and globalDir != 0 and not na(impulseStartTime) and not na(impulseEndTime)
-    if na(impulseLine)
-        impulseLine := line.new(impulseStartTime, impulseStart, impulseEndTime, impulseEnd, xloc=xloc.bar_time, color=globalDir == 1 ? color.lime : color.red, width=3)
+// === Source measurement lines: G / R / L ===
+var line globalSourceLine = na
+var line rangeSourceLine = na
+var line localSourceLine = na
+var label globalSourceLabel = na
+var label rangeSourceLabel = na
+var label localSourceLabel = na
+
+if barstate.islast and showGlobalImpulseLine and globalDir != 0 and not na(impulseStartTime) and not na(impulseEndTime)
+    if na(globalSourceLine)
+        globalSourceLine := line.new(impulseStartTime, impulseStart, impulseEndTime, impulseEnd, xloc=xloc.bar_time, color=color.new(color.blue, 0), width=3)
     else
-        line.set_xy1(impulseLine, impulseStartTime, impulseStart)
-        line.set_xy2(impulseLine, impulseEndTime, impulseEnd)
-        line.set_color(impulseLine, globalDir == 1 ? color.lime : color.red)
-        line.set_width(impulseLine, 3)
+        line.set_xy1(globalSourceLine, impulseStartTime, impulseStart)
+        line.set_xy2(globalSourceLine, impulseEndTime, impulseEnd)
+        line.set_color(globalSourceLine, color.new(color.blue, 0))
+        line.set_width(globalSourceLine, 3)
+    label.delete(globalSourceLabel)
+    globalSourceLabel := label.new(impulseEndTime, impulseEnd, "G impulse", xloc=xloc.bar_time, style=globalDir == 1 ? label.style_label_down : label.style_label_up, color=color.new(color.blue, 0), textcolor=color.white, size=size.small)
+else if barstate.islast and not na(globalSourceLine)
+    line.delete(globalSourceLine)
+    globalSourceLine := na
+
+if barstate.islast and showRangeSourceLine and rValid and not na(rBaseBarIndex) and not na(rTargetBarIndex)
+    if na(rangeSourceLine)
+        rangeSourceLine := line.new(rBaseBarIndex, rBase, rTargetBarIndex, rTarget, xloc=xloc.bar_index, color=color.new(color.orange, 0), width=3)
+    else
+        line.set_xy1(rangeSourceLine, rBaseBarIndex, rBase)
+        line.set_xy2(rangeSourceLine, rTargetBarIndex, rTarget)
+        line.set_color(rangeSourceLine, color.new(color.orange, 0))
+        line.set_width(rangeSourceLine, 3)
+    label.delete(rangeSourceLabel)
+    rangeSourceLabel := label.new(rTargetBarIndex, rTarget, "R range", xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color.orange, 0), textcolor=color.black, size=size.small)
+else if barstate.islast and not na(rangeSourceLine)
+    line.delete(rangeSourceLine)
+    rangeSourceLine := na
+
+if barstate.islast and showLocalImpulseLine and lValid and not na(lStartTime) and not na(lEndTime)
+    if na(localSourceLine)
+        localSourceLine := line.new(lStartTime, lStart, lEndTime, lEnd, xloc=xloc.bar_time, color=color.new(color.fuchsia, 0), width=3)
+    else
+        line.set_xy1(localSourceLine, lStartTime, lStart)
+        line.set_xy2(localSourceLine, lEndTime, lEnd)
+        line.set_color(localSourceLine, color.new(color.fuchsia, 0))
+        line.set_width(localSourceLine, 3)
+    label.delete(localSourceLabel)
+    localSourceLabel := label.new(lEndTime, lEnd, "L impulse", xloc=xloc.bar_time, style=lDir == 1 ? label.style_label_down : label.style_label_up, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.small)
+else if barstate.islast and not na(localSourceLine)
+    line.delete(localSourceLine)
+    localSourceLine := na
 
 if barstate.islast and showImpulseLabels and globalDir != 0 and not na(impulseStartTime) and not na(impulseEndTime)
-    label.delete(startLabel)
-    label.delete(endLabel)
-    startLabel := label.new(impulseStartTime, impulseStart, "Impulse Start\n" + str.tostring(impulseStart, format.mintick), xloc=xloc.bar_time, style=globalDir == 1 ? label.style_label_up : label.style_label_down, color=color.new(color.blue, 0), textcolor=color.white, size=size.small)
-    endLabel := label.new(impulseEndTime, impulseEnd, "Impulse Rejection\n" + str.tostring(impulseEnd, format.mintick), xloc=xloc.bar_time, style=globalDir == 1 ? label.style_label_down : label.style_label_up, color=globalDir == 1 ? color.new(color.lime, 0) : color.new(color.red, 0), textcolor=color.white, size=size.small)
+    label.new(impulseStartTime, impulseStart, "Impulse Start\n" + str.tostring(impulseStart, format.mintick), xloc=xloc.bar_time, style=globalDir == 1 ? label.style_label_up : label.style_label_down, color=color.new(color.blue, 0), textcolor=color.white, size=size.small)
+    label.new(impulseEndTime, impulseEnd, "Impulse Rejection\n" + str.tostring(impulseEnd, format.mintick), xloc=xloc.bar_time, style=globalDir == 1 ? label.style_label_down : label.style_label_up, color=color.new(color.blue, 0), textcolor=color.white, size=size.small)
 
 // === Dashboard ===
 var table dash = table.new(position.top_right, 2, 12, border_width=1)
 if showDashboard and barstate.islast
     table.clear(dash, 0, 0, 1, 11)
     table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.black)
-    table.cell(dash, 1, 0, "G/R/L Fixed Fib v0.8", text_color=color.white, bgcolor=color.black)
-    table.cell(dash, 0, 1, "Fib mode", text_color=color.white)
-    table.cell(dash, 1, 1, "fixed horizontal lines", text_color=color.white)
+    table.cell(dash, 1, 0, "G/R/L Fixed Fib v0.9", text_color=color.white, bgcolor=color.black)
+    table.cell(dash, 0, 1, "Fib labels", text_color=color.white)
+    table.cell(dash, 1, 1, "G/R/L staggered", text_color=color.white)
     table.cell(dash, 0, 2, "G", text_color=color.white)
     table.cell(dash, 1, 2, gValid ? str.tostring(g0, format.mintick) + " → " + str.tostring(g1, format.mintick) : "na", text_color=color.white)
     table.cell(dash, 0, 3, "R", text_color=color.white)
@@ -332,7 +377,7 @@ if showDashboard and barstate.islast
     table.cell(dash, 1, 8, globalDir == 0 ? "na" : str.tostring(impulseEnd, format.mintick), text_color=color.white)
     table.cell(dash, 0, 9, "Size % / ATR", text_color=color.white)
     table.cell(dash, 1, 9, globalDir == 0 ? "na" : str.tostring(impulsePct, "#.##") + "% / " + str.tostring(impulseAtr, "#.##"), text_color=color.white)
-    table.cell(dash, 0, 10, "R note", text_color=color.white)
-    table.cell(dash, 1, 10, "NOT max recovery high", text_color=color.white)
+    table.cell(dash, 0, 10, "L logic", text_color=color.white)
+    table.cell(dash, 1, 10, "latest confirmed impulse", text_color=color.white)
     table.cell(dash, 0, 11, "Rejected", text_color=color.white)
     table.cell(dash, 1, 11, rejectionReason, text_color=color.white)
