@@ -1,7 +1,7 @@
 //@version=6
-indicator("D/W/M Body Levels v0.1.1", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("D/W/M Body Levels v0.1.2", overlay=true, max_lines_count=500, max_labels_count=500)
 
-// D/W/M Body Levels v0.1.1
+// D/W/M Body Levels v0.1.2
 // Draws body levels from CLOSED Daily / Weekly / Monthly candles.
 // Body levels = open and close of the higher-timeframe candle.
 // Lines extend right. Labels sit at the right edge near the price scale.
@@ -24,13 +24,10 @@ removeOnTouch = input.bool(true, "Remove level after touch")
 touchOnlyAfterBars = input.int(1, "Ignore touches for N bars after creation", minval=0, maxval=20)
 mergeTicks = input.int(10, "Merge duplicate levels within ticks", minval=0, maxval=500)
 
-// Colors:
-// Daily = gray, Weekly = aqua/teal, Monthly = orange/gold.
 dColor = input.color(color.new(color.gray, 25), "Daily color")
 wColor = input.color(color.new(color.aqua, 0), "Weekly color")
 mColor = input.color(color.new(color.orange, 0), "Monthly color")
 
-// Closed HTF body values.
 dOpenPrev = request.security(syminfo.tickerid, "D", open[1], barmerge.gaps_off, barmerge.lookahead_off)
 dClosePrev = request.security(syminfo.tickerid, "D", close[1], barmerge.gaps_off, barmerge.lookahead_off)
 wOpenPrev = request.security(syminfo.tickerid, "W", open[1], barmerge.gaps_off, barmerge.lookahead_off)
@@ -38,9 +35,9 @@ wClosePrev = request.security(syminfo.tickerid, "W", close[1], barmerge.gaps_off
 mOpenPrev = request.security(syminfo.tickerid, "M", open[1], barmerge.gaps_off, barmerge.lookahead_off)
 mClosePrev = request.security(syminfo.tickerid, "M", close[1], barmerge.gaps_off, barmerge.lookahead_off)
 
-newDay = ta.change(time("D")) != 0
-newWeek = ta.change(time("W")) != 0
-newMonth = ta.change(time("M")) != 0
+newDay = timeframe.change("D")
+newWeek = timeframe.change("W")
+newMonth = timeframe.change("M")
 
 var line[] levelLines = array.new_line()
 var label[] levelLabels = array.new_label()
@@ -126,7 +123,6 @@ if showW and newWeek
 if showM and newMonth
     f_addBodyLevels("M", "M", mOpenPrev, mClosePrev, mColor, lineWidthM, keepM)
 
-// Keep labels at the right edge, directly before the price scale.
 if barstate.islast and array.size(levelLabels) > 0
     for i = 0 to array.size(levelLabels) - 1
         lb = array.get(levelLabels, i)
@@ -136,7 +132,6 @@ if barstate.islast and array.size(levelLabels) > 0
         label.set_y(lb, p)
         label.set_text(lb, name + " — " + str.tostring(p, format.mintick))
 
-// Delete levels after touch. A new level is protected for N bars after creation.
 if removeOnTouch and array.size(levelPrices) > 0
     for i = array.size(levelPrices) - 1 to 0
         p = array.get(levelPrices, i)
