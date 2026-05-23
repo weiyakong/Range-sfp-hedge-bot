@@ -1,0 +1,322 @@
+//@version=6
+indicator("Global + Local Fib Levels v0.1", overlay=true, max_labels_count=160, max_lines_count=160)
+
+// Global + Local Fib Levels v0.1
+// G = global fib from the last valid 1D impulse.
+// L = local fib from the last valid impulse on selected local timeframe, default 4H.
+// No Range. No channels. No diagonal fibs.
+// Fib colors are assigned by Fibonacci ratio, not by G/L family.
+
+showG = input.bool(true, "Show G - global fib")
+showL = input.bool(true, "Show L - local fib")
+showExtensions = input.bool(false, "Show extension levels above 1")
+showDashboard = input.bool(false, "Show dashboard")
+showSourceLines = input.bool(false, "DEBUG: Show source impulse lines")
+
+// === Global settings ===
+lookbackDays = input.int(244, "G daily lookback", minval=50, maxval=500)
+gPivotLen = input.int(5, "G 1D pivot length", minval=2, maxval=30)
+gAtrLen = input.int(14, "G 1D ATR length", minval=1, maxval=100)
+gMinImpulsePct = input.float(15.0, "G min impulse %", minval=1.0, step=0.5)
+gMinImpulseAtr = input.float(5.0, "G min impulse ATR", minval=1.0, step=0.5)
+gMinImpulseBars = input.int(3, "G min daily bars in impulse", minval=1, maxval=80)
+gMinMacroEndPosition = input.float(0.45, "G min macro position for bullish impulse end", minval=0.20, maxval=0.80, step=0.05)
+gMaxMacroEndPosition = input.float(0.55, "G max macro position for bearish impulse end", minval=0.20, maxval=0.80, step=0.05)
+
+// === Local settings ===
+localTf = input.timeframe("240", "L timeframe")
+lPivotLen = input.int(4, "L pivot length", minval=2, maxval=30)
+lAtrLen = input.int(14, "L ATR length", minval=1, maxval=100)
+lMinImpulsePct = input.float(1.2, "L min impulse %", minval=0.1, step=0.1)
+lMinImpulseAtr = input.float(2.0, "L min impulse ATR", minval=0.2, step=0.2)
+lMinImpulseBars = input.int(2, "L min bars in impulse", minval=1, maxval=80)
+
+// === Visual settings ===
+lineBackBars = input.int(260, "Fib line starts N bars back", minval=10, maxval=5000)
+lineForwardBars = input.int(260, "Fib line extends N bars forward", minval=20, maxval=5000)
+gLabelOffsetBars = input.int(80, "G label offset bars", minval=1, maxval=500)
+lLabelOffsetBars = input.int(125, "L label offset bars", minval=1, maxval=500)
+labelYOffsetTicks = input.int(18, "Label vertical offset, ticks", minval=0, maxval=500)
+
+// === Fibonacci color map: color = ratio ===
+f_ratioColor(ratio) =>
+    ratio == 0.0 ? color.new(color.gray, 25) :
+     ratio == 0.236 ? color.new(color.red, 0) :
+     ratio == 0.382 ? color.new(color.orange, 0) :
+     ratio == 0.5 ? color.new(color.white, 0) :
+     ratio == 0.618 ? color.new(color.green, 0) :
+     ratio == 0.7 ? color.new(color.teal, 0) :
+     ratio == 0.786 ? color.new(color.aqua, 0) :
+     ratio == 0.88 ? color.new(color.fuchsia, 0) :
+     ratio == 0.9 ? color.new(color.red, 0) :
+     ratio == 1.0 ? color.new(color.gray, 0) :
+     ratio == 1.272 ? color.new(color.purple, 0) :
+     ratio == 1.414 ? color.new(color.purple, 0) :
+     ratio == 1.618 ? color.new(color.purple, 0) :
+     color.new(color.silver, 0)
+
+f_level(base, target, ratio, isValid) =>
+    isValid ? base + (target - base) * ratio : na
+
+// === Global impulse from 1D ===
+f_globalImpulse() =>
+    atrD = ta.atr(gAtrLen)
+    ph = ta.pivothigh(high, gPivotLen, gPivotLen)
+    pl = ta.pivotlow(low, gPivotLen, gPivotLen)
+    macroHigh = ta.highest(high, lookbackDays)
+    macroLow = ta.lowest(low, lookbackDays)
+    macroMid = (macroHigh + macroLow) / 2.0
+    macroSize = macroHigh - macroLow
+
+    var float lastSwingHigh = na
+    var float lastSwingLow = na
+    var int lastSwingHighBar = na
+    var int lastSwingLowBar = na
+    var int lastSwingHighTime = na
+    var int lastSwingLowTime = na
+    var int impulseDir = 0
+    var float impulseStart = na
+    var float impulseEnd = na
+    var int impulseEndBar = na
+    var int impulseStartTime = na
+    var int impulseEndTime = na
+    var float impulsePct = na
+    var float impulseAtr = na
+    var string rejectionReason = "None"
+
+    if not na(ph)
+        phBar = bar_index - gPivotLen
+        phTime = time[gPivotLen]
+        if not na(lastSwingLow)
+            bars = phBar - lastSwingLowBar
+            size = ph - lastSwingLow
+            pct = lastSwingLow != 0.0 ? size / lastSwingLow * 100.0 : na
+            atrs = not na(atrD[gPivotLen]) and atrD[gPivotLen] > 0.0 ? size / atrD[gPivotLen] : na
+            endPos = macroSize > 0 ? (ph - macroLow) / macroSize : na
+            brokePreviousHigh = na(lastSwingHigh) or ph > lastSwingHigh
+            sizeOk = size > 0 and bars >= gMinImpulseBars and ((not na(pct) and pct >= gMinImpulsePct) or (not na(atrs) and atrs >= gMinImpulseAtr))
+            macroOk = not na(endPos) and endPos >= gMinMacroEndPosition
+            if sizeOk and brokePreviousHigh and macroOk
+                impulseDir := 1
+                impulseStart := lastSwingLow
+                impulseEnd := ph
+                impulseEndBar := phBar
+                impulseStartTime := lastSwingLowTime
+                impulseEndTime := phTime
+                impulsePct := pct
+                impulseAtr := atrs
+                rejectionReason := "None"
+            else if sizeOk and brokePreviousHigh and not macroOk
+                rejectionReason := "Bull move rejected: end still low in macro range"
+        lastSwingHigh := ph
+        lastSwingHighBar := phBar
+        lastSwingHighTime := phTime
+
+    if not na(pl)
+        plBar = bar_index - gPivotLen
+        plTime = time[gPivotLen]
+        if not na(lastSwingHigh)
+            bars = plBar - lastSwingHighBar
+            size = lastSwingHigh - pl
+            pct = lastSwingHigh != 0.0 ? size / lastSwingHigh * 100.0 : na
+            atrs = not na(atrD[gPivotLen]) and atrD[gPivotLen] > 0.0 ? size / atrD[gPivotLen] : na
+            endPos = macroSize > 0 ? (pl - macroLow) / macroSize : na
+            brokePreviousLow = na(lastSwingLow) or pl < lastSwingLow
+            sizeOk = size > 0 and bars >= gMinImpulseBars and ((not na(pct) and pct >= gMinImpulsePct) or (not na(atrs) and atrs >= gMinImpulseAtr))
+            macroOk = not na(endPos) and endPos <= gMaxMacroEndPosition
+            if sizeOk and brokePreviousLow and macroOk
+                impulseDir := -1
+                impulseStart := lastSwingHigh
+                impulseEnd := pl
+                impulseEndBar := plBar
+                impulseStartTime := lastSwingHighTime
+                impulseEndTime := plTime
+                impulsePct := pct
+                impulseAtr := atrs
+                rejectionReason := "None"
+            else if sizeOk and brokePreviousLow and not macroOk
+                rejectionReason := "Bear move rejected: end still high in macro range"
+        lastSwingLow := pl
+        lastSwingLowBar := plBar
+        lastSwingLowTime := plTime
+
+    impulseAge = not na(impulseEndBar) ? bar_index - impulseEndBar : na
+    impulseIsRecent = not na(impulseAge) and impulseAge <= lookbackDays
+    activeDir = impulseIsRecent ? impulseDir : 0
+    [activeDir, impulseStart, impulseEnd, impulseStartTime, impulseEndTime, impulsePct, impulseAtr, macroHigh, macroLow, macroMid, rejectionReason]
+
+// === Local impulse from selected timeframe ===
+f_localImpulse() =>
+    atrL = ta.atr(lAtrLen)
+    ph = ta.pivothigh(high, lPivotLen, lPivotLen)
+    pl = ta.pivotlow(low, lPivotLen, lPivotLen)
+
+    var float lastSwingHigh = na
+    var float lastSwingLow = na
+    var int lastSwingHighBar = na
+    var int lastSwingLowBar = na
+    var int lastSwingHighTime = na
+    var int lastSwingLowTime = na
+    var int impulseDir = 0
+    var float impulseStart = na
+    var float impulseEnd = na
+    var int impulseStartTime = na
+    var int impulseEndTime = na
+    var float impulsePct = na
+    var float impulseAtr = na
+
+    if not na(ph)
+        phBar = bar_index - lPivotLen
+        phTime = time[lPivotLen]
+        if not na(lastSwingLow)
+            bars = phBar - lastSwingLowBar
+            size = ph - lastSwingLow
+            pct = lastSwingLow != 0.0 ? size / lastSwingLow * 100.0 : na
+            atrs = not na(atrL[lPivotLen]) and atrL[lPivotLen] > 0.0 ? size / atrL[lPivotLen] : na
+            sizeOk = size > 0 and bars >= lMinImpulseBars and ((not na(pct) and pct >= lMinImpulsePct) or (not na(atrs) and atrs >= lMinImpulseAtr))
+            brokePreviousHigh = na(lastSwingHigh) or ph > lastSwingHigh
+            if sizeOk and brokePreviousHigh
+                impulseDir := 1
+                impulseStart := lastSwingLow
+                impulseEnd := ph
+                impulseStartTime := lastSwingLowTime
+                impulseEndTime := phTime
+                impulsePct := pct
+                impulseAtr := atrs
+        lastSwingHigh := ph
+        lastSwingHighBar := phBar
+        lastSwingHighTime := phTime
+
+    if not na(pl)
+        plBar = bar_index - lPivotLen
+        plTime = time[lPivotLen]
+        if not na(lastSwingHigh)
+            bars = plBar - lastSwingHighBar
+            size = lastSwingHigh - pl
+            pct = lastSwingHigh != 0.0 ? size / lastSwingHigh * 100.0 : na
+            atrs = not na(atrL[lPivotLen]) and atrL[lPivotLen] > 0.0 ? size / atrL[lPivotLen] : na
+            sizeOk = size > 0 and bars >= lMinImpulseBars and ((not na(pct) and pct >= lMinImpulsePct) or (not na(atrs) and atrs >= lMinImpulseAtr))
+            brokePreviousLow = na(lastSwingLow) or pl < lastSwingLow
+            if sizeOk and brokePreviousLow
+                impulseDir := -1
+                impulseStart := lastSwingHigh
+                impulseEnd := pl
+                impulseStartTime := lastSwingHighTime
+                impulseEndTime := plTime
+        lastSwingLow := pl
+        lastSwingLowBar := plBar
+        lastSwingLowTime := plTime
+
+    [impulseDir, impulseStart, impulseEnd, impulseStartTime, impulseEndTime, impulsePct, impulseAtr]
+
+[gDir, gStart, gEnd, gStartTime, gEndTime, gPct, gAtr, macroHigh, macroLow, macroMid, gRejected] = request.security(syminfo.tickerid, "D", f_globalImpulse(), barmerge.gaps_off, barmerge.lookahead_off)
+[lDir, lStart, lEnd, lStartTime, lEndTime, lPct, lAtr] = request.security(syminfo.tickerid, localTf, f_localImpulse(), barmerge.gaps_off, barmerge.lookahead_off)
+
+// === Fib anchors ===
+gSize = not na(gStart) and not na(gEnd) ? math.abs(gStart - gEnd) : na
+gValid = showG and gDir != 0 and not na(gSize) and gSize > syminfo.mintick
+gBase = gEnd
+gTarget = gStart
+
+lSize = not na(lStart) and not na(lEnd) ? math.abs(lStart - lEnd) : na
+lValid = showL and lDir != 0 and not na(lSize) and lSize > syminfo.mintick
+lBase = lEnd
+lTarget = lStart
+
+// === Macro context only ===
+plot(macroHigh, "244D Macro Range High", color=color.new(color.red, 88), linewidth=1, style=plot.style_linebr)
+plot(macroLow, "244D Macro Range Low", color=color.new(color.lime, 88), linewidth=1, style=plot.style_linebr)
+plot(macroMid, "244D Macro Range Mid", color=color.new(color.gray, 90), linewidth=1, style=plot.style_linebr)
+
+// === Drawing objects ===
+var line[] fibLines = array.new_line()
+var label[] fibLabels = array.new_label()
+
+f_clearDrawings() =>
+    while array.size(fibLines) > 0
+        line.delete(array.pop(fibLines))
+    while array.size(fibLabels) > 0
+        label.delete(array.pop(fibLabels))
+
+f_drawLevel(_prefix, _ratioText, _ratio, _base, _target, _isValid, _width, _labelOffsetBars, _alpha) =>
+    price = f_level(_base, _target, _ratio, _isValid)
+    if _isValid and not na(price)
+        c = color.new(f_ratioColor(_ratio), _alpha)
+        x1 = bar_index - lineBackBars
+        x2 = bar_index + lineForwardBars
+        ln = line.new(x1, price, x2, price, xloc=xloc.bar_index, extend=extend.right, color=c, width=_width)
+        array.push(fibLines, ln)
+        yOffset = syminfo.mintick * labelYOffsetTicks
+        txt = _prefix + " " + _ratioText + " (" + str.tostring(price, format.mintick) + ")"
+        lb = label.new(bar_index + _labelOffsetBars, price + yOffset, txt, xloc=xloc.bar_index, style=label.style_none, textcolor=c, color=color.new(color.white, 100), size=size.small)
+        array.push(fibLabels, lb)
+
+f_drawFibSet(_prefix, _base, _target, _valid, _width, _labelOffsetBars, _alpha) =>
+    f_drawLevel(_prefix, "0", 0.0, _base, _target, _valid, _width, _labelOffsetBars, _alpha)
+    f_drawLevel(_prefix, "0.236", 0.236, _base, _target, _valid, _width, _labelOffsetBars, _alpha)
+    f_drawLevel(_prefix, "0.382", 0.382, _base, _target, _valid, _width, _labelOffsetBars, _alpha)
+    f_drawLevel(_prefix, "0.5", 0.5, _base, _target, _valid, _width, _labelOffsetBars, _alpha)
+    f_drawLevel(_prefix, "0.618", 0.618, _base, _target, _valid, _width, _labelOffsetBars, _alpha)
+    f_drawLevel(_prefix, "0.7", 0.7, _base, _target, _valid, _width, _labelOffsetBars, _alpha)
+    f_drawLevel(_prefix, "0.786", 0.786, _base, _target, _valid, _width, _labelOffsetBars, _alpha)
+    f_drawLevel(_prefix, "0.88", 0.88, _base, _target, _valid, _width, _labelOffsetBars, _alpha)
+    f_drawLevel(_prefix, "0.9", 0.9, _base, _target, _valid, _width, _labelOffsetBars, _alpha)
+    f_drawLevel(_prefix, "1", 1.0, _base, _target, _valid, _width, _labelOffsetBars, _alpha)
+    if showExtensions
+        f_drawLevel(_prefix, "1.272", 1.272, _base, _target, _valid, _width, _labelOffsetBars, _alpha)
+        f_drawLevel(_prefix, "1.414", 1.414, _base, _target, _valid, _width, _labelOffsetBars, _alpha)
+        f_drawLevel(_prefix, "1.618", 1.618, _base, _target, _valid, _width, _labelOffsetBars, _alpha)
+
+if barstate.islast
+    f_clearDrawings()
+    f_drawFibSet("G", gBase, gTarget, gValid, 1, gLabelOffsetBars, 20)
+    f_drawFibSet("L", lBase, lTarget, lValid, 2, lLabelOffsetBars, 0)
+
+// === Optional source lines, OFF by default ===
+var line gSourceLine = na
+var line lSourceLine = na
+
+if barstate.islast and showSourceLines and gValid and not na(gStartTime) and not na(gEndTime)
+    if na(gSourceLine)
+        gSourceLine := line.new(gStartTime, gStart, gEndTime, gEnd, xloc=xloc.bar_time, color=color.new(color.blue, 0), width=2)
+    else
+        line.set_xy1(gSourceLine, gStartTime, gStart)
+        line.set_xy2(gSourceLine, gEndTime, gEnd)
+else if barstate.islast and not na(gSourceLine)
+    line.delete(gSourceLine)
+    gSourceLine := na
+
+if barstate.islast and showSourceLines and lValid and not na(lStartTime) and not na(lEndTime)
+    if na(lSourceLine)
+        lSourceLine := line.new(lStartTime, lStart, lEndTime, lEnd, xloc=xloc.bar_time, color=color.new(color.fuchsia, 0), width=2)
+    else
+        line.set_xy1(lSourceLine, lStartTime, lStart)
+        line.set_xy2(lSourceLine, lEndTime, lEnd)
+else if barstate.islast and not na(lSourceLine)
+    line.delete(lSourceLine)
+    lSourceLine := na
+
+// === Dashboard ===
+var table dash = table.new(position.top_right, 2, 10, border_width=1)
+if showDashboard and barstate.islast
+    table.clear(dash, 0, 0, 1, 9)
+    table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.black)
+    table.cell(dash, 1, 0, "G+L Fib v0.1", text_color=color.white, bgcolor=color.black)
+    table.cell(dash, 0, 1, "G impulse", text_color=color.white)
+    table.cell(dash, 1, 1, gValid ? str.tostring(gStart, format.mintick) + " → " + str.tostring(gEnd, format.mintick) : "na", text_color=color.white)
+    table.cell(dash, 0, 2, "G dir", text_color=color.white)
+    table.cell(dash, 1, 2, gDir == 1 ? "UP" : gDir == -1 ? "DOWN" : "NONE", text_color=color.white)
+    table.cell(dash, 0, 3, "G size % / ATR", text_color=color.white)
+    table.cell(dash, 1, 3, gValid ? str.tostring(gPct, "#.##") + "% / " + str.tostring(gAtr, "#.##") : "na", text_color=color.white)
+    table.cell(dash, 0, 4, "L timeframe", text_color=color.white)
+    table.cell(dash, 1, 4, localTf, text_color=color.white)
+    table.cell(dash, 0, 5, "L impulse", text_color=color.white)
+    table.cell(dash, 1, 5, lValid ? str.tostring(lStart, format.mintick) + " → " + str.tostring(lEnd, format.mintick) : "na", text_color=color.white)
+    table.cell(dash, 0, 6, "L dir", text_color=color.white)
+    table.cell(dash, 1, 6, lDir == 1 ? "UP" : lDir == -1 ? "DOWN" : "NONE", text_color=color.white)
+    table.cell(dash, 0, 7, "L size % / ATR", text_color=color.white)
+    table.cell(dash, 1, 7, lValid ? str.tostring(lPct, "#.##") + "% / " + str.tostring(lAtr, "#.##") : "na", text_color=color.white)
+    table.cell(dash, 0, 8, "Extensions", text_color=color.white)
+    table.cell(dash, 1, 8, showExtensions ? "ON" : "OFF", text_color=color.white)
+    table.cell(dash, 0, 9, "G rejected", text_color=color.white)
+    table.cell(dash, 1, 9, gRejected, text_color=color.white)
