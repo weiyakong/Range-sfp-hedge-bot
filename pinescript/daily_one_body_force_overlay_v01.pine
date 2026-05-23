@@ -1,5 +1,5 @@
 //@version=6
-indicator("D/W/M One Body Levels v0.8 CONFLUENCE LABELS", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("D/W/M One Body Levels v0.9 CONFLUENCE 300", overlay=true, max_lines_count=500, max_labels_count=500)
 
 // Use on 1D chart. Daily is read from chart candles. Weekly/Monthly are aggregated from Daily bars.
 // Lines are drawn for all valid Daily/Weekly/Monthly levels.
@@ -15,7 +15,7 @@ maxTotalLevels = input.int(160, "Max total levels", minval=1, maxval=450)
 labelOffsetBars = input.int(80, "Label offset", minval=1, maxval=500)
 labelOffsetUsd = input.float(15.0, "Label vertical offset USD", minval=0.0, step=1.0)
 invalidateBufferUsd = input.float(5.0, "Invalidation buffer USD", minval=0.0, step=1.0)
-confluenceLabelDistanceUsd = input.float(150.0, "Confluence label distance USD", minval=0.0, step=10.0)
+confluenceLabelDistanceUsd = input.float(300.0, "Confluence label distance USD", minval=0.0, step=10.0)
 
 dColor = input.color(color.new(color.lime, 0), "Daily color")
 wColor = input.color(color.new(color.orange, 0), "Weekly color")
