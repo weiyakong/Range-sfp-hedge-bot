@@ -1,17 +1,19 @@
 //@version=6
-indicator("Global + Local Fib Levels v0.1", overlay=true, max_labels_count=160, max_lines_count=160)
+indicator("Global + Local Fib Levels v0.2", overlay=true, max_labels_count=180, max_lines_count=180)
 
-// Global + Local Fib Levels v0.1
+// Global + Local Fib Levels v0.2
 // G = global fib from the last valid 1D impulse.
 // L = local fib from the last valid impulse on selected local timeframe, default 4H.
 // No Range. No channels. No diagonal fibs.
 // Fib colors are assigned by Fibonacci ratio, not by G/L family.
+// Source impulse lines are visible by default, thin and dotted.
 
 showG = input.bool(true, "Show G - global fib")
 showL = input.bool(true, "Show L - local fib")
 showExtensions = input.bool(false, "Show extension levels above 1")
 showDashboard = input.bool(false, "Show dashboard")
-showSourceLines = input.bool(false, "DEBUG: Show source impulse lines")
+showSourceLines = input.bool(true, "Show G/L source impulse lines")
+showSourceLabels = input.bool(true, "Show G/L source labels")
 
 // === Global settings ===
 lookbackDays = input.int(244, "G daily lookback", minval=50, maxval=500)
@@ -37,6 +39,9 @@ lineForwardBars = input.int(260, "Fib line extends N bars forward", minval=20, m
 gLabelOffsetBars = input.int(80, "G label offset bars", minval=1, maxval=500)
 lLabelOffsetBars = input.int(125, "L label offset bars", minval=1, maxval=500)
 labelYOffsetTicks = input.int(18, "Label vertical offset, ticks", minval=0, maxval=500)
+gFibLineWidth = input.int(1, "G fib line width", minval=1, maxval=4)
+lFibLineWidth = input.int(1, "L fib line width", minval=1, maxval=4)
+sourceLineWidth = input.int(1, "Source impulse line width", minval=1, maxval=4)
 
 // === Fibonacci color map: color = ratio ===
 f_ratioColor(ratio) =>
@@ -203,6 +208,8 @@ f_localImpulse() =>
                 impulseEnd := pl
                 impulseStartTime := lastSwingHighTime
                 impulseEndTime := plTime
+                impulsePct := pct
+                impulseAtr := atrs
         lastSwingLow := pl
         lastSwingLowBar := plBar
         lastSwingLowTime := plTime
@@ -231,6 +238,10 @@ plot(macroMid, "244D Macro Range Mid", color=color.new(color.gray, 90), linewidt
 // === Drawing objects ===
 var line[] fibLines = array.new_line()
 var label[] fibLabels = array.new_label()
+var line gSourceLine = na
+var line lSourceLine = na
+var label gSourceLabel = na
+var label lSourceLabel = na
 
 f_clearDrawings() =>
     while array.size(fibLines) > 0
@@ -269,39 +280,52 @@ f_drawFibSet(_prefix, _base, _target, _valid, _width, _labelOffsetBars, _alpha) 
 
 if barstate.islast
     f_clearDrawings()
-    f_drawFibSet("G", gBase, gTarget, gValid, 1, gLabelOffsetBars, 20)
-    f_drawFibSet("L", lBase, lTarget, lValid, 2, lLabelOffsetBars, 0)
+    f_drawFibSet("G", gBase, gTarget, gValid, gFibLineWidth, gLabelOffsetBars, 20)
+    f_drawFibSet("L", lBase, lTarget, lValid, lFibLineWidth, lLabelOffsetBars, 0)
 
-// === Optional source lines, OFF by default ===
-var line gSourceLine = na
-var line lSourceLine = na
-
+// === Source impulse lines ===
 if barstate.islast and showSourceLines and gValid and not na(gStartTime) and not na(gEndTime)
     if na(gSourceLine)
-        gSourceLine := line.new(gStartTime, gStart, gEndTime, gEnd, xloc=xloc.bar_time, color=color.new(color.blue, 0), width=2)
+        gSourceLine := line.new(gStartTime, gStart, gEndTime, gEnd, xloc=xloc.bar_time, color=color.new(color.blue, 0), width=sourceLineWidth, style=line.style_dotted)
     else
         line.set_xy1(gSourceLine, gStartTime, gStart)
         line.set_xy2(gSourceLine, gEndTime, gEnd)
-else if barstate.islast and not na(gSourceLine)
-    line.delete(gSourceLine)
-    gSourceLine := na
+        line.set_color(gSourceLine, color.new(color.blue, 0))
+        line.set_width(gSourceLine, sourceLineWidth)
+        line.set_style(gSourceLine, line.style_dotted)
+    if showSourceLabels
+        label.delete(gSourceLabel)
+        gSourceLabel := label.new(gEndTime, gEnd, "G impulse", xloc=xloc.bar_time, style=gDir == 1 ? label.style_label_down : label.style_label_up, color=color.new(color.blue, 0), textcolor=color.white, size=size.small)
+else if barstate.islast
+    if not na(gSourceLine)
+        line.delete(gSourceLine)
+        gSourceLine := na
+    label.delete(gSourceLabel)
 
 if barstate.islast and showSourceLines and lValid and not na(lStartTime) and not na(lEndTime)
     if na(lSourceLine)
-        lSourceLine := line.new(lStartTime, lStart, lEndTime, lEnd, xloc=xloc.bar_time, color=color.new(color.fuchsia, 0), width=2)
+        lSourceLine := line.new(lStartTime, lStart, lEndTime, lEnd, xloc=xloc.bar_time, color=color.new(color.fuchsia, 0), width=sourceLineWidth, style=line.style_dotted)
     else
         line.set_xy1(lSourceLine, lStartTime, lStart)
         line.set_xy2(lSourceLine, lEndTime, lEnd)
-else if barstate.islast and not na(lSourceLine)
-    line.delete(lSourceLine)
-    lSourceLine := na
+        line.set_color(lSourceLine, color.new(color.fuchsia, 0))
+        line.set_width(lSourceLine, sourceLineWidth)
+        line.set_style(lSourceLine, line.style_dotted)
+    if showSourceLabels
+        label.delete(lSourceLabel)
+        lSourceLabel := label.new(lEndTime, lEnd, "L impulse", xloc=xloc.bar_time, style=lDir == 1 ? label.style_label_down : label.style_label_up, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.small)
+else if barstate.islast
+    if not na(lSourceLine)
+        line.delete(lSourceLine)
+        lSourceLine := na
+    label.delete(lSourceLabel)
 
 // === Dashboard ===
 var table dash = table.new(position.top_right, 2, 10, border_width=1)
 if showDashboard and barstate.islast
     table.clear(dash, 0, 0, 1, 9)
     table.cell(dash, 0, 0, "Version", text_color=color.white, bgcolor=color.black)
-    table.cell(dash, 1, 0, "G+L Fib v0.1", text_color=color.white, bgcolor=color.black)
+    table.cell(dash, 1, 0, "G+L Fib v0.2", text_color=color.white, bgcolor=color.black)
     table.cell(dash, 0, 1, "G impulse", text_color=color.white)
     table.cell(dash, 1, 1, gValid ? str.tostring(gStart, format.mintick) + " → " + str.tostring(gEnd, format.mintick) : "na", text_color=color.white)
     table.cell(dash, 0, 2, "G dir", text_color=color.white)
