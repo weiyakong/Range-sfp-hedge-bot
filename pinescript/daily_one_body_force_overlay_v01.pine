@@ -1,19 +1,9 @@
 //@version=6
-indicator("Daily One Body Levels v0.5", overlay=true, max_lines_count=300, max_labels_count=300)
-
-// Daily One Body logic v0.5
-// 1) Adjacent CLOSED Daily candles only.
-// 2) Opposite-color pairs only: one bullish candle and one bearish candle.
-// 3) Matching body edges only:
-//    - body high vs body high
-//    - body low vs body low
-// 4) Levels are removed if AFTER creation price crosses through the level
-//    or pierces through and returns. Simple touch does not remove the level.
-// 5) line.new(... force_overlay=true) is required so levels behave like price-overlay drawings.
+indicator("Daily One Body Levels v0.6 YEAR LOOKBACK PRICE", overlay=true, max_lines_count=500, max_labels_count=500)
 
 toleranceUsd = input.float(100.0, "Daily tolerance USD", minval=1.0, step=1.0)
-lookbackPairs = input.int(40, "Daily pairs lookback", minval=2, maxval=150)
-maxLevels = input.int(30, "Max Daily levels", minval=1, maxval=100)
+lookbackPairs = input.int(365, "Daily pairs lookback", minval=2, maxval=365)
+maxLevels = input.int(80, "Max Daily levels", minval=1, maxval=200)
 labelOffsetBars = input.int(80, "Label offset", minval=1, maxval=500)
 labelOffsetUsd = input.float(15.0, "Label vertical offset USD", minval=0.0, step=1.0)
 invalidateBufferUsd = input.float(5.0, "Invalidation buffer USD", minval=0.0, step=1.0)
@@ -45,61 +35,31 @@ f_clear() =>
 
 f_addLevel(_price, _startBar) =>
     if array.size(dailyPrices) < maxLevels
-        line ln = line.new(
-             x1=_startBar,
-             y1=_price,
-             x2=bar_index + 1,
-             y2=_price,
-             xloc=xloc.bar_index,
-             extend=extend.right,
-             color=levelColor,
-             width=levelWidth,
-             style=line.style_solid,
-             force_overlay=true
-        )
+        line ln = line.new(x1=_startBar, y1=_price, x2=bar_index + 1, y2=_price, xloc=xloc.bar_index, extend=extend.right, color=levelColor, width=levelWidth, style=line.style_solid, force_overlay=true)
         array.push(dailyLines, ln)
         array.push(dailyPrices, _price)
 
         if showLabels
-            label lb = label.new(
-                 x=bar_index + labelOffsetBars,
-                 y=_price + labelOffsetUsd,
-                 text=f_labelText(_price),
-                 xloc=xloc.bar_index,
-                 style=label.style_none,
-                 textcolor=levelColor,
-                 color=color.new(color.white, 100),
-                 size=size.small,
-                 force_overlay=true
-            )
+            label lb = label.new(x=bar_index + labelOffsetBars, y=_price + labelOffsetUsd, text=f_labelText(_price), xloc=xloc.bar_index, style=label.style_none, textcolor=levelColor, color=color.new(color.white, 100), size=size.small, force_overlay=true)
             array.push(dailyLabels, lb)
     true
 
 f_barInvalidates(_level, _barIndex) =>
     float upper = _level + invalidateBufferUsd
     float lower = _level - invalidateBufferUsd
-
     bool bodyCrossUp = open[_barIndex] < lower and close[_barIndex] > upper
     bool bodyCrossDown = open[_barIndex] > upper and close[_barIndex] < lower
-
-    bool wickThroughReturnFromAbove = open[_barIndex] > upper and low[_barIndex] < lower and close[_barIndex] > upper
-    bool wickThroughReturnFromBelow = open[_barIndex] < lower and high[_barIndex] > upper and close[_barIndex] < lower
-
+    bool wickReturnFromAbove = open[_barIndex] > upper and low[_barIndex] < lower and close[_barIndex] > upper
+    bool wickReturnFromBelow = open[_barIndex] < lower and high[_barIndex] > upper and close[_barIndex] < lower
     bool fullRangeThrough = high[_barIndex] > upper and low[_barIndex] < lower
-
-    bodyCrossUp or bodyCrossDown or wickThroughReturnFromAbove or wickThroughReturnFromBelow or fullRangeThrough
+    bodyCrossUp or bodyCrossDown or wickReturnFromAbove or wickReturnFromBelow or fullRangeThrough
 
 f_invalidatedAfterCreation(_level, _newerCandleIndex) =>
     bool invalid = false
-
-    // Candidate level is created by candles [_newerCandleIndex] and [_newerCandleIndex + 1].
-    // After creation, only bars newer than _newerCandleIndex can invalidate it:
-    // [_newerCandleIndex - 1] ... [0]. Bar 0 is current and updates live.
     if _newerCandleIndex > 0
         for k = 0 to _newerCandleIndex - 1
             if f_barInvalidates(_level, k)
                 invalid := true
-
     invalid
 
 f_tryAddEdge(_p1, _p2, _startBar, _newerCandleIndex) =>
@@ -131,7 +91,6 @@ if barstate.islast
             float low1 = math.min(o1, c1)
             float high2 = math.max(o2, c2)
             float low2 = math.min(o2, c2)
-
             f_tryAddEdge(high1, high2, startBar, i)
             f_tryAddEdge(low1, low2, startBar, i)
 
