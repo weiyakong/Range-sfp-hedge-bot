@@ -1,7 +1,7 @@
 //@version=6
-indicator("D/W/M Body Levels v0.1.2", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("D/W/M Body Levels v0.1.3", overlay=true, max_lines_count=500, max_labels_count=500)
 
-// D/W/M Body Levels v0.1.2
+// D/W/M Body Levels v0.1.3
 // Draws body levels from CLOSED Daily / Weekly / Monthly candles.
 // Body levels = open and close of the higher-timeframe candle.
 // Lines extend right. Labels sit at the right edge near the price scale.
@@ -79,7 +79,9 @@ f_deleteIndex(_idx) =>
     array.remove(levelTf, _idx)
 
 f_trimTf(_tf, _maxCount) =>
-    while f_countTf(_tf) > _maxCount
+    safety = 0
+    while f_countTf(_tf) > _maxCount and safety < 100
+        safety += 1
         int oldestIdx = na
         int oldestBar = 1000000000
         if array.size(levelTf) > 0
@@ -91,8 +93,7 @@ f_trimTf(_tf, _maxCount) =>
                         oldestIdx := i
         if not na(oldestIdx)
             f_deleteIndex(oldestIdx)
-        else
-            break
+        safety += na(oldestIdx) ? 100 : 0
 
 f_addLevel(_tf, _name, _price, _color, _width, _maxCount) =>
     if not na(_price) and not f_isDuplicate(_price, _tf)
