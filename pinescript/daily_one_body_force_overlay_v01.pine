@@ -1,5 +1,5 @@
 //@version=6
-indicator("D/W/M One Body Levels v0.7 PRICE", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("D/W/M One Body Levels v0.7 FIX NA PRICE", overlay=true, max_lines_count=500, max_labels_count=500)
 
 // Use on 1D chart. Daily is read from chart candles. Weekly/Monthly are aggregated from Daily bars.
 
@@ -24,14 +24,28 @@ var line[] allLines = array.new_line()
 var label[] allLabels = array.new_label()
 var float[] allPrices = array.new_float()
 
-var float[] wO = array.new_float(), wC = array.new_float(), wH = array.new_float(), wL = array.new_float()
-var int[] wStart = array.new_int(), wEnd = array.new_int()
-var float[] mO = array.new_float(), mC = array.new_float(), mH = array.new_float(), mL = array.new_float()
-var int[] mStart = array.new_int(), mEnd = array.new_int()
+var float[] wO = array.new_float()
+var float[] wC = array.new_float()
+var float[] wH = array.new_float()
+var float[] wL = array.new_float()
+var int[] wStart = array.new_int()
+var int[] wEnd = array.new_int()
+var float[] mO = array.new_float()
+var float[] mC = array.new_float()
+var float[] mH = array.new_float()
+var float[] mL = array.new_float()
+var int[] mStart = array.new_int()
+var int[] mEnd = array.new_int()
 
-var float curWO = na, curWC = na, curWH = na, curWL = na
+var float curWO = na
+var float curWC = na
+var float curWH = na
+var float curWL = na
 var int curWStart = na
-var float curMO = na, curMC = na, curMH = na, curML = na
+var float curMO = na
+var float curMC = na
+var float curMH = na
+var float curML = na
 var int curMStart = na
 
 f_labelText(_tf, _price) =>
@@ -119,7 +133,12 @@ if barstate.isfirst
     curMStart := bar_index
 else
     if newW
-        array.push(wO, curWO), array.push(wC, curWC), array.push(wH, curWH), array.push(wL, curWL), array.push(wStart, curWStart), array.push(wEnd, bar_index - 1)
+        array.push(wO, curWO)
+        array.push(wC, curWC)
+        array.push(wH, curWH)
+        array.push(wL, curWL)
+        array.push(wStart, curWStart)
+        array.push(wEnd, bar_index - 1)
         curWO := open
         curWC := close
         curWH := high
@@ -130,7 +149,12 @@ else
         curWH := math.max(curWH, high)
         curWL := math.min(curWL, low)
     if newM
-        array.push(mO, curMO), array.push(mC, curMC), array.push(mH, curMH), array.push(mL, curML), array.push(mStart, curMStart), array.push(mEnd, bar_index - 1)
+        array.push(mO, curMO)
+        array.push(mC, curMC)
+        array.push(mH, curMH)
+        array.push(mL, curML)
+        array.push(mStart, curMStart)
+        array.push(mEnd, bar_index - 1)
         curMO := open
         curMC := close
         curMH := high
