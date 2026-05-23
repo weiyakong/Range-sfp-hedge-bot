@@ -1,5 +1,5 @@
 //@version=6
-indicator("Macro + Sub-macro Impulse Debug v0.2 NON-ADJACENT", overlay=true, max_lines_count=300, max_labels_count=300)
+indicator("Macro + Sub-macro Impulse Debug v0.3 HISTORICAL BOS", overlay=true, max_lines_count=300, max_labels_count=300)
 
 pivotLen = input.int(4, "Pivot length", minval=2, maxval=10)
 lookbackDays = input.int(1825, "Lookback days", minval=100, maxval=3000)
@@ -14,8 +14,8 @@ subWidth = input.int(1, "Sub-macro line width", minval=1, maxval=4)
 
 bullMacroColor = input.color(color.new(color.lime, 0), "Bull macro color")
 bearMacroColor = input.color(color.new(color.red, 0), "Bear macro color")
-bullSubColor = input.color(color.new(color.lime, 45), "Bull sub-macro color")
-bearSubColor = input.color(color.new(color.red, 45), "Bear sub-macro color")
+bullSubColor = input.color(color.new(color.lime, 55), "Bull sub-macro color")
+bearSubColor = input.color(color.new(color.red, 55), "Bear sub-macro color")
 
 var int[] pivBars = array.new_int()
 var float[] pivPrices = array.new_float()
@@ -62,17 +62,21 @@ f_addPivot(_bar, _price, _type) =>
 f_movePct(_startPrice, _endPrice, _dir) =>
     _dir == 1 ? ((_endPrice - _startPrice) / _startPrice) * 100.0 : ((_startPrice - _endPrice) / _startPrice) * 100.0
 
-f_previousLevel(_fromIndex, _pivotType) =>
-    float level = na
-    if _fromIndex > 0
-        for j = _fromIndex - 1 to 0
-            if na(level) and array.get(pivTypes, j) == _pivotType
-                level := array.get(pivPrices, j)
-    level
-
-f_breaksStructure(_dir, _endPrice, _startPivotIndex) =>
-    float prevLevel = _dir == 1 ? f_previousLevel(_startPivotIndex, 1) : f_previousLevel(_startPivotIndex, -1)
-    na(prevLevel) ? true : (_dir == 1 ? _endPrice > prevLevel : _endPrice < prevLevel)
+f_findExtremeIndex(_fromIndex, _toIndex, _type) =>
+    int best = na
+    if _toIndex >= _fromIndex
+        for j = _fromIndex to _toIndex
+            if array.get(pivTypes, j) == _type
+                float p = array.get(pivPrices, j)
+                if na(best)
+                    best := j
+                else
+                    float bestP = array.get(pivPrices, best)
+                    bool betterHigh = _type == 1 and p > bestP
+                    bool betterLow = _type == -1 and p < bestP
+                    if betterHigh or betterLow
+                        best := j
+    best
 
 f_drawLine(_startBar, _startPrice, _endBar, _endPrice, _dir, _isMacro, _movePct, _txtSuffix) =>
     color col = _dir == 1 ? (_isMacro ? bullMacroColor : bullSubColor) : (_isMacro ? bearMacroColor : bearSubColor)
@@ -97,48 +101,14 @@ f_drawSubMacrosForMacro(_macroStartIndex, _macroEndIndex, _dir, _macroStartPrice
                 int pType = array.get(pivTypes, j)
                 float pPrice = array.get(pivPrices, j)
                 int pBar = array.get(pivBars, j)
-
                 bool validBearSub = _dir == -1 and pType == 1 and pPrice < _macroStartPrice and pPrice > _macroEndPrice
                 bool validBullSub = _dir == 1 and pType == -1 and pPrice > _macroStartPrice and pPrice < _macroEndPrice
-
                 if validBearSub or validBullSub
                     float move = f_movePct(pPrice, _macroEndPrice, _dir)
                     if move >= subMacroMinMovePct
                         f_drawLine(pBar, pPrice, _macroEndBar, _macroEndPrice, _dir, false, move, "")
                         drawnSub += 1
     true
-
-f_findMacroStart(_endIndex) =>
-    int bestIndex = na
-    int endType = array.get(pivTypes, _endIndex)
-    int dir = endType == 1 ? 1 : -1
-    int startType = -endType
-    float endPrice = array.get(pivPrices, _endIndex)
-
-    if _endIndex > 0
-        for n = 0 to _endIndex - 1
-            int i = _endIndex - 1 - n
-            int pType = array.get(pivTypes, i)
-            float pPrice = array.get(pivPrices, i)
-            int pBar = array.get(pivBars, i)
-            bool insideLookback = bar_index - pBar <= lookbackDays
-
-            if insideLookback and pType == startType
-                float move = f_movePct(pPrice, endPrice, dir)
-                bool directionOk = dir == 1 ? endPrice > pPrice : endPrice < pPrice
-                bool moveOk = move >= macroMinMovePct
-                bool bosOk = f_breaksStructure(dir, endPrice, i)
-
-                if directionOk and moveOk and bosOk
-                    if na(bestIndex)
-                        bestIndex := i
-                    else
-                        float bestPrice = array.get(pivPrices, bestIndex)
-                        bool betterBearStart = dir == -1 and pPrice > bestPrice
-                        bool betterBullStart = dir == 1 and pPrice < bestPrice
-                        if betterBearStart or betterBullStart
-                            bestIndex := i
-    bestIndex
 
 ph = ta.pivothigh(high, pivotLen, pivotLen)
 pl = ta.pivotlow(low, pivotLen, pivotLen)
@@ -157,21 +127,43 @@ if barstate.islast
     f_clearDrawings()
     int pivCount = array.size(pivBars)
     int drawnMacro = 0
+    int activeDir = 0
+    int lastHighIdx = na
+    int lastLowIdx = na
 
     if pivCount >= 2
-        for n = 0 to pivCount - 2
-            int endIndex = pivCount - 1 - n
-            if drawnMacro < maxMacroImpulses
-                int startIndex = f_findMacroStart(endIndex)
-                if not na(startIndex)
-                    int endType = array.get(pivTypes, endIndex)
-                    int dir = endType == 1 ? 1 : -1
-                    float startPrice = array.get(pivPrices, startIndex)
-                    float endPrice = array.get(pivPrices, endIndex)
-                    int startBar = array.get(pivBars, startIndex)
-                    int endBar = array.get(pivBars, endIndex)
-                    float move = f_movePct(startPrice, endPrice, dir)
-                    string suffix = drawnMacro == 0 ? " latest" : ""
-                    f_drawLine(startBar, startPrice, endBar, endPrice, dir, true, move, suffix)
-                    f_drawSubMacrosForMacro(startIndex, endIndex, dir, startPrice, endPrice, endBar)
-                    drawnMacro += 1
+        for i = 0 to pivCount - 1
+            int pType = array.get(pivTypes, i)
+            float pPrice = array.get(pivPrices, i)
+
+            if pType == 1
+                bool bullBos = not na(lastHighIdx) and not na(lastLowIdx) and pPrice > array.get(pivPrices, lastHighIdx)
+                if bullBos and activeDir != 1 and drawnMacro < maxMacroImpulses
+                    int startIdx = f_findExtremeIndex(lastHighIdx, i, -1)
+                    if not na(startIdx)
+                        float startPrice = array.get(pivPrices, startIdx)
+                        float move = f_movePct(startPrice, pPrice, 1)
+                        bool insideLookback = bar_index - array.get(pivBars, startIdx) <= lookbackDays
+                        if insideLookback and move >= macroMinMovePct
+                            string suffix = drawnMacro == 0 ? " latest" : ""
+                            f_drawLine(array.get(pivBars, startIdx), startPrice, array.get(pivBars, i), pPrice, 1, true, move, suffix)
+                            f_drawSubMacrosForMacro(startIdx, i, 1, startPrice, pPrice, array.get(pivBars, i))
+                            drawnMacro += 1
+                            activeDir := 1
+                lastHighIdx := i
+
+            if pType == -1
+                bool bearBos = not na(lastLowIdx) and not na(lastHighIdx) and pPrice < array.get(pivPrices, lastLowIdx)
+                if bearBos and activeDir != -1 and drawnMacro < maxMacroImpulses
+                    int startIdx = f_findExtremeIndex(lastLowIdx, i, 1)
+                    if not na(startIdx)
+                        float startPrice = array.get(pivPrices, startIdx)
+                        float move = f_movePct(startPrice, pPrice, -1)
+                        bool insideLookback = bar_index - array.get(pivBars, startIdx) <= lookbackDays
+                        if insideLookback and move >= macroMinMovePct
+                            string suffix = drawnMacro == 0 ? " latest" : ""
+                            f_drawLine(array.get(pivBars, startIdx), startPrice, array.get(pivBars, i), pPrice, -1, true, move, suffix)
+                            f_drawSubMacrosForMacro(startIdx, i, -1, startPrice, pPrice, array.get(pivBars, i))
+                            drawnMacro += 1
+                            activeDir := -1
+                lastLowIdx := i
