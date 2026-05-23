@@ -1,0 +1,102 @@
+//@version=6
+indicator("Daily One Body Levels v0.1", overlay=true, max_lines_count=300, max_labels_count=300)
+
+toleranceUsd = input.float(100.0, "Daily tolerance USD", minval=1.0, step=1.0)
+lookbackPairs = input.int(40, "Daily pairs lookback", minval=2, maxval=150)
+minDistanceUsd = input.float(150.0, "Min distance between levels USD", minval=0.0, step=10.0)
+maxLevels = input.int(20, "Max Daily levels", minval=1, maxval=100)
+labelOffsetBars = input.int(30, "Label offset", minval=1, maxval=200)
+
+levelColor = input.color(color.new(color.lime, 0), "Daily color")
+levelWidth = input.int(1, "Line width", minval=1, maxval=3)
+showLabels = input.bool(true, "Show labels")
+
+var line[] dailyLines = array.new_line()
+var label[] dailyLabels = array.new_label()
+var float[] dailyPrices = array.new_float()
+
+f_clear() =>
+    int lineCount = array.size(dailyLines)
+    if lineCount > 0
+        for i = 0 to lineCount - 1
+            line.delete(array.get(dailyLines, i))
+    int labelCount = array.size(dailyLabels)
+    if labelCount > 0
+        for i = 0 to labelCount - 1
+            label.delete(array.get(dailyLabels, i))
+    array.clear(dailyLines)
+    array.clear(dailyLabels)
+    array.clear(dailyPrices)
+    true
+
+f_isNearExisting(_price) =>
+    bool near = false
+    int count = array.size(dailyPrices)
+    if count > 0
+        for i = 0 to count - 1
+            if math.abs(array.get(dailyPrices, i) - _price) <= minDistanceUsd
+                near := true
+    near
+
+f_addLevel(_price, _startBar) =>
+    if array.size(dailyPrices) < maxLevels and not f_isNearExisting(_price)
+        line ln = line.new(
+             x1=_startBar,
+             y1=_price,
+             x2=bar_index + 1,
+             y2=_price,
+             xloc=xloc.bar_index,
+             extend=extend.right,
+             color=levelColor,
+             width=levelWidth,
+             style=line.style_solid,
+             force_overlay=true
+        )
+        array.push(dailyLines, ln)
+        array.push(dailyPrices, _price)
+
+        if showLabels
+            label lb = label.new(
+                 x=bar_index + labelOffsetBars,
+                 y=_price,
+                 text="Daily — " + str.tostring(_price, format.mintick),
+                 xloc=xloc.bar_index,
+                 style=label.style_label_left,
+                 textcolor=color.black,
+                 color=color.new(levelColor, 0),
+                 size=size.small,
+                 force_overlay=true
+            )
+            array.push(dailyLabels, lb)
+    true
+
+f_checkPair(_p1, _p2, _startBar) =>
+    float diff = math.abs(_p1 - _p2)
+    if diff <= toleranceUsd
+        float level = (_p1 + _p2) / 2.0
+        f_addLevel(level, _startBar)
+    true
+
+if barstate.islast
+    f_clear()
+
+    for i = 1 to lookbackPairs
+        float o1 = open[i]
+        float c1 = close[i]
+        float o2 = open[i + 1]
+        float c2 = close[i + 1]
+        int startBar = bar_index - (i + 1)
+
+        f_checkPair(o1, o2, startBar)
+        f_checkPair(o1, c2, startBar)
+        f_checkPair(c1, o2, startBar)
+        f_checkPair(c1, c2, startBar)
+
+    int labelCount = array.size(dailyLabels)
+    if labelCount > 0
+        for i = 0 to labelCount - 1
+            label lb = array.get(dailyLabels, i)
+            float p = array.get(dailyPrices, i)
+            label.set_x(lb, bar_index + labelOffsetBars)
+            label.set_y(lb, p)
+            label.set_text(lb, "Daily — " + str.tostring(p, format.mintick))
