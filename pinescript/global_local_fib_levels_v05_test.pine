@@ -1,0 +1,221 @@
+//@version=6
+indicator("Global + Local Fib Levels v0.5 TEST", overlay=true, max_lines_count=220, max_labels_count=220)
+
+showG = input.bool(true, "Show G")
+showL = input.bool(true, "Show L")
+showExt = input.bool(false, "Show extensions")
+showSrc = input.bool(true, "Show source impulses")
+showLabels = input.bool(true, "Show labels")
+
+lookbackDays = input.int(244, "G daily lookback", minval=50, maxval=500)
+gPivot = input.int(5, "G pivot len 1D", minval=2, maxval=30)
+gAtrLen = input.int(14, "G ATR len", minval=1)
+gMinPct = input.float(15.0, "G min %", minval=1, step=0.5)
+gMinAtr = input.float(5.0, "G min ATR", minval=1, step=0.5)
+
+lTf = input.timeframe("240", "L timeframe")
+lPivot = input.int(4, "L pivot len", minval=1, maxval=30)
+lAtrLen = input.int(14, "L ATR len", minval=1)
+lMinPct = input.float(1.2, "L min %", minval=0.1, step=0.1)
+lMinAtr = input.float(2.0, "L min ATR", minval=0.2, step=0.2)
+lMinBars = input.int(2, "L min bars", minval=1, maxval=80)
+lLookback = input.int(60, "L active window bars", minval=10, maxval=300)
+replaceBoost = input.float(1.15, "Replace only if score x", minval=1.0, step=0.05)
+counterSizeRatio = input.float(0.60, "Counter impulse min size ratio", minval=0.1, maxval=1.5, step=0.05)
+counterScoreRatio = input.float(1.25, "Counter impulse score x", minval=1.0, step=0.05)
+
+fwd = input.int(500, "Line extends N bars forward", minval=20)
+gOff = input.int(80, "G label offset", minval=1)
+lOff = input.int(125, "L label offset", minval=1)
+gWidth = input.int(1, "G line width", minval=1, maxval=4)
+lWidth = input.int(1, "L line width", minval=1, maxval=4)
+
+f_col(r) =>
+    r == 0.0 ? color.gray : r == 0.236 ? color.red : r == 0.382 ? color.orange : r == 0.5 ? color.white : r == 0.618 ? color.green : r == 0.7 ? color.teal : r == 0.786 ? color.aqua : r == 0.88 ? color.fuchsia : r == 0.9 ? color.red : r == 1.0 ? color.gray : color.purple
+
+f_score(pct, atrs, ageBars) =>
+    rec = math.max(0.0, 1.0 - ageBars / lLookback)
+    pct * 2.0 + atrs * 1.5 + rec * 3.0
+
+f_global() =>
+    atr = ta.atr(gAtrLen)
+    ph = ta.pivothigh(high, gPivot, gPivot)
+    pl = ta.pivotlow(low, gPivot, gPivot)
+    macroH = ta.highest(high, lookbackDays)
+    macroL = ta.lowest(low, lookbackDays)
+    macroM = (macroH + macroL) / 2.0
+    var float lastH = na
+    var float lastL = na
+    var int lastHT = na
+    var int lastLT = na
+    var int dir = 0
+    var float st = na
+    var float en = na
+    var int stT = na
+    var int enT = na
+    var float pctOut = na
+    var float atrOut = na
+    if not na(ph)
+        t = time[gPivot]
+        if not na(lastL)
+            sz = ph - lastL
+            pct = lastL != 0 ? sz / lastL * 100 : na
+            atrs = atr[gPivot] > 0 ? sz / atr[gPivot] : na
+            if sz > 0 and ((not na(pct) and pct >= gMinPct) or (not na(atrs) and atrs >= gMinAtr))
+                dir := 1, st := lastL, en := ph, stT := lastLT, enT := t, pctOut := pct, atrOut := atrs
+        lastH := ph, lastHT := t
+    if not na(pl)
+        t = time[gPivot]
+        if not na(lastH)
+            sz = lastH - pl
+            pct = lastH != 0 ? sz / lastH * 100 : na
+            atrs = atr[gPivot] > 0 ? sz / atr[gPivot] : na
+            if sz > 0 and ((not na(pct) and pct >= gMinPct) or (not na(atrs) and atrs >= gMinAtr))
+                dir := -1, st := lastH, en := pl, stT := lastHT, enT := t, pctOut := pct, atrOut := atrs
+        lastL := pl, lastLT := t
+    [dir, st, en, stT, enT, pctOut, atrOut, macroH, macroL, macroM]
+
+f_local() =>
+    atr = ta.atr(lAtrLen)
+    ph = ta.pivothigh(high, lPivot, lPivot)
+    pl = ta.pivotlow(low, lPivot, lPivot)
+    var float lastH = na
+    var float lastL = na
+    var int lastHBar = na
+    var int lastLBar = na
+    var int lastHT = na
+    var int lastLT = na
+    var int selDir = 0
+    var float selSt = na
+    var float selEn = na
+    var int selStT = na
+    var int selEnT = na
+    var int selEndBar = na
+    var float selPct = na
+    var float selAtr = na
+    var float selScore = na
+    var float selSize = na
+
+    if not na(ph)
+        b = bar_index - lPivot
+        t = time[lPivot]
+        if not na(lastL) and b > lastLBar
+            sz = ph - lastL
+            bars = b - lastLBar
+            pct = lastL != 0 ? sz / lastL * 100 : na
+            atrs = atr[lPivot] > 0 ? sz / atr[lPivot] : na
+            ok = sz > 0 and bars >= lMinBars and ((not na(pct) and pct >= lMinPct) or (not na(atrs) and atrs >= lMinAtr))
+            if ok
+                age = bar_index - b
+                sc = f_score(pct, atrs, age)
+                oldAge = na(selEndBar) ? 100000 : bar_index - selEndBar
+                sameDir = selDir == 1
+                noCurrent = selDir == 0 or na(selScore) or oldAge > lLookback
+                replaceSame = sameDir and sc > selScore * replaceBoost
+                replaceCounter = selDir == -1 and (sz >= selSize * counterSizeRatio or sc > selScore * counterScoreRatio)
+                if noCurrent or replaceSame or replaceCounter
+                    selDir := 1, selSt := lastL, selEn := ph, selStT := lastLT, selEnT := t, selEndBar := b, selPct := pct, selAtr := atrs, selScore := sc, selSize := sz
+        lastH := ph, lastHBar := b, lastHT := t
+
+    if not na(pl)
+        b = bar_index - lPivot
+        t = time[lPivot]
+        if not na(lastH) and b > lastHBar
+            sz = lastH - pl
+            bars = b - lastHBar
+            pct = lastH != 0 ? sz / lastH * 100 : na
+            atrs = atr[lPivot] > 0 ? sz / atr[lPivot] : na
+            ok = sz > 0 and bars >= lMinBars and ((not na(pct) and pct >= lMinPct) or (not na(atrs) and atrs >= lMinAtr))
+            if ok
+                age = bar_index - b
+                sc = f_score(pct, atrs, age)
+                oldAge = na(selEndBar) ? 100000 : bar_index - selEndBar
+                sameDir = selDir == -1
+                noCurrent = selDir == 0 or na(selScore) or oldAge > lLookback
+                replaceSame = sameDir and sc > selScore * replaceBoost
+                replaceCounter = selDir == 1 and (sz >= selSize * counterSizeRatio or sc > selScore * counterScoreRatio)
+                if noCurrent or replaceSame or replaceCounter
+                    selDir := -1, selSt := lastH, selEn := pl, selStT := lastHT, selEnT := t, selEndBar := b, selPct := pct, selAtr := atrs, selScore := sc, selSize := sz
+        lastL := pl, lastLBar := b, lastLT := t
+    [selDir, selSt, selEn, selStT, selEnT, selPct, selAtr, selScore]
+
+[gDir, gSt, gEn, gStT, gEnT, gPct, gAtr, mH, mL, mM] = request.security(syminfo.tickerid, "D", f_global(), barmerge.gaps_off, barmerge.lookahead_off)
+[lDir, lSt, lEn, lStT, lEnT, lPct, lAtr, lScore] = request.security(syminfo.tickerid, lTf, f_local(), barmerge.gaps_off, barmerge.lookahead_off)
+
+plot(mH, "244D Macro High", color=color.new(color.red, 88))
+plot(mL, "244D Macro Low", color=color.new(color.lime, 88))
+plot(mM, "244D Macro Mid", color=color.new(color.gray, 90))
+
+var line[] lines = array.new_line()
+var label[] labels = array.new_label()
+var line gSrc = na
+var line lSrc = na
+var label gLab = na
+var label lLab = na
+
+f_clear() =>
+    while array.size(lines) > 0
+        line.delete(array.pop(lines))
+    while array.size(labels) > 0
+        label.delete(array.pop(labels))
+
+f_lvl(prefix, rTxt, r, base, target, ok, width, off, alpha, startTime) =>
+    if ok and not na(startTime)
+        p = base + (target - base) * r
+        c = color.new(f_col(r), alpha)
+        array.push(lines, line.new(startTime, p, time + fwd * timeframe.in_seconds(timeframe.period) * 1000, p, xloc=xloc.bar_time, extend=extend.right, color=c, width=width))
+        if showLabels
+            array.push(labels, label.new(bar_index + off, p, prefix + " " + rTxt + " (" + str.tostring(p, format.mintick) + ")", xloc=xloc.bar_index, style=label.style_none, textcolor=c, color=color.new(color.white, 100), size=size.small))
+
+f_set(prefix, base, target, ok, width, off, alpha, startTime) =>
+    f_lvl(prefix, "0", 0, base, target, ok, width, off, alpha, startTime)
+    f_lvl(prefix, "0.236", 0.236, base, target, ok, width, off, alpha, startTime)
+    f_lvl(prefix, "0.382", 0.382, base, target, ok, width, off, alpha, startTime)
+    f_lvl(prefix, "0.5", 0.5, base, target, ok, width, off, alpha, startTime)
+    f_lvl(prefix, "0.618", 0.618, base, target, ok, width, off, alpha, startTime)
+    f_lvl(prefix, "0.7", 0.7, base, target, ok, width, off, alpha, startTime)
+    f_lvl(prefix, "0.786", 0.786, base, target, ok, width, off, alpha, startTime)
+    f_lvl(prefix, "0.88", 0.88, base, target, ok, width, off, alpha, startTime)
+    f_lvl(prefix, "0.9", 0.9, base, target, ok, width, off, alpha, startTime)
+    f_lvl(prefix, "1", 1, base, target, ok, width, off, alpha, startTime)
+    if showExt
+        f_lvl(prefix, "1.272", 1.272, base, target, ok, width, off, alpha, startTime)
+        f_lvl(prefix, "1.414", 1.414, base, target, ok, width, off, alpha, startTime)
+        f_lvl(prefix, "1.618", 1.618, base, target, ok, width, off, alpha, startTime)
+
+gOk = showG and gDir != 0 and not na(gSt) and not na(gEn) and math.abs(gSt - gEn) > syminfo.mintick
+lOk = showL and lDir != 0 and not na(lSt) and not na(lEn) and math.abs(lSt - lEn) > syminfo.mintick
+
+if barstate.islast
+    f_clear()
+    f_set("G", gEn, gSt, gOk, gWidth, gOff, 20, gEnT)
+    f_set("L", lEn, lSt, lOk, lWidth, lOff, 0, lEnT)
+
+if barstate.islast and showSrc and gOk and not na(gStT) and not na(gEnT)
+    if na(gSrc)
+        gSrc := line.new(gStT, gSt, gEnT, gEn, xloc=xloc.bar_time, color=color.new(color.blue, 0), width=1, style=line.style_dotted)
+    else
+        line.set_xy1(gSrc, gStT, gSt), line.set_xy2(gSrc, gEnT, gEn)
+    label.delete(gLab)
+    gLab := label.new(gEnT, gEn, "G impulse", xloc=xloc.bar_time, style=gDir == 1 ? label.style_label_down : label.style_label_up, color=color.blue, textcolor=color.white, size=size.small)
+
+if barstate.islast and showSrc and lOk and not na(lStT) and not na(lEnT)
+    if na(lSrc)
+        lSrc := line.new(lStT, lSt, lEnT, lEn, xloc=xloc.bar_time, color=color.new(color.fuchsia, 0), width=1, style=line.style_dotted)
+    else
+        line.set_xy1(lSrc, lStT, lSt), line.set_xy2(lSrc, lEnT, lEn)
+    label.delete(lLab)
+    lLab := label.new(lEnT, lEn, "L impulse", xloc=xloc.bar_time, style=lDir == 1 ? label.style_label_down : label.style_label_up, color=color.fuchsia, textcolor=color.white, size=size.small)
+
+var table t = table.new(position.top_right, 2, 5)
+if barstate.islast
+    table.cell(t, 0, 0, "Version", text_color=color.white)
+    table.cell(t, 1, 0, "v0.5", text_color=color.white)
+    table.cell(t, 0, 1, "L", text_color=color.white)
+    table.cell(t, 1, 1, lOk ? str.tostring(lSt, format.mintick) + " → " + str.tostring(lEn, format.mintick) : "na", text_color=color.white)
+    table.cell(t, 0, 2, "L dir", text_color=color.white)
+    table.cell(t, 1, 2, lDir == 1 ? "UP" : lDir == -1 ? "DOWN" : "NONE", text_color=color.white)
+    table.cell(t, 0, 3, "L score", text_color=color.white)
+    table.cell(t, 1, 3, lOk ? str.tostring(lScore, "#.##") : "na", text_color=color.white)
+    table.cell(t, 0, 4, "L % / ATR", text_color=color.white)
+    table.cell(t, 1, 4, lOk ? str.tostring(lPct, "#.##") + "% / " + str.tostring(lAtr, "#.##") : "na", text_color=color.white)
