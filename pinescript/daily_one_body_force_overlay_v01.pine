@@ -1,47 +1,64 @@
 //@version=6
-indicator("Daily One Body Levels v0.6 YEAR LOOKBACK PRICE", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("D/W/M One Body Levels v0.7 PRICE", overlay=true, max_lines_count=500, max_labels_count=500)
 
-toleranceUsd = input.float(100.0, "Daily tolerance USD", minval=1.0, step=1.0)
-lookbackPairs = input.int(365, "Daily pairs lookback", minval=2, maxval=365)
-maxLevels = input.int(80, "Max Daily levels", minval=1, maxval=200)
-labelOffsetBars = input.int(80, "Label offset", minval=1, maxval=500)
+// Use on 1D chart. Daily is read from chart candles. Weekly/Monthly are aggregated from Daily bars.
+
+dTol = input.float(100.0, "Daily tolerance USD", minval=1.0, step=1.0)
+wTol = input.float(150.0, "Weekly tolerance USD", minval=1.0, step=1.0)
+mTol = input.float(250.0, "Monthly tolerance USD", minval=1.0, step=1.0)
+dLookback = input.int(365, "Daily pairs lookback", minval=2, maxval=365)
+wLookback = input.int(52, "Weekly pairs lookback", minval=2, maxval=104)
+mLookback = input.int(12, "Monthly pairs lookback", minval=2, maxval=36)
+maxTotalLevels = input.int(160, "Max total levels", minval=1, maxval=450)
+labelOffsetBars = input.int(50, "Label offset", minval=1, maxval=500)
 labelOffsetUsd = input.float(15.0, "Label vertical offset USD", minval=0.0, step=1.0)
 invalidateBufferUsd = input.float(5.0, "Invalidation buffer USD", minval=0.0, step=1.0)
 
-levelColor = input.color(color.new(color.lime, 0), "Daily color")
+dColor = input.color(color.new(color.lime, 0), "Daily color")
+wColor = input.color(color.new(color.orange, 0), "Weekly color")
+mColor = input.color(color.new(color.silver, 0), "Monthly color")
 levelWidth = input.int(1, "Line width", minval=1, maxval=3)
 showLabels = input.bool(true, "Show labels")
 
-var line[] dailyLines = array.new_line()
-var label[] dailyLabels = array.new_label()
-var float[] dailyPrices = array.new_float()
+var line[] allLines = array.new_line()
+var label[] allLabels = array.new_label()
+var float[] allPrices = array.new_float()
 
-f_labelText(_price) =>
-    "Daily — " + str.tostring(_price, format.mintick)
+var float[] wO = array.new_float(), wC = array.new_float(), wH = array.new_float(), wL = array.new_float()
+var int[] wStart = array.new_int(), wEnd = array.new_int()
+var float[] mO = array.new_float(), mC = array.new_float(), mH = array.new_float(), mL = array.new_float()
+var int[] mStart = array.new_int(), mEnd = array.new_int()
 
-f_clear() =>
-    int lineCount = array.size(dailyLines)
-    if lineCount > 0
-        for i = 0 to lineCount - 1
-            line.delete(array.get(dailyLines, i))
-    int labelCount = array.size(dailyLabels)
-    if labelCount > 0
-        for i = 0 to labelCount - 1
-            label.delete(array.get(dailyLabels, i))
-    array.clear(dailyLines)
-    array.clear(dailyLabels)
-    array.clear(dailyPrices)
+var float curWO = na, curWC = na, curWH = na, curWL = na
+var int curWStart = na
+var float curMO = na, curMC = na, curMH = na, curML = na
+var int curMStart = na
+
+f_labelText(_tf, _price) =>
+    _tf + " — " + str.tostring(_price, format.mintick)
+
+f_clearDrawings() =>
+    int lc = array.size(allLines)
+    if lc > 0
+        for x = 0 to lc - 1
+            line.delete(array.get(allLines, x))
+    int bc = array.size(allLabels)
+    if bc > 0
+        for x = 0 to bc - 1
+            label.delete(array.get(allLabels, x))
+    array.clear(allLines)
+    array.clear(allLabels)
+    array.clear(allPrices)
     true
 
-f_addLevel(_price, _startBar) =>
-    if array.size(dailyPrices) < maxLevels
-        line ln = line.new(x1=_startBar, y1=_price, x2=bar_index + 1, y2=_price, xloc=xloc.bar_index, extend=extend.right, color=levelColor, width=levelWidth, style=line.style_solid, force_overlay=true)
-        array.push(dailyLines, ln)
-        array.push(dailyPrices, _price)
-
+f_addLevel(_tf, _price, _startBar, _col) =>
+    if array.size(allPrices) < maxTotalLevels
+        line ln = line.new(x1=_startBar, y1=_price, x2=bar_index + 1, y2=_price, xloc=xloc.bar_index, extend=extend.right, color=_col, width=levelWidth, style=line.style_solid, force_overlay=true)
+        array.push(allLines, ln)
+        array.push(allPrices, _price)
         if showLabels
-            label lb = label.new(x=bar_index + labelOffsetBars, y=_price + labelOffsetUsd, text=f_labelText(_price), xloc=xloc.bar_index, style=label.style_none, textcolor=levelColor, color=color.new(color.white, 100), size=size.small, force_overlay=true)
-            array.push(dailyLabels, lb)
+            label lb = label.new(x=bar_index + labelOffsetBars, y=_price + labelOffsetUsd, text=f_labelText(_tf, _price), xloc=xloc.bar_index, style=label.style_none, textcolor=_col, color=color.new(color.white, 100), size=size.small, force_overlay=true)
+            array.push(allLabels, lb)
     true
 
 f_barInvalidates(_level, _barIndex) =>
@@ -54,51 +71,104 @@ f_barInvalidates(_level, _barIndex) =>
     bool fullRangeThrough = high[_barIndex] > upper and low[_barIndex] < lower
     bodyCrossUp or bodyCrossDown or wickReturnFromAbove or wickReturnFromBelow or fullRangeThrough
 
-f_invalidatedAfterCreation(_level, _newerCandleIndex) =>
+f_invalidatedAfterEndBar(_level, _endBar) =>
     bool invalid = false
-    if _newerCandleIndex > 0
-        for k = 0 to _newerCandleIndex - 1
+    int offset = bar_index - _endBar
+    if offset > 0
+        for k = 0 to offset - 1
             if f_barInvalidates(_level, k)
                 invalid := true
     invalid
 
-f_tryAddEdge(_p1, _p2, _startBar, _newerCandleIndex) =>
+f_tryAddEdge(_tf, _p1, _p2, _startBar, _endBar, _tol, _col) =>
     float diff = math.abs(_p1 - _p2)
-    if diff <= toleranceUsd
+    if diff <= _tol
         float level = (_p1 + _p2) / 2.0
-        if not f_invalidatedAfterCreation(level, _newerCandleIndex)
-            f_addLevel(level, _startBar)
+        if not f_invalidatedAfterEndBar(level, _endBar)
+            f_addLevel(_tf, level, _startBar, _col)
     true
 
+f_scanPair(_tf, _o1, _c1, _o2, _c2, _startBar, _endBar, _tol, _col) =>
+    bool bull1 = _c1 > _o1
+    bool bear1 = _c1 < _o1
+    bool bull2 = _c2 > _o2
+    bool bear2 = _c2 < _o2
+    bool opposite = (bull1 and bear2) or (bear1 and bull2)
+    if opposite
+        float high1 = math.max(_o1, _c1)
+        float low1 = math.min(_o1, _c1)
+        float high2 = math.max(_o2, _c2)
+        float low2 = math.min(_o2, _c2)
+        f_tryAddEdge(_tf, high1, high2, _startBar, _endBar, _tol, _col)
+        f_tryAddEdge(_tf, low1, low2, _startBar, _endBar, _tol, _col)
+    true
+
+bool newW = timeframe.change("W")
+bool newM = timeframe.change("M")
+
+if barstate.isfirst
+    curWO := open
+    curWC := close
+    curWH := high
+    curWL := low
+    curWStart := bar_index
+    curMO := open
+    curMC := close
+    curMH := high
+    curML := low
+    curMStart := bar_index
+else
+    if newW
+        array.push(wO, curWO), array.push(wC, curWC), array.push(wH, curWH), array.push(wL, curWL), array.push(wStart, curWStart), array.push(wEnd, bar_index - 1)
+        curWO := open
+        curWC := close
+        curWH := high
+        curWL := low
+        curWStart := bar_index
+    else
+        curWC := close
+        curWH := math.max(curWH, high)
+        curWL := math.min(curWL, low)
+    if newM
+        array.push(mO, curMO), array.push(mC, curMC), array.push(mH, curMH), array.push(mL, curML), array.push(mStart, curMStart), array.push(mEnd, bar_index - 1)
+        curMO := open
+        curMC := close
+        curMH := high
+        curML := low
+        curMStart := bar_index
+    else
+        curMC := close
+        curMH := math.max(curMH, high)
+        curML := math.min(curML, low)
+
 if barstate.islast
-    f_clear()
+    f_clearDrawings()
 
-    for i = 1 to lookbackPairs
-        float o1 = open[i]
-        float c1 = close[i]
-        float o2 = open[i + 1]
-        float c2 = close[i + 1]
+    for i = 1 to dLookback
         int startBar = bar_index - (i + 1)
+        int endBar = bar_index - i
+        f_scanPair("Daily", open[i], close[i], open[i + 1], close[i + 1], startBar, endBar, dTol, dColor)
 
-        bool bull1 = c1 > o1
-        bool bear1 = c1 < o1
-        bool bull2 = c2 > o2
-        bool bear2 = c2 < o2
-        bool oppositeColors = (bull1 and bear2) or (bear1 and bull2)
+    int wc = array.size(wO)
+    if wc > 1
+        int pairsW = math.min(wLookback, wc - 1)
+        for n = 0 to pairsW - 1
+            int idx1 = wc - 1 - n
+            int idx2 = idx1 - 1
+            f_scanPair("Weekly", array.get(wO, idx1), array.get(wC, idx1), array.get(wO, idx2), array.get(wC, idx2), array.get(wStart, idx2), array.get(wEnd, idx1), wTol, wColor)
 
-        if oppositeColors
-            float high1 = math.max(o1, c1)
-            float low1 = math.min(o1, c1)
-            float high2 = math.max(o2, c2)
-            float low2 = math.min(o2, c2)
-            f_tryAddEdge(high1, high2, startBar, i)
-            f_tryAddEdge(low1, low2, startBar, i)
+    int mc = array.size(mO)
+    if mc > 1
+        int pairsM = math.min(mLookback, mc - 1)
+        for n = 0 to pairsM - 1
+            int idx1 = mc - 1 - n
+            int idx2 = idx1 - 1
+            f_scanPair("Monthly", array.get(mO, idx1), array.get(mC, idx1), array.get(mO, idx2), array.get(mC, idx2), array.get(mStart, idx2), array.get(mEnd, idx1), mTol, mColor)
 
-    int labelCount = array.size(dailyLabels)
+    int labelCount = array.size(allLabels)
     if labelCount > 0
         for i = 0 to labelCount - 1
-            label lb = array.get(dailyLabels, i)
-            float p = array.get(dailyPrices, i)
+            label lb = array.get(allLabels, i)
+            float p = array.get(allPrices, i)
             label.set_x(lb, bar_index + labelOffsetBars)
             label.set_y(lb, p + labelOffsetUsd)
-            label.set_text(lb, f_labelText(p))
