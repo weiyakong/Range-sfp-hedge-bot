@@ -1,7 +1,9 @@
 //@version=6
-indicator("D/W/M One Body Levels v0.7 FIX NA PRICE", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("D/W/M One Body Levels v0.8 CONFLUENCE LABELS", overlay=true, max_lines_count=500, max_labels_count=500)
 
 // Use on 1D chart. Daily is read from chart candles. Weekly/Monthly are aggregated from Daily bars.
+// Lines are drawn for all valid Daily/Weekly/Monthly levels.
+// Labels use priority: Monthly > Weekly > Daily. Lower TF labels are hidden near higher TF confluence.
 
 dTol = input.float(100.0, "Daily tolerance USD", minval=1.0, step=1.0)
 wTol = input.float(150.0, "Weekly tolerance USD", minval=1.0, step=1.0)
@@ -10,9 +12,10 @@ dLookback = input.int(365, "Daily pairs lookback", minval=2, maxval=365)
 wLookback = input.int(52, "Weekly pairs lookback", minval=2, maxval=104)
 mLookback = input.int(12, "Monthly pairs lookback", minval=2, maxval=36)
 maxTotalLevels = input.int(160, "Max total levels", minval=1, maxval=450)
-labelOffsetBars = input.int(50, "Label offset", minval=1, maxval=500)
+labelOffsetBars = input.int(80, "Label offset", minval=1, maxval=500)
 labelOffsetUsd = input.float(15.0, "Label vertical offset USD", minval=0.0, step=1.0)
 invalidateBufferUsd = input.float(5.0, "Invalidation buffer USD", minval=0.0, step=1.0)
+confluenceLabelDistanceUsd = input.float(150.0, "Confluence label distance USD", minval=0.0, step=10.0)
 
 dColor = input.color(color.new(color.lime, 0), "Daily color")
 wColor = input.color(color.new(color.orange, 0), "Weekly color")
@@ -23,6 +26,7 @@ showLabels = input.bool(true, "Show labels")
 var line[] allLines = array.new_line()
 var label[] allLabels = array.new_label()
 var float[] allPrices = array.new_float()
+var float[] labelPrices = array.new_float()
 
 var float[] wO = array.new_float()
 var float[] wC = array.new_float()
@@ -51,6 +55,15 @@ var int curMStart = na
 f_labelText(_tf, _price) =>
     _tf + " — " + str.tostring(_price, format.mintick)
 
+f_hasNearbyHigherLabel(_price) =>
+    bool found = false
+    int count = array.size(labelPrices)
+    if count > 0
+        for x = 0 to count - 1
+            if math.abs(array.get(labelPrices, x) - _price) <= confluenceLabelDistanceUsd
+                found := true
+    found
+
 f_clearDrawings() =>
     int lc = array.size(allLines)
     if lc > 0
@@ -63,16 +76,19 @@ f_clearDrawings() =>
     array.clear(allLines)
     array.clear(allLabels)
     array.clear(allPrices)
+    array.clear(labelPrices)
     true
 
-f_addLevel(_tf, _price, _startBar, _col) =>
+f_addLevel(_tf, _price, _startBar, _col, _allowLabel) =>
     if array.size(allPrices) < maxTotalLevels
         line ln = line.new(x1=_startBar, y1=_price, x2=bar_index + 1, y2=_price, xloc=xloc.bar_index, extend=extend.right, color=_col, width=levelWidth, style=line.style_solid, force_overlay=true)
         array.push(allLines, ln)
         array.push(allPrices, _price)
-        if showLabels
+        bool labelAllowed = showLabels and _allowLabel and not f_hasNearbyHigherLabel(_price)
+        if labelAllowed
             label lb = label.new(x=bar_index + labelOffsetBars, y=_price + labelOffsetUsd, text=f_labelText(_tf, _price), xloc=xloc.bar_index, style=label.style_none, textcolor=_col, color=color.new(color.white, 100), size=size.small, force_overlay=true)
             array.push(allLabels, lb)
+            array.push(labelPrices, _price)
     true
 
 f_barInvalidates(_level, _barIndex) =>
@@ -94,15 +110,15 @@ f_invalidatedAfterEndBar(_level, _endBar) =>
                 invalid := true
     invalid
 
-f_tryAddEdge(_tf, _p1, _p2, _startBar, _endBar, _tol, _col) =>
+f_tryAddEdge(_tf, _p1, _p2, _startBar, _endBar, _tol, _col, _allowLabel) =>
     float diff = math.abs(_p1 - _p2)
     if diff <= _tol
         float level = (_p1 + _p2) / 2.0
         if not f_invalidatedAfterEndBar(level, _endBar)
-            f_addLevel(_tf, level, _startBar, _col)
+            f_addLevel(_tf, level, _startBar, _col, _allowLabel)
     true
 
-f_scanPair(_tf, _o1, _c1, _o2, _c2, _startBar, _endBar, _tol, _col) =>
+f_scanPair(_tf, _o1, _c1, _o2, _c2, _startBar, _endBar, _tol, _col, _allowLabel) =>
     bool bull1 = _c1 > _o1
     bool bear1 = _c1 < _o1
     bool bull2 = _c2 > _o2
@@ -113,8 +129,8 @@ f_scanPair(_tf, _o1, _c1, _o2, _c2, _startBar, _endBar, _tol, _col) =>
         float low1 = math.min(_o1, _c1)
         float high2 = math.max(_o2, _c2)
         float low2 = math.min(_o2, _c2)
-        f_tryAddEdge(_tf, high1, high2, _startBar, _endBar, _tol, _col)
-        f_tryAddEdge(_tf, low1, low2, _startBar, _endBar, _tol, _col)
+        f_tryAddEdge(_tf, high1, high2, _startBar, _endBar, _tol, _col, _allowLabel)
+        f_tryAddEdge(_tf, low1, low2, _startBar, _endBar, _tol, _col, _allowLabel)
     true
 
 bool newW = timeframe.change("W")
@@ -168,10 +184,13 @@ else
 if barstate.islast
     f_clearDrawings()
 
-    for i = 1 to dLookback
-        int startBar = bar_index - (i + 1)
-        int endBar = bar_index - i
-        f_scanPair("Daily", open[i], close[i], open[i + 1], close[i + 1], startBar, endBar, dTol, dColor)
+    int mc = array.size(mO)
+    if mc > 1
+        int pairsM = math.min(mLookback, mc - 1)
+        for n = 0 to pairsM - 1
+            int idx1 = mc - 1 - n
+            int idx2 = idx1 - 1
+            f_scanPair("Monthly", array.get(mO, idx1), array.get(mC, idx1), array.get(mO, idx2), array.get(mC, idx2), array.get(mStart, idx2), array.get(mEnd, idx1), mTol, mColor, true)
 
     int wc = array.size(wO)
     if wc > 1
@@ -179,20 +198,17 @@ if barstate.islast
         for n = 0 to pairsW - 1
             int idx1 = wc - 1 - n
             int idx2 = idx1 - 1
-            f_scanPair("Weekly", array.get(wO, idx1), array.get(wC, idx1), array.get(wO, idx2), array.get(wC, idx2), array.get(wStart, idx2), array.get(wEnd, idx1), wTol, wColor)
+            f_scanPair("Weekly", array.get(wO, idx1), array.get(wC, idx1), array.get(wO, idx2), array.get(wC, idx2), array.get(wStart, idx2), array.get(wEnd, idx1), wTol, wColor, true)
 
-    int mc = array.size(mO)
-    if mc > 1
-        int pairsM = math.min(mLookback, mc - 1)
-        for n = 0 to pairsM - 1
-            int idx1 = mc - 1 - n
-            int idx2 = idx1 - 1
-            f_scanPair("Monthly", array.get(mO, idx1), array.get(mC, idx1), array.get(mO, idx2), array.get(mC, idx2), array.get(mStart, idx2), array.get(mEnd, idx1), mTol, mColor)
+    for i = 1 to dLookback
+        int startBar = bar_index - (i + 1)
+        int endBar = bar_index - i
+        f_scanPair("Daily", open[i], close[i], open[i + 1], close[i + 1], startBar, endBar, dTol, dColor, true)
 
     int labelCount = array.size(allLabels)
     if labelCount > 0
         for i = 0 to labelCount - 1
             label lb = array.get(allLabels, i)
-            float p = array.get(allPrices, i)
+            float p = label.get_y(lb) - labelOffsetUsd
             label.set_x(lb, bar_index + labelOffsetBars)
             label.set_y(lb, p + labelOffsetUsd)
