@@ -1,0 +1,179 @@
+//@version=6
+indicator("Major Swing Candidates Debug v0.1", overlay=true, max_lines_count=300, max_labels_count=300)
+
+pivotLen = input.int(4, "Pivot length", minval=2, maxval=10)
+lookbackDays = input.int(1825, "Lookback days", minval=100, maxval=3000)
+majorSwingMinMovePct = input.float(12.0, "Major swing min move %", minval=1.0, step=0.5)
+showRawPivots = input.bool(false, "Show raw pivots")
+showMajorSwings = input.bool(true, "Show major swing candidates")
+showSwingLegs = input.bool(true, "Show legs between major swings")
+showBreakLevel = input.bool(true, "Show estimated Break level")
+labelOffsetUsd = input.float(250.0, "Label vertical offset USD", minval=0.0, step=50.0)
+
+rawHighColor = input.color(color.new(color.red, 70), "Raw high color")
+rawLowColor = input.color(color.new(color.lime, 70), "Raw low color")
+majorHighColor = input.color(color.new(color.red, 0), "Major high color")
+majorLowColor = input.color(color.new(color.lime, 0), "Major low color")
+legColor = input.color(color.new(color.yellow, 0), "Major leg color")
+breakColor = input.color(color.new(color.aqua, 0), "Break level color")
+
+var int[] rawBars = array.new_int()
+var float[] rawPrices = array.new_float()
+var int[] rawTypes = array.new_int() // 1 = high, -1 = low
+
+var int[] majorBars = array.new_int()
+var float[] majorPrices = array.new_float()
+var int[] majorTypes = array.new_int()
+
+var line[] drawnLines = array.new_line()
+var label[] drawnLabels = array.new_label()
+
+f_clear() =>
+    int lineCount = array.size(drawnLines)
+    if lineCount > 0
+        for i = 0 to lineCount - 1
+            line.delete(array.get(drawnLines, i))
+    int labelCount = array.size(drawnLabels)
+    if labelCount > 0
+        for i = 0 to labelCount - 1
+            label.delete(array.get(drawnLabels, i))
+    array.clear(drawnLines)
+    array.clear(drawnLabels)
+    true
+
+f_movePct(_from, _to, _dir) =>
+    _dir == 1 ? ((_to - _from) / _from) * 100.0 : ((_from - _to) / _from) * 100.0
+
+f_addRawPivot(_bar, _price, _type) =>
+    int count = array.size(rawBars)
+    if count == 0
+        array.push(rawBars, _bar)
+        array.push(rawPrices, _price)
+        array.push(rawTypes, _type)
+    else
+        int lastType = array.get(rawTypes, count - 1)
+        float lastPrice = array.get(rawPrices, count - 1)
+        if _type == lastType
+            bool replaceHigh = _type == 1 and _price > lastPrice
+            bool replaceLow = _type == -1 and _price < lastPrice
+            if replaceHigh or replaceLow
+                array.set(rawBars, count - 1, _bar)
+                array.set(rawPrices, count - 1, _price)
+                array.set(rawTypes, count - 1, _type)
+        else
+            array.push(rawBars, _bar)
+            array.push(rawPrices, _price)
+            array.push(rawTypes, _type)
+    true
+
+f_buildMajorCandidates() =>
+    array.clear(majorBars)
+    array.clear(majorPrices)
+    array.clear(majorTypes)
+
+    int rawCount = array.size(rawBars)
+    if rawCount > 0
+        for i = 0 to rawCount - 1
+            int rType = array.get(rawTypes, i)
+            float rPrice = array.get(rawPrices, i)
+            int rBar = array.get(rawBars, i)
+            int mCount = array.size(majorBars)
+
+            if mCount == 0
+                array.push(majorBars, rBar)
+                array.push(majorPrices, rPrice)
+                array.push(majorTypes, rType)
+            else
+                int lastType = array.get(majorTypes, mCount - 1)
+                float lastPrice = array.get(majorPrices, mCount - 1)
+
+                if rType == lastType
+                    bool replaceHigh = rType == 1 and rPrice > lastPrice
+                    bool replaceLow = rType == -1 and rPrice < lastPrice
+                    if replaceHigh or replaceLow
+                        array.set(majorBars, mCount - 1, rBar)
+                        array.set(majorPrices, mCount - 1, rPrice)
+                        array.set(majorTypes, mCount - 1, rType)
+                else
+                    int dir = lastType == -1 and rType == 1 ? 1 : -1
+                    float move = f_movePct(lastPrice, rPrice, dir)
+                    if move >= majorSwingMinMovePct
+                        array.push(majorBars, rBar)
+                        array.push(majorPrices, rPrice)
+                        array.push(majorTypes, rType)
+    true
+
+f_drawLabel(_bar, _price, _text, _type, _isMajor) =>
+    color col = _type == 1 ? (_isMajor ? majorHighColor : rawHighColor) : (_isMajor ? majorLowColor : rawLowColor)
+    float y = _type == 1 ? _price + labelOffsetUsd : _price - labelOffsetUsd
+    label lb = label.new(x=_bar, y=y, text=_text, xloc=xloc.bar_index, style=label.style_none, textcolor=col, color=color.new(color.white, 100), size=size.small, force_overlay=true)
+    array.push(drawnLabels, lb)
+    true
+
+f_drawHorizontal(_price, _text) =>
+    line ln = line.new(x1=bar_index - 50, y1=_price, x2=bar_index + 80, y2=_price, xloc=xloc.bar_index, extend=extend.none, color=breakColor, width=1, force_overlay=true)
+    array.push(drawnLines, ln)
+    label lb = label.new(x=bar_index + 80, y=_price, text=_text, xloc=xloc.bar_index, style=label.style_none, textcolor=breakColor, color=color.new(color.white, 100), size=size.small, force_overlay=true)
+    array.push(drawnLabels, lb)
+    true
+
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+if not na(ph)
+    int pBar = bar_index - pivotLen
+    if bar_index - pBar <= lookbackDays
+        f_addRawPivot(pBar, ph, 1)
+
+if not na(pl)
+    int pBar = bar_index - pivotLen
+    if bar_index - pBar <= lookbackDays
+        f_addRawPivot(pBar, pl, -1)
+
+if barstate.islast
+    f_clear()
+    f_buildMajorCandidates()
+
+    if showRawPivots
+        int rawCount = array.size(rawBars)
+        if rawCount > 0
+            for i = 0 to rawCount - 1
+                int t = array.get(rawTypes, i)
+                string txt = t == 1 ? "raw H" : "raw L"
+                f_drawLabel(array.get(rawBars, i), array.get(rawPrices, i), txt, t, false)
+
+    int majorCount = array.size(majorBars)
+    if showMajorSwings and majorCount > 0
+        for i = 0 to majorCount - 1
+            int t = array.get(majorTypes, i)
+            float p = array.get(majorPrices, i)
+            string typeTxt = t == 1 ? "Major High" : "Major Low"
+            string moveTxt = ""
+            if i > 0
+                float prev = array.get(majorPrices, i - 1)
+                int dir = array.get(majorTypes, i - 1) == -1 and t == 1 ? 1 : -1
+                float move = f_movePct(prev, p, dir)
+                moveTxt := "\n" + str.tostring(move, "#.0") + "%"
+            f_drawLabel(array.get(majorBars, i), p, typeTxt + moveTxt + "\n" + str.tostring(p, format.mintick), t, true)
+
+    if showSwingLegs and majorCount > 1
+        for i = 1 to majorCount - 1
+            int b1 = array.get(majorBars, i - 1)
+            int b2 = array.get(majorBars, i)
+            float p1 = array.get(majorPrices, i - 1)
+            float p2 = array.get(majorPrices, i)
+            line ln = line.new(x1=b1, y1=p1, x2=b2, y2=p2, xloc=xloc.bar_index, extend=extend.none, color=legColor, width=1, force_overlay=true)
+            array.push(drawnLines, ln)
+
+    if showBreakLevel and majorCount >= 2
+        int lastType = array.get(majorTypes, majorCount - 1)
+        if lastType == -1
+            for i = majorCount - 2 to 0
+                if array.get(majorTypes, i) == 1
+                    f_drawHorizontal(array.get(majorPrices, i), "Break: " + str.tostring(array.get(majorPrices, i), format.mintick))
+                    break
+        if lastType == 1
+            for i = majorCount - 2 to 0
+                if array.get(majorTypes, i) == -1
+                    f_drawHorizontal(array.get(majorPrices, i), "Break: " + str.tostring(array.get(majorPrices, i), format.mintick))
+                    break
