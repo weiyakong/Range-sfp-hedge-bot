@@ -1,5 +1,5 @@
 //@version=6
-indicator("Major Swing Candidates Debug v0.2 GLOBAL LAYER", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("Major Swing Candidates Debug v0.3 BREAK LEADS EXTREME", overlay=true, max_lines_count=500, max_labels_count=500)
 
 pivotLen = input.int(4, "Pivot length", minval=2, maxval=10)
 lookbackDays = input.int(1825, "Lookback days", minval=100, maxval=3000)
@@ -9,7 +9,8 @@ showRawPivots = input.bool(false, "Show raw pivots")
 showMajorSwings = input.bool(true, "Show major swing candidates")
 showSwingLegs = input.bool(true, "Show legs between major swings")
 showGlobalCandidates = input.bool(true, "Show global candidates")
-showBreakLevel = input.bool(true, "Show estimated Break level")
+showBreakLevel = input.bool(true, "Show Break from swing that led to extreme")
+showLeadLines = input.bool(true, "Show break-to-extreme lead line")
 labelOffsetUsd = input.float(250.0, "Label vertical offset USD", minval=0.0, step=50.0)
 
 rawHighColor = input.color(color.new(color.red, 70), "Raw high color")
@@ -19,7 +20,8 @@ majorLowColor = input.color(color.new(color.lime, 0), "Major low color")
 legColor = input.color(color.new(color.yellow, 0), "Major leg color")
 globalBullColor = input.color(color.new(color.lime, 0), "Global bull color")
 globalBearColor = input.color(color.new(color.red, 0), "Global bear color")
-breakColor = input.color(color.new(color.aqua, 0), "Break level color")
+bearBreakColor = input.color(color.new(color.orange, 0), "Bear cancel break color")
+bullBreakColor = input.color(color.new(color.aqua, 0), "Bull cancel break color")
 
 var int[] rawBars = array.new_int()
 var float[] rawPrices = array.new_float()
@@ -133,10 +135,10 @@ f_drawLabel(_bar, _price, _text, _type, _isMajor) =>
     array.push(drawnLabels, lb)
     true
 
-f_drawHorizontal(_price, _text) =>
-    line ln = line.new(x1=bar_index - 50, y1=_price, x2=bar_index + 80, y2=_price, xloc=xloc.bar_index, extend=extend.none, color=breakColor, width=1, force_overlay=true)
+f_drawHorizontal(_price, _text, _col) =>
+    line ln = line.new(x1=bar_index - 50, y1=_price, x2=bar_index + 80, y2=_price, xloc=xloc.bar_index, extend=extend.none, color=_col, width=2, force_overlay=true)
     array.push(drawnLines, ln)
-    label lb = label.new(x=bar_index + 80, y=_price, text=_text, xloc=xloc.bar_index, style=label.style_none, textcolor=breakColor, color=color.new(color.white, 100), size=size.small, force_overlay=true)
+    label lb = label.new(x=bar_index + 80, y=_price, text=_text, xloc=xloc.bar_index, style=label.style_none, textcolor=_col, color=color.new(color.white, 100), size=size.small, force_overlay=true)
     array.push(drawnLabels, lb)
     true
 
@@ -186,6 +188,57 @@ f_drawGlobalCandidates() =>
         f_drawGlobalLine(bestBullStart, bestBullEnd, 1, bestBullMove)
     if not na(bestBearStart) and bestBearMove >= globalMinMovePct
         f_drawGlobalLine(bestBearStart, bestBearEnd, -1, bestBearMove)
+    true
+
+f_findLowestMajorLow() =>
+    int found = na
+    int count = array.size(majorBars)
+    if count > 0
+        for i = 0 to count - 1
+            if array.get(majorTypes, i) == -1
+                if na(found) or array.get(majorPrices, i) < array.get(majorPrices, found)
+                    found := i
+    found
+
+f_findHighestMajorHigh() =>
+    int found = na
+    int count = array.size(majorBars)
+    if count > 0
+        for i = 0 to count - 1
+            if array.get(majorTypes, i) == 1
+                if na(found) or array.get(majorPrices, i) > array.get(majorPrices, found)
+                    found := i
+    found
+
+f_findPrevType(_index, _type) =>
+    int found = na
+    if _index > 0
+        for j = _index - 1 to 0
+            if na(found) and array.get(majorTypes, j) == _type
+                found := j
+    found
+
+f_drawBreakFromLeadExtreme() =>
+    int lowestLowIdx = f_findLowestMajorLow()
+    int highestHighIdx = f_findHighestMajorHigh()
+
+    if not na(lowestLowIdx)
+        int leadHighIdx = f_findPrevType(lowestLowIdx, 1)
+        if not na(leadHighIdx)
+            float br = array.get(majorPrices, leadHighIdx)
+            f_drawHorizontal(br, "Bear Break: " + str.tostring(br, format.mintick), bearBreakColor)
+            if showLeadLines
+                line ln = line.new(x1=array.get(majorBars, leadHighIdx), y1=br, x2=array.get(majorBars, lowestLowIdx), y2=array.get(majorPrices, lowestLowIdx), xloc=xloc.bar_index, extend=extend.none, color=color.new(bearBreakColor, 25), width=2, style=line.style_dashed, force_overlay=true)
+                array.push(drawnLines, ln)
+
+    if not na(highestHighIdx)
+        int leadLowIdx = f_findPrevType(highestHighIdx, -1)
+        if not na(leadLowIdx)
+            float br = array.get(majorPrices, leadLowIdx)
+            f_drawHorizontal(br, "Bull Break: " + str.tostring(br, format.mintick), bullBreakColor)
+            if showLeadLines
+                line ln = line.new(x1=array.get(majorBars, leadLowIdx), y1=br, x2=array.get(majorBars, highestHighIdx), y2=array.get(majorPrices, highestHighIdx), xloc=xloc.bar_index, extend=extend.none, color=color.new(bullBreakColor, 25), width=2, style=line.style_dashed, force_overlay=true)
+                array.push(drawnLines, ln)
     true
 
 ph = ta.pivothigh(high, pivotLen, pivotLen)
@@ -240,14 +293,4 @@ if barstate.islast
         f_drawGlobalCandidates()
 
     if showBreakLevel and majorCount >= 2
-        int lastType = array.get(majorTypes, majorCount - 1)
-        if lastType == -1
-            for i = majorCount - 2 to 0
-                if array.get(majorTypes, i) == 1
-                    f_drawHorizontal(array.get(majorPrices, i), "Break: " + str.tostring(array.get(majorPrices, i), format.mintick))
-                    break
-        if lastType == 1
-            for i = majorCount - 2 to 0
-                if array.get(majorTypes, i) == -1
-                    f_drawHorizontal(array.get(majorPrices, i), "Break: " + str.tostring(array.get(majorPrices, i), format.mintick))
-                    break
+        f_drawBreakFromLeadExtreme()
