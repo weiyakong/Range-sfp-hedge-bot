@@ -1,12 +1,14 @@
 //@version=6
-indicator("Major Swing Candidates Debug v0.1", overlay=true, max_lines_count=300, max_labels_count=300)
+indicator("Major Swing Candidates Debug v0.2 GLOBAL LAYER", overlay=true, max_lines_count=500, max_labels_count=500)
 
 pivotLen = input.int(4, "Pivot length", minval=2, maxval=10)
 lookbackDays = input.int(1825, "Lookback days", minval=100, maxval=3000)
-majorSwingMinMovePct = input.float(12.0, "Major swing min move %", minval=1.0, step=0.5)
+majorSwingMinMovePct = input.float(18.0, "Major swing min move %", minval=1.0, step=0.5)
+globalMinMovePct = input.float(35.0, "Global min move %", minval=5.0, step=1.0)
 showRawPivots = input.bool(false, "Show raw pivots")
 showMajorSwings = input.bool(true, "Show major swing candidates")
 showSwingLegs = input.bool(true, "Show legs between major swings")
+showGlobalCandidates = input.bool(true, "Show global candidates")
 showBreakLevel = input.bool(true, "Show estimated Break level")
 labelOffsetUsd = input.float(250.0, "Label vertical offset USD", minval=0.0, step=50.0)
 
@@ -15,6 +17,8 @@ rawLowColor = input.color(color.new(color.lime, 70), "Raw low color")
 majorHighColor = input.color(color.new(color.red, 0), "Major high color")
 majorLowColor = input.color(color.new(color.lime, 0), "Major low color")
 legColor = input.color(color.new(color.yellow, 0), "Major leg color")
+globalBullColor = input.color(color.new(color.lime, 0), "Global bull color")
+globalBearColor = input.color(color.new(color.red, 0), "Global bear color")
 breakColor = input.color(color.new(color.aqua, 0), "Break level color")
 
 var int[] rawBars = array.new_int()
@@ -103,6 +107,25 @@ f_buildMajorCandidates() =>
                         array.push(majorTypes, rType)
     true
 
+f_findPreviousSameType(_index, _type) =>
+    int found = na
+    if _index > 0
+        for j = _index - 1 to 0
+            if na(found) and array.get(majorTypes, j) == _type
+                found := j
+    found
+
+f_structureText(_index, _type, _price) =>
+    int prevSame = f_findPreviousSameType(_index, _type)
+    string result = _type == 1 ? "High candidate" : "Low candidate"
+    if not na(prevSame)
+        float prevPrice = array.get(majorPrices, prevSame)
+        if _type == 1
+            result := _price > prevPrice ? "HH candidate" : "LH candidate"
+        else
+            result := _price > prevPrice ? "HL candidate" : "LL candidate"
+    result
+
 f_drawLabel(_bar, _price, _text, _type, _isMajor) =>
     color col = _type == 1 ? (_isMajor ? majorHighColor : rawHighColor) : (_isMajor ? majorLowColor : rawLowColor)
     float y = _type == 1 ? _price + labelOffsetUsd : _price - labelOffsetUsd
@@ -115,6 +138,54 @@ f_drawHorizontal(_price, _text) =>
     array.push(drawnLines, ln)
     label lb = label.new(x=bar_index + 80, y=_price, text=_text, xloc=xloc.bar_index, style=label.style_none, textcolor=breakColor, color=color.new(color.white, 100), size=size.small, force_overlay=true)
     array.push(drawnLabels, lb)
+    true
+
+f_drawGlobalLine(_sIdx, _eIdx, _dir, _move) =>
+    int sBar = array.get(majorBars, _sIdx)
+    int eBar = array.get(majorBars, _eIdx)
+    float sPrice = array.get(majorPrices, _sIdx)
+    float ePrice = array.get(majorPrices, _eIdx)
+    color col = _dir == 1 ? globalBullColor : globalBearColor
+    line ln = line.new(x1=sBar, y1=sPrice, x2=eBar, y2=ePrice, xloc=xloc.bar_index, extend=extend.none, color=col, width=4, force_overlay=true)
+    array.push(drawnLines, ln)
+    string txt = (_dir == 1 ? "Global Bull candidate " : "Global Bear candidate ") + str.tostring(_move, "#.0") + "%"
+    label lb = label.new(x=eBar, y=ePrice, text=txt, xloc=xloc.bar_index, style=label.style_none, textcolor=col, color=color.new(color.white, 100), size=size.normal, force_overlay=true)
+    array.push(drawnLabels, lb)
+    true
+
+f_drawGlobalCandidates() =>
+    int count = array.size(majorBars)
+    int bestBullStart = na
+    int bestBullEnd = na
+    float bestBullMove = 0.0
+    int bestBearStart = na
+    int bestBearEnd = na
+    float bestBearMove = 0.0
+
+    if count > 1
+        for i = 0 to count - 2
+            int typeI = array.get(majorTypes, i)
+            float priceI = array.get(majorPrices, i)
+            for j = i + 1 to count - 1
+                int typeJ = array.get(majorTypes, j)
+                float priceJ = array.get(majorPrices, j)
+                if typeI == -1 and typeJ == 1
+                    float bullMove = f_movePct(priceI, priceJ, 1)
+                    if bullMove > bestBullMove
+                        bestBullMove := bullMove
+                        bestBullStart := i
+                        bestBullEnd := j
+                if typeI == 1 and typeJ == -1
+                    float bearMove = f_movePct(priceI, priceJ, -1)
+                    if bearMove > bestBearMove
+                        bestBearMove := bearMove
+                        bestBearStart := i
+                        bestBearEnd := j
+
+    if not na(bestBullStart) and bestBullMove >= globalMinMovePct
+        f_drawGlobalLine(bestBullStart, bestBullEnd, 1, bestBullMove)
+    if not na(bestBearStart) and bestBearMove >= globalMinMovePct
+        f_drawGlobalLine(bestBearStart, bestBearEnd, -1, bestBearMove)
     true
 
 ph = ta.pivothigh(high, pivotLen, pivotLen)
@@ -147,7 +218,7 @@ if barstate.islast
         for i = 0 to majorCount - 1
             int t = array.get(majorTypes, i)
             float p = array.get(majorPrices, i)
-            string typeTxt = t == 1 ? "Major High" : "Major Low"
+            string typeTxt = f_structureText(i, t, p)
             string moveTxt = ""
             if i > 0
                 float prev = array.get(majorPrices, i - 1)
@@ -164,6 +235,9 @@ if barstate.islast
             float p2 = array.get(majorPrices, i)
             line ln = line.new(x1=b1, y1=p1, x2=b2, y2=p2, xloc=xloc.bar_index, extend=extend.none, color=legColor, width=1, force_overlay=true)
             array.push(drawnLines, ln)
+
+    if showGlobalCandidates
+        f_drawGlobalCandidates()
 
     if showBreakLevel and majorCount >= 2
         int lastType = array.get(majorTypes, majorCount - 1)
