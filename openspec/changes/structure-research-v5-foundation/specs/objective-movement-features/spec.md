@@ -2,69 +2,82 @@
 
 ## Purpose
 
-Define the objective measurements to collect in the first research pass. Exact formulas, schemas, units, observation boundaries, and validation examples SHALL be finalized in the detailed design and feature contracts before implementation of each feature family.
+Define the objective measurement families to collect in the first research pass. This pass records how price behaved through time and across resolutions; it does not classify movements as impulse, correction, range, breakout, or chop.
 
 ## ADDED Requirements
 
+### Requirement: Existing macro legs are directional research containers
+
+For each approved existing macro leg, the system SHALL preserve its source identity and provenance and SHALL record at minimum `start_time`, `end_time`, `start_price`, `end_price`, source `direction` when present, duration, signed price change, absolute price change, signed percentage change, and absolute percentage change.
+
+The first-pass dataset SHALL NOT assign the macro leg a new semantic type such as `impulse` or `correction`.
+
+#### Scenario: A macro leg is processed
+
+* **GIVEN** an approved source macro leg has start and end anchors
+* **WHEN** the research pipeline processes the leg
+* **THEN** it SHALL calculate the price-derived direction from `end_price - start_price`
+* **AND** SHALL store that derived direction as `up`, `down`, or `flat`
+* **AND** SHALL compare it with any source direction field as a QA check
+* **AND** SHALL NOT infer `impulse` or `correction` from the source role or event label.
+
 ### Requirement: Movement geometry and timing
 
-For each approved movement observation, the system SHALL preserve its start and end anchors and measure its direction, price displacement, percentage price change, and duration.
+For each approved observation interval, the system SHALL preserve its start and end anchors and measure signed displacement, absolute displacement, signed percentage change, absolute percentage change, and duration using the approved measurement contracts.
 
-### Requirement: Retracements are measured as percentages
+### Requirement: Retracements are measured as percentages when an approved anchor pair exists
 
-Countertrend retracements and pullbacks SHALL be measured directly as price percentages and other approved neutral measurements rather than being converted to Fibonacci ratios in this research pass.
+When a retracement can be measured from already-approved anchors without inventing a new internal-leg algorithm, the system SHALL store the direct retracement percentage and neutral supporting measurements rather than converting the result to Fibonacci ratios or labels.
 
-### Requirement: Movement speed and speed change
+### Requirement: Speed and speed change are numeric measurements
 
-The system SHALL collect movement-speed measurements and approved recent-speed windows sufficient to study continuation, acceleration, deceleration, and loss of directional momentum.
+The system SHALL collect signed and direction-aware speed measurements, rolling recent-speed measurements, and numeric speed-change/acceleration measurements defined by the approved formula contract.
 
-### Requirement: Path efficiency
+The first-pass dataset SHALL NOT create threshold-based labels such as `accelerating`, `decelerating`, or `exhausted`.
 
-The system SHALL measure how directly price travels between relevant anchors, including approved higher-resolution path measurements where source coverage permits, so that direct directional movement can be distinguished from heavily oscillating movement.
+### Requirement: Path and directional efficiency
 
-### Requirement: Internal movement structure
+The system SHALL measure net displacement, close-to-close path at approved finer resolutions, path efficiency, direction-aware path components, and supporting candle activity measurements without inventing an intra-candle event order that is not present in the source data.
 
-The system SHALL collect objective properties of internal movement structure, including the number, direction, amplitude, duration, and retracement characteristics of observable internal submovements or pullbacks where the approved source resolution permits them to be measured without inventing structure.
+### Requirement: Candle geometry and overlap
 
-### Requirement: Overlap and neighboring-movement relationships
+The system SHALL collect body, wick, full-range, pairwise overlap, overlap position, body overlap, wick penetration, body penetration, close penetration, and directional extension measurements sufficient to distinguish materially different overlap geometries.
 
-The system SHALL measure objective overlap and relative relationships between neighboring movements, including relative amplitude and duration, without assigning a predefined parent-impulse role.
+### Requirement: Volatility and volume
 
-### Requirement: Extremum sequence and update behavior
+The system SHALL preserve raw volume where present and SHALL collect approved volume-derived, True Range, ATR, realized-volatility, and compression/expansion measurements without threshold-based market-state labels.
 
-The system SHALL collect objective information about extrema and their updates, including observable HH, HL, LH, and LL relationships where they are defined by the approved observation contract, elapsed time since relevant extrema, and whether/when an extremum is subsequently updated.
+### Requirement: Extremum information remains objective
 
-### Requirement: Volatility
-
-The system SHALL collect approved volatility measurements needed to compare directional movement with noisy or expanding/contracting market conditions.
-
-### Requirement: Compression and expansion
-
-The system SHALL collect objective measurements of price-range compression and expansion over approved observation windows.
-
-### Requirement: Range behavior
-
-The system SHALL collect descriptive range characteristics over approved candidate windows, including range width, slope, occupancy, midpoint crossings, boundary interactions, alternation behavior, and contraction/expansion characteristics where those measurements are well-defined.
-
-### Requirement: Breakout and excursion behavior
-
-The system SHALL record objective behavior when price interacts with or exits an observed range, including whether the interaction occurs by wick or close, excursion magnitude, and other approved contemporaneously observable breakout characteristics.
-
-### Requirement: Retrospective outcomes remain separate
-
-Outcomes that require future bars, including continuation after an excursion, return-inside behavior, MFE, MAE, or future-horizon measurements, SHALL be stored as retrospective research outcomes and SHALL NOT be represented as information available at the original observation time.
+The system MAY collect objective high/low timestamps, elapsed time since approved extrema, and high/low update behavior where these can be derived without introducing a new swing or internal-leg classifier.
 
 ### Requirement: Cross-scale relationships are descriptive
 
-The system SHALL preserve and measure objective temporal and price relationships between observations at different approved scales or resolutions, including containment and relative movement characteristics where observable.
+The system SHALL preserve and measure temporal, price, and path relationships between observations at approved resolutions, including calendar containment, partial containment by macro legs, and relative movement characteristics where observable.
 
-#### Scenario: One movement lies within a larger observed movement interval
+#### Scenario: A finer bar lies inside a larger calendar bar
 
-* **GIVEN** two independently defined observations at different approved scales
-* **WHEN** the smaller observation lies temporally within the larger observation interval
-* **THEN** the system MAY record that containment relationship and its objective relative measurements
-* **AND** SHALL NOT infer solely from containment that the larger observation is a validated parent impulse.
+* **GIVEN** two approved candle resolutions
+* **WHEN** a finer closed bar lies within a larger fixed calendar interval
+* **THEN** the system SHALL record the deterministic containment relationship
+* **AND** SHALL NOT infer from that containment that either object is a validated structural parent impulse.
+
+### Requirement: Fixed and rolling measurements remain distinguishable
+
+Fixed calendar-bar measurements and truly rolling measurements SHALL be stored and named distinctly so that a fixed 4H candle can never be confused with the most recent rolling four hours ending at the current eligible timestamp.
+
+### Requirement: Feature evolution is stored across the full path
+
+Approved dynamic features SHALL be computed at every eligible closed observation point across the available movement, not only at the start, midpoint, or end of a macro leg.
+
+This SHALL preserve periods of acceleration, slowdown, overlap growth, path-efficiency change, renewed continuation, and other observable transitions without assigning them semantic labels.
+
+### Requirement: Deferred structural interpretation is not required in the first pass
+
+The first-pass pipeline SHALL NOT be required to construct a new internal-leg/swing algorithm, final range boundaries, breakout classifications, future breakout horizons, or a composite choppiness score.
+
+The source OHLCV, candle geometry, overlap, path, timing, volume, volatility, and cross-timeframe data required to research those definitions later SHALL be preserved.
 
 ### Requirement: Feature families remain separately inspectable
 
-The feature families defined by this specification SHALL remain separately inspectable in final research outputs according to the research-output persistence specification so that each family can be independently reviewed and uploaded for analysis.
+The feature families defined by this specification SHALL remain separately inspectable in final research outputs according to the research-output persistence specification so that each family can be independently reviewed and extracted for later analysis.
