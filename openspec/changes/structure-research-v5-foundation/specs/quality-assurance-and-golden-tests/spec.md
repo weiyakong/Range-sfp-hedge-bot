@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Make Structure Research v5 fail loudly when source chronology, timestamp canonicalization, price identity, formulas, macro trade refinement, exact/fallback boundaries, causality, schema, resume, or extraction semantics are wrong.
+Make Structure Research v5 fail loudly when source chronology, timestamp canonicalization, price identity, formulas, approved aggTrade macro refinement, exact/fallback boundaries, causality, schema, resume, or extraction semantics are wrong.
 
 ## Hard gate
 
@@ -62,7 +62,7 @@ Segment start/gap resets state; 14 new consecutive TRs required.
 A100,B120,C110 => candidate/reference50%, retracement50%; C90=>150/150; C130=>50/0.
 
 ### G15 — Exact macro close-path fixture
-Exact start P0=100, eligible closes `[105,103,110]`, exact end P1=112:
+Resolved start P0=100, eligible closes `[105,103,110]`, resolved end P1=112:
 Q=`[100,105,103,110,112]`; path16; displacement12; efficiency.75.
 
 ### G16 — Rolling calculation matrix
@@ -81,7 +81,7 @@ Fail newly generated impulse/correction/choppiness/range/breakout/parent/Fib/Fib
 Every materialized metric has exactly one compatible definition.
 
 ### G21 — Referential integrity
-Keys unique; macro anchor/touch/fragment/leg/retracement foreign keys resolve; no duplicate canonical rows.
+Keys unique; macro anchor/aggTrade-touch/fragment/leg/retracement foreign keys resolve; no duplicate canonical rows.
 
 ### G22 — Parquet manifests
 Parts/schema/counts/time/partitions reconcile and reconstruct logical tables uniquely.
@@ -133,21 +133,23 @@ Exactly 142 candidate windows are canonical 5m-grid aligned. Exactly three are k
 These three SHALL NOT be assigned canonical candle ids from their off-grid start times.
 
 ### G36 — Multiple localization windows preserved
-A two-candidate anchor passes both windows to trade refinement; no automatic window selection.
+A two-candidate anchor passes both windows to approved aggTrade refinement; no automatic window selection.
 
 ### G37 — Decimal price identity
-`4039.79000000` and `4039.79` parse to exact `price_units=403979`; `13918.04` -> `1391804`. Binary float/epsilon/nearest matching is prohibited. Any relevant official trade price with >2 significant decimals triggers precision failure rather than rounding.
+`4039.79000000` and `4039.79` parse to exact `price_units=403979`; `13918.04` -> `1391804`. Binary float/epsilon/nearest matching is prohibited. Any relevant approved aggTrade price with >2 significant decimals triggers precision failure rather than rounding.
 
 ### G38 — Anchor-level provenance not copied from leg duration precision
 Fixture where shared anchor belongs to a `1D_fallback` leg and adjacent `4H` leg must retain anchor-level provenance from reviewed localization artifact, not blindly inherit either leg's duration precision.
 
-### G39 — Trade unique touch
-One exact same-market anchor-price touch with complete source coverage yields `exact_unique_trade_touch`, exact time and native sequence id, and the canonical 5m candle containing that time.
+### G39 — Approved aggTrade unique touch
+One exact same-market anchor-price matching aggTrade row with complete approved source coverage yields `exact_unique_trade_touch`, event time, `agg_trade_id`, first/last underlying ids and canonical 5m containment.
 
-For E00059/E00065/E00070 the canonical 5m start must be derived from exact trade time, never copied from the off-grid localization-window start.
+For E00059/E00065/E00070 the canonical 5m start must be derived from the resolved aggTrade event time, never copied from the off-grid localization-window start.
 
-### G40 — Trade multiple touches
-Two or more exact touches preserve every touch; exact pivot time/sequence remains null; no first/last/nearest selection.
+The result is exact at approved `agg_trade` source granularity; it SHALL NOT claim reconstructed individual raw-trade timing.
+
+### G40 — Approved aggTrade multiple touches
+Two or more exact matching aggTrade rows preserve every row; exact pivot time/sequence remains null; no first/last/nearest selection.
 
 ### G41 — Exact UUID fixtures
 Using namespace above:
@@ -156,21 +158,23 @@ Using namespace above:
 - `retracement|ANCHOR_A|ANCHOR_B|ANCHOR_C|REL_001`
   -> `ccdc33cf-94bf-5362-ae36-b060e81f6648`.
 
-### G42 — Pivot record counted once
-Synthetic ordered records around pivot prove pivot source row volume/count belongs LEFT once, RIGHT starts from pivot price but excludes pivot row volume/count. LEFT+RIGHT source volume/count equals unsplit source interval exactly.
+### G42 — Pivot aggregate counted once
+Synthetic ordered aggTrade records around pivot prove pivot aggTrade row belongs LEFT once, RIGHT starts from pivot price state but excludes pivot row. LEFT+RIGHT aggregate source-row sets reproduce the unsplit canonical 5m aggTrade record set without overlap or loss.
 
-### G43 — Timestamp tie uses native sequence
-Two source records share identical event timestamp but different sequence ids; split is deterministic by `(event_time,native_sequence_id)`, not timestamp alone.
+If pivot aggTrade has multiple underlying trades, its aggregate quantity/count remains indivisible and `aggregate_boundary_precision` reflects that fact.
 
-### G44 — Trade path and TF close path remain separate
-Synthetic boundary fragment with oscillatory trade path plus canonical 5m closes proves `trade_price_path` is not added into `5m_close_path`.
+### G43 — Timestamp tie uses agg_trade_id
+Two aggTrade rows share identical event timestamp but different `agg_trade_id`; split/order is deterministic by `(event_time,agg_trade_id)`, not timestamp alone.
+
+### G44 — Aggregate path and TF close path remain separate
+Synthetic boundary fragment with oscillatory aggTrade price path plus canonical 5m closes proves aggregate-level `trade_price_path` is not added into `5m_close_path`.
 
 ### G45 — Exact macro TF Q sequence
 Start pivot inside a candle and end pivot inside another:
-Q begins at exact start price, includes only qualifying complete R closes with `start < candle.end <= end`, then exact end price. Pre-start candle movement and post-end candle close are excluded.
+Q begins at resolved start price, includes only qualifying complete R closes with `start < candle.end <= end`, then resolved end price. Pre-start candle movement and post-end candle close are excluded.
 
 ### G46 — Higher-TF boundary composition
-A 1H boundary fragment is exactly composed from trade-resolved partial canonical 5m plus complete canonical 5m candles to hour edge; no full 1H trade download required; gap breaks exact composition.
+A 1H boundary fragment is composed from aggTrade-resolved partial canonical 5m plus complete canonical 5m candles to hour edge; no different trade-source download is required; gap breaks exact composition.
 
 ### G47 — Fallback path includes first candle open and grid count
 Off-grid fallback interval fixture:
@@ -189,16 +193,32 @@ Approved 128-leg source yields:
 - 9 discontinuous transitions excluded.
 A/B/C resolve to macro anchors and exactly 118 production retracement relationships materialize.
 
+### G50 — Raw individual trades remain outside approved calculation path
+Fixture/run environment contains both approved official `aggTrades` and previously downloaded raw individual trade files for the same candidate interval.
+
+The refinement output, pivot selection, boundary fragments, feature values, checksums used as QA truth and run lineage SHALL derive only from approved `aggTrades`.
+
+Presence of raw trade files SHALL NOT:
+- change a pivot status;
+- replace an `agg_trade_id` boundary with a raw `trade_id` boundary;
+- alter LEFT/RIGHT features;
+- improve precision silently;
+- satisfy missing aggTrade coverage.
+
+Any attempted raw-trade read/use in the approved stage without a separate explicit user-approved source-contract change is a critical QA failure.
+
 ## Production invariants
 
 - every unresolved canonical gap is visible;
 - no synthetic row silently repairs canonical completeness;
 - canonical source boundary comes from one contract/config truth;
 - historical macro provenance never overwrites canonical market;
-- localization never masquerades as exact trade timing;
+- localization never masquerades as exact aggTrade timing;
 - off-grid source-localization windows never become canonical candle identities;
-- ambiguous trade touches are never guessed away;
-- exact macro path never mixes trade-level and candle-close path;
+- ambiguous aggTrade touches are never guessed away;
+- approved refinement source is existing official Binance `aggTrades`;
+- raw individual trades are excluded unless later explicitly user-approved;
+- macro path never mixes aggregate-level boundary path and candle-close path;
 - full boundary candle and its fragment never both contribute to one macro metric;
-- macro rows remain retrospective even with exact historical timestamps;
-- QA `PASS` requires all applicable G01-G49 plus schema/source/referential invariants and zero unresolved critical failures.
+- macro rows remain retrospective even with resolved historical timestamps;
+- QA `PASS` requires all applicable G01-G50 plus schema/source/referential invariants and zero unresolved critical failures.
