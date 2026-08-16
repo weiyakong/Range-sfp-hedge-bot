@@ -2,681 +2,292 @@
 
 ## 1. Design intent
 
-Structure Research v5 is a staged research-data pipeline, not a trading-decision engine.
+Structure Research v5 is a staged descriptive research-data pipeline, not a trading-decision engine.
 
-The design prioritizes:
+The implementation prioritizes source fidelity, deterministic time construction, explicit causality, stable analytical identities, decomposed feature families, bounded memory use, resumability, independent semantic validation, and later extraction without full-history recomputation.
 
-- source fidelity;
-- deterministic time-series construction;
-- explicit causality;
-- stable analytical identities;
-- decomposed feature families;
-- bounded memory use;
-- resumability;
-- independent semantic validation;
-- efficient later extraction without full-history recomputation.
+Business semantics and formulas are defined by the specs. This design defines how those contracts are assembled safely.
 
-Business semantics and formulas are defined by the specs. This design defines how those contracts are assembled into a safe implementation.
+## 2. Canonical source architecture
 
-## 2. Architectural principles
+### 2.1 Strict canonical 1m spine
 
-### 2.1 One canonical market-data spine
+The canonical market spine is observed Binance BTCUSDT 1m data under the finalized source contract:
 
-The canonical market-data spine is approved 1m BTCUSDT data with explicit market type and source continuity.
+- spot before `2019-09-08T17:57:00Z`;
+- USDT-M futures from `2019-09-08T17:57:00Z` onward.
 
-Canonical target candles `5m`, `15m`, `1H`, `4H`, `1D` are derived from this 1m spine.
+Raw spot rows after the cutoff may remain in source inventory but do not enter the canonical combined chronology.
 
-Native higher-timeframe Binance candles are QA references only unless a future approved source-contract change says otherwise.
+The exact first futures trade `2019-09-08T17:57:50.575000Z` is provenance evidence; the candle-grid source boundary is the first futures 1m bucket start `2019-09-08T17:57:00Z`.
 
-### 2.2 Source continuity is separate from file provenance
+### 2.2 Synthetic no-trade buckets are diagnostic only
 
-Sequential calculations use `source_segment_id`, which represents one continuous market stream.
+The audited `2019-09-08T19:00:00Z` futures minute has no native kline and no official trades. The previously inserted flat `10000` zero-volume row is a deterministic synthetic no-trade bucket.
 
-Raw archive filename, monthly/daily package, local path, download run, or reconstruction provenance remain row-level metadata and do not themselves break continuity.
+It must not be promoted into strict canonical `candles_1m`. The canonical pipeline records a real source gap `[19:00,19:01)` and splits source continuity around it. The synthetic row may remain only as recovery/audit evidence.
 
-Real unresolved gaps and spot/futures transitions do break continuity.
+### 2.3 Canonical spot gaps are derived from the minute grid
 
-### 2.3 Causal and retrospective layers are structurally separate
+The raw spot inventory has 6235 missing minutes; the cutoff audit reports 5972 canonical-relevant minutes across 16 intervals and excludes 263 post-boundary minutes.
 
-Fixed and rolling observation features are causal from their documented `available_at` time.
+Production must recompute canonical gaps from validated minute-grid rows because several audit boundary strings are not minute aligned. Non-minute timestamps are source-alignment evidence, not canonical gap boundaries to copy blindly.
 
-Completed macro-leg identity, endpoint-relative progress, final macro direction, and whole-leg context are retrospective.
+### 2.4 Source continuity is separate from provenance
 
-Retrospective fields live in dedicated tables and are excluded by causal-only extraction.
+`source_segment_id` means one continuous canonical 1m market sequence for the same venue/instrument/market type. Archive files, local paths, download runs, or source-provenance changes alone do not split a segment.
 
-### 2.4 Atomic facts are retained before aggregate interpretation
+Real unresolved gaps and the spot/futures transition do split continuity.
 
-Canonical candles and atomic candle-pair geometry are retained so later research can recompute alternative interval summaries without returning to raw downloads.
+## 3. Macro-source architecture
 
-The first pass does not collapse path/overlap/speed/volume into semantic market-state labels.
+The approved `macro_legs_log20.csv` is a retrospective observation source with historical provenance distinct from the current canonical market chronology.
 
-### 2.5 Expensive history is written once and queried many times
+The old parent daily merged source remained spot through `2019-12-30` and switched to futures on `2019-12-31`, while the macro builder also used futures 4H refinement from September 2019. Therefore audited late-2019 macro anchors may be `mixed` (`spot daily + futures 4H refinement`).
 
-Large canonical outputs are partitioned Parquet.
+The pipeline must preserve:
 
-Downstream review/exploration uses extraction with predicate and column pruning rather than loading or converting the full dataset.
+- original macro source values;
+- parent daily source regime;
+- refinement source/timeframe where known;
+- effective historical source class `spot/futures/mixed/unknown`;
+- anchor-time precision;
+- compatibility with current canonical data.
 
-## 3. Pipeline stage graph
+A 4H-refined macro timestamp is a 4H bucket start, not proof that the high/low occurred exactly at that timestamp. Internal canonical path may still be measured, but source-anchor-inclusive path is allowed only when source market compatibility and anchor-time precision are sufficient.
 
-The implementation SHALL use explicit stages with validated persisted outputs.
+## 4. Causal and retrospective separation
 
-Recommended stage ids:
+Fixed and rolling features are causal only after their complete observation close and only when complete canonical inputs exist.
+
+Macro-leg identity, completed-leg direction, endpoint-relative progress, mixed historical provenance, and whole-leg relationships are retrospective.
+
+Retrospective joins are materialized separately and excluded from causal-only extraction.
+
+## 5. Pipeline stage graph
+
+Recommended stages:
 
 1. `S00_contract_and_config`
 2. `S01_source_inventory`
 3. `S02_canonical_1m`
 4. `S03_source_segments_and_gaps`
 5. `S04_fixed_candles`
-6. `S05_cross_timeframe_map`
-7. `S06_observation_index`
-8. `S07_price_speed`
-9. `S08_atomic_pairs`
-10. `S09_path_activity`
-11. `S10_overlap_summary`
-12. `S11_volume_volatility`
-13. `S12_macro_context`
-14. `S13_feature_dictionary_and_manifests`
-15. `S14_independent_qa`
-16. `S15_extraction_smoke`
+6. `S05_candle_geometry`
+7. `S06_cross_timeframe_map`
+8. `S07_observation_index`
+9. `S08_price_speed`
+10. `S09_atomic_pairs`
+11. `S10_path_activity`
+12. `S11_overlap_summary`
+13. `S12_volume_volatility`
+14. `S13_macro_source_and_context`
+15. `S14_retracement_measurements`
+16. `S15_feature_dictionary_and_manifests`
+17. `S16_independent_qa`
+18. `S17_extraction_smoke`
 
-A stage SHALL be considered complete only after its output artifacts have passed the validation required for that stage.
+A stage is complete only after its persisted outputs pass stage validation.
 
-## 4. Stage details
+## 6. Stage details
 
-### 4.1 S00 — Contract and configuration freeze
+### S00 — Contract/config freeze
 
-Inputs:
+Freeze schema version, source-contract version, approved local source artifacts, source boundary, approved macro checksum/path, rolling/fixed/macro calculation matrices, output/checkpoint roots, code commit id, and normalized semantic `config_hash`.
 
-- finalized OpenSpec change;
-- exact approved macro-leg source path/checksum;
-- finalized source contract including actual spot/futures boundary and unresolved gap inventory;
-- repository code version;
-- run configuration.
+Feature/test code does not maintain an independent market-boundary constant.
 
-Produce a normalized immutable run configuration containing at minimum:
+### S01 — Source inventory
 
-- `schema_version`;
-- `source_contract_version`;
-- approved source roots/manifests;
-- exact market boundary configuration;
-- approved macro source path/checksum;
-- target timeframes;
-- rolling durations and eligible calculation-resolution matrix;
-- output root;
-- checkpoint root;
-- QA mode;
-- code commit identifier and dirty-tree state.
+Inventory approved local sources without deriving research features. Validate provenance, market type, timeframe, first/last timestamp, row count, duplicates, minute alignment, OHLC validity, numeric validity, and detected gaps.
 
-Compute a deterministic `config_hash` from normalized semantic configuration.
+Explicitly distinguish:
 
-Do not include mutable runtime-only values such as current clock time in the semantic hash.
+- raw spot gap evidence;
+- canonical pre-cutoff spot gap candidates;
+- native early-futures rows;
+- the diagnostic synthetic 19:00 row;
+- public futures archive parts;
+- legacy higher-TF diagnostic references.
 
-### 4.2 S01 — Source inventory
+No unapproved downloads are permitted by implementation.
 
-Read approved local source artifacts only.
+### S02 — Canonical 1m
 
-Inventory:
+Normalize only observed approved source candles into `candles_1m` with strict UTC minute alignment and stable ids.
 
-- market type;
-- source/provenance type;
-- first/last timestamp;
-- row count;
-- duplicate timestamps;
-- alignment;
-- OHLC validity;
-- non-finite/invalid numeric values;
-- detected gaps;
-- source artifact checksum where feasible.
+Do not insert the synthetic 19:00 bucket. Do not retain post-boundary spot rows in canonical combined chronology.
 
-This stage SHALL not derive target candles or research features.
+Rows with non-minute-aligned source timestamps require explicit validation; do not silently round and accept them.
 
-### 4.3 S02 — Canonical 1m construction
+### S03 — Source segments and gaps
 
-Normalize approved source rows into the `candles_1m` contract.
+Derive `source_segments` and `source_gaps` from strict canonical 1m plus source contract.
 
-Responsibilities:
+Expected discontinuities include validated historical spot gaps, the spot/futures transition, and the native/source gap at futures 19:00.
 
-- canonical UTC `[start_time,end_time)`;
-- stable candle ids;
-- source-native OHLCV preservation;
-- reconstruction provenance where explicitly approved;
-- no synthetic rows for unresolved gaps;
-- sorted uniqueness by canonical natural key;
-- row-level validation.
+Archive/provenance changes do not split continuity. Final canonical spot gap totals are compared to 5972/16 audit evidence but must be derived from the actual valid grid.
 
-Process in bounded chunks/partitions, not one full-history in-memory dataframe.
+### S04 — Canonical fixed candles
 
-### 4.4 S03 — Source segments and gap table
+Build the complete UTC interval grid for `5m`, `15m`, `1H`, `4H`, `1D` directly from canonical 1m.
 
-Derive continuity from canonical 1m plus finalized source contract.
+A complete target candle requires the full expected 1m set from one source segment.
 
-Create:
+Boundary-crossing intervals exist as `market_type=cross_market`, `completeness_status=incomplete_boundary`, `source_segment_id=null`, and complete OHLCV null.
 
-- `source_segments`;
-- `source_gaps`;
-- final `source_segment_id` assignment on canonical rows.
+Gap-containing intervals are `incomplete_gap` with complete OHLCV null. Optional observed-only diagnostics remain explicitly named.
 
-Rules:
+### S05 — Candle geometry
 
-- unresolved real gaps split segments;
-- spot/futures transition splits segments;
-- archive/package/provenance changes alone do not split segments;
-- a fully validated same-market repair can restore continuity while retaining row-level reconstruction provenance.
+For each complete 5m-and-higher target candle materialize atomic geometry: full range, body, body bounds, wicks, shares, log geometry, and mechanical body direction.
 
-Because stable candle identity excludes segment id, segment reassignment after an approved repair does not change candle ids.
+Incomplete/boundary rows do not produce valid complete geometry.
 
-### 4.5 S04 — Canonical fixed candles
+### S06 — Cross-timeframe map
 
-Derive all target fixed candles independently from canonical 1m using UTC calendar boundaries.
+Persist deterministic target-to-target containment and zero-based ordinals. Do not persist a full exploded 1m-to-all-parent mapping.
 
-Target resolutions:
+### S07 — Observation index
 
-- `5m`
-- `15m`
-- `1H`
-- `4H`
-- `1D`.
+Create fixed, rolling, and macro observation identities.
 
-A complete target candle requires the exact expected set of aligned 1m constituents from one continuous source segment.
+Fixed observations map one-to-one to target interval rows, including incomplete placeholders.
 
-If incomplete:
+Rolling observations are indexed on the 5m endpoint grid for durations `30m`, `1h`, `4h`, `12h`, `24h`, `3d`; one observation id represents the interval regardless of calculation resolution.
 
-- canonical OHLCV used by research = null;
-- coverage fields remain populated;
-- optional `observed_only_*` diagnostics may be stored.
+Macro observations retain approved source anchors as retrospective data.
 
-Do not recursively build 15m from 5m or 1H from 15m as the canonical method; all canonical target candles derive from 1m to minimize inherited aggregation ambiguity.
+`expected_base_resolution` is explicit: 1m for fixed completeness, 5m for rolling observation completeness, null for macro unless specifically defined.
 
-### 4.6 S05 — Cross-timeframe containment map
+Incomplete fixed/rolling observations do not expose ordinary start/end movement or speed as complete features.
 
-Build deterministic target-to-target mappings using timestamps and canonical ids.
+### S08 — Price/speed
 
-Do not explode persisted 1m-to-every-parent membership.
+Calculate canonical movement/speed names from complete observation endpoints only:
 
-Persist only approved target-to-target mappings.
+- ordinary/log displacement;
+- `raw_signed_speed_pct_per_hour`;
+- `signed_log_speed_per_hour`;
+- `local_direction_speed_pct_per_hour`;
+- `local_direction_log_speed_per_hour`;
+- rolling adjacent-window speed change/acceleration.
 
-Ordinal is zero-based.
+No threshold labels.
 
-### 4.7 S06 — Observation index
+### S09 — Atomic pairs
 
-Create one identity layer for fixed, rolling, and approved macro observations.
+Build target-resolution chronological neighbor candidates. Pair eligibility requires same source segment, same resolution, and exact adjacency.
+
+Calculate neutral range/body overlap, overlap position, upper/lower extension, and mirrored penetration. Do not attach observation direction at pair-construction time.
+
+### S10 — Path/activity/extrema
+
+Use exact approved calculation matrices.
 
 Fixed:
 
-- one-to-one with canonical target candle.
+- 15m via 5m;
+- 1H via 5m/15m;
+- 4H via 5m/15m/1H;
+- 1D via 5m/15m/1H/4H.
 
 Rolling:
 
-- evaluated on every eligible 5m endpoint;
-- one observation id per interval/duration;
-- coarser calculation-resolution feature rows reuse the same observation id.
+- 30m via 5m/15m;
+- 1h via 5m/15m;
+- 4h via 5m/15m/1H;
+- 12h via 5m/15m/1H/4H;
+- 24h via 5m/15m/1H/4H;
+- 3d via 5m/15m/1H/4H/1D.
 
-Macro:
+Macro internal path/activity may be attempted at 5m/15m/1H/4H/1D when at least two complete eligible constituents exist.
 
-- one observation per approved `macro_legs_log20.csv` leg;
-- retrospective availability.
+Calculate close/log path, efficiency, directional components, alternation, activity sums, extrema first/last/count, and excursions.
 
-This stage calculates only common observation identity/interval geometry needed by later feature stages, not the full feature families.
+Macro internal path is separate from source-anchor-inclusive path. Anchor-inclusive metrics require compatible market provenance and sufficient anchor-time precision; otherwise they are null with explicit status.
 
-### 4.8 S07 — Price and speed
+### S11 — Overlap summaries
 
-Calculate observation-level non-resolution-specific price movement and speed.
+Aggregate only eligible atomic pairs fully internal to observations, using the same supported calculation matrices. Direction-relative summaries are derived only after valid observation direction is known.
 
-Fixed/rolling features use only data available through observation close.
+### S12 — Volume/volatility
 
-Macro observation movement from approved anchors is retrospective source context.
+Use canonical field names including `volume_sum_change_vs_prev`, `volume_sum_ratio_vs_prev`, `observation_high_low_width`, `mean_full_range`, and related explicit log/TR fields.
 
-Adjacent equal-window speed change/acceleration requires both complete windows and no continuity break.
+Compute dual mechanical volume groupings, TR/ATR, fixed/rolling realized variance/volatility, and numeric contraction/expansion components.
 
-### 4.9 S08 — Atomic candle pairs
+Macro realized variance/volatility is not required in this pass. Macro volume summaries may be materialized under complete-coverage rules.
 
-For each target calculation resolution, produce chronological neighbor candidate pairs.
+All sequential states reset at real canonical gaps/boundaries.
 
-Eligibility requires:
+### S13 — Macro source/context
 
-- same market/source segment;
-- same resolution;
-- exact temporal adjacency.
+Load the exact approved macro source/checksum and enrich it with forensic source provenance. Do not overwrite historical mixed source classification using the current canonical boundary.
 
-Calculate neutral pair facts:
+Build retrospective observation-to-macro temporal intersections and approved macro-aligned numeric context. No parent hierarchy is inferred.
 
-- range/body overlap;
-- overlap location;
-- upper/lower extension;
-- mirrored penetration from top/bottom.
+### S14 — Retracement measurements
 
-Do not attach observation-direction semantics at atomic pair construction time.
+The formula engine supports direct approved A-B-C retracement measurement, but production materialization occurs only for explicitly configured/approved relationship tuples.
 
-Boundary candidates may be retained with `pair_eligible=false` for QA, but sequential metrics are null.
+Do not generate arbitrary combinations of approved anchors. If no production relationship list is configured, the canonical `retracement_measurements` table may validly contain zero rows while the golden formula test still passes.
 
-### 4.10 S09 — Path/activity/extrema
+### S15 — Dictionary/manifests
 
-For each supported `(observation_id, calculation_resolution)`:
+Generate feature dictionary from declared schema/formulas and deterministic manifests for every logical table. Dictionary availability/null semantics must agree with actual extraction behavior.
 
-- assemble the exact approved constituent sequence;
-- enforce coverage and continuity;
-- calculate canonical close/log path;
-- directional components;
-- path efficiency;
-- alternation/zero-step behavior;
-- range/body/wick/TR activity;
-- observation extrema and repeated-extrema timing/count;
-- excursions.
+### S16 — Independent QA
 
-Use streaming/grouped partition processing so a whole multi-year dataset is not loaded into memory.
+QA reads persisted artifacts independently of builder success flags and executes G01-G34 plus production invariants.
 
-Macro-leg anchor-inclusive path is calculated separately from internal path and only when the required source semantics are valid.
+Critical QA includes source-grid alignment, synthetic 19:00 exclusion, source segmentation, cross-market fixed placeholders, historical macro mixed provenance, anchor-precision gating, candle geometry, calculation matrices, field-name regression, causal leakage, resume equivalence, referential integrity, and manifest reconstruction.
 
-### 4.11 S10 — Overlap summaries
+Legacy inconsistent higher-TF caches are diagnostic references, not critical truth in inconsistent regions.
 
-Aggregate eligible atomic pairs fully internal to each observation interval.
+### S17 — Extraction smoke
 
-Do not include a pair merely because its current candle lies inside the observation if the previous candle lies outside the observation start.
+Exercise real Parquet extraction with partition/column pruning, causal-only exclusion, macro extraction, retracement-table selection when populated, geometry extraction, CSV export, and no hidden canonical feature recomputation.
 
-Calculate the required mean/median/share fields and direction-relative fields only after observation direction is known.
+## 7. Materialization strategy
 
-### 4.12 S11 — Volume and volatility
+Materialize once:
 
-Per supported observation/calculation resolution calculate:
-
-- volume totals/mean/median;
-- body-direction volume grouping;
-- close-step-direction volume grouping;
-- adjacent-window volume comparison;
-- TR/ATR endpoints;
-- realized variance/volatility;
-- range/TR/ATR compression-expansion numeric components.
-
-Wilder ATR state is maintained independently per resolution and continuous source segment.
-
-A real gap resets state.
-
-The stage SHALL not assign semantic accumulation, absorption, exhaustion, compression, or expansion labels.
-
-### 4.13 S12 — Macro context
-
-Join fixed/rolling observations to approved macro legs as retrospective context.
-
-Calculate only explicitly approved relationships:
-
-- temporal intersection;
-- leg-time progress;
-- source/derived macro direction;
-- macro-aligned speed/path/penetration where defined.
-
-Do not reinterpret macro legs as validated parent hierarchy.
-
-Do not write macro endpoint-derived values back into causal feature tables.
-
-### 4.14 S13 — Feature dictionary and manifests
-
-Generate the canonical feature dictionary from declared schema/feature definitions, not by heuristically inferring meaning from output columns.
-
-Validate dictionary-to-schema correspondence.
-
-Generate deterministic table manifests/catalog containing:
-
-- schema/version;
-- partition keys;
-- physical part paths;
-- row counts;
-- coverage;
-- producing run id;
-- integrity/checksum evidence;
-- validation status.
-
-### 4.15 S14 — Independent QA
-
-QA SHALL read persisted canonical artifacts independently of the producing calculation functions where externally observable.
-
-Run:
-
-- golden fixture suite;
-- schema/key/reference checks;
-- source gap/boundary invariants;
-- Parquet/manifest reconstruction;
-- causal leakage checks;
-- native higher-timeframe QA on selected/available intervals;
-- resume/determinism tests as applicable.
-
-The final QA status is mechanically derived from assertions.
-
-### 4.16 S15 — Extraction smoke
-
-Exercise the real extraction utility against persisted canonical Parquet.
-
-Verify:
-
-- time/market/resolution pruning;
-- selected feature-family retrieval;
-- causal-only exclusion of retrospective macro data;
-- macro-leg extraction;
-- CSV export and manifest behavior;
-- no hidden recomputation.
-
-## 5. Data dependency graph
-
-Canonical dependencies:
-
-`approved raw/local source data`
-
--> `candles_1m`
-
--> `source_segments + source_gaps`
-
--> `candles_fixed`
-
--> `cross_timeframe_map`
-
--> `observation_index`
-
-From `candles_fixed + observation_index`:
-
-- `observation_price_speed`
-- `atomic_candle_pairs`
-- `observation_path_activity`
-- `observation_volume_volatility`
-
-From `atomic_candle_pairs + observation_index`:
-
-- `observation_overlap_summary`
-
-From `macro_legs + observation_index + causal/local feature tables`:
-
-- `observation_macro_context`
-
-All canonical tables:
-
--> `feature_dictionary + manifests`
-
--> `independent QA`
-
--> `extraction`.
-
-No downstream feature table becomes the authoritative input for reconstructing canonical candles.
-
-## 6. Materialization strategy
-
-### 6.1 Materialize once
-
-Materialize:
-
-- canonical 1m;
-- canonical target candles;
-- target-to-target containment;
+- strict canonical 1m;
+- source segments/gaps;
+- target fixed interval grid;
+- atomic target candle geometry;
+- cross-TF map;
 - observation index;
+- price/speed;
 - atomic pair geometry;
-- approved feature-family tables;
-- macro context;
-- manifests/dictionary.
+- path/activity;
+- overlap summaries;
+- volume/volatility;
+- macro legs/context;
+- explicitly approved retracement relationships;
+- dictionary/manifests.
 
-These are the expensive/full-history canonical outputs.
+Extraction may join/filter/format existing canonical data but must not silently invent missing canonical features.
 
-### 6.2 Compute only during extraction
+## 8. Physical storage
 
-Extraction MAY compute presentation-only operations that do not alter canonical research semantics, for example:
+Use the partition plan from `research-table-schema` with Zstandard compression. Avoid one-file-per-observation/day patterns. Use bounded writes, validate before atomic promotion, then update manifests.
 
-- column selection/renaming for human display;
-- deterministic row sorting;
-- simple display formatting;
-- user-requested small CSV subset;
-- joins among already materialized canonical tables.
+Checkpoint/cache artifacts remain distinct from validated canonical output.
 
-Extraction SHALL NOT silently calculate a missing canonical metric or substitute a newly computed value for the stored canonical metric.
+## 9. Resume/idempotency
 
-If later research needs a new genuine feature, that is a new materialization/versioned-research change, not an extraction side effect.
+Checkpoint validated work units often enough that no more than 20 minutes of completed validated work is at risk.
 
-## 7. Parquet physical design
+Resume validates source/config/schema/stage/checkpoint/artifact identity and skips only proven completed units. Stable ids/natural keys prevent duplicate canonical entities. Incompatible/corrupt checkpoints fail explicitly.
 
-Use Zstandard compression.
+## 10. Causality
 
-Use the approved partition plan from the schema contract.
+Every feature definition declares availability class and available-at rule. Causal fixed/rolling features use only data available by observation close. Retrospective macro joins happen after causal/local materialization. Future-data invariance is a critical regression test.
 
-Practical rules:
+## 11. Execution gate
 
-- avoid one file per day/observation;
-- write bounded batches;
-- target approximately 128–512 MB compressed parts where table size permits;
-- compact small fragments after validated stage completion;
-- never expose partially written final parts.
+Implementation may proceed through golden tests and a bounded real-data smoke only.
 
-Physical writes follow:
-
-`temporary path -> close/write success -> schema/content validation -> atomic promotion -> manifest update`.
-
-Manifest update occurs only after part validation.
-
-## 8. Checkpoint and resume design
-
-### 8.1 Checkpoint granularity
-
-A checkpoint represents a validated completed work unit, not an arbitrary loop counter.
-
-Recommended unit:
-
-- one canonical physical partition or bounded partition chunk;
-- plus stage id and schema/source/config identity.
-
-Persist often enough that no more than 20 minutes of validated completed work is at risk.
-
-### 8.2 Checkpoint identity
-
-Every checkpoint SHALL include at minimum:
-
-- stage id/version;
-- input/source fingerprint;
-- `config_hash`;
-- schema version;
-- source-contract version;
-- partition/work-unit key;
-- produced artifact path(s);
-- artifact checksum/integrity evidence;
-- validation result;
-- producing run id.
-
-### 8.3 Resume behavior
-
-On resume:
-
-1. discover checkpoint;
-2. validate semantic compatibility;
-3. validate referenced completed artifacts;
-4. skip only proven valid completed units;
-5. continue at the first incomplete/invalid unit.
-
-Do not trust checkpoint metadata without revalidating referenced final artifacts.
-
-Stale/incompatible/corrupt state fails explicitly.
-
-### 8.4 Idempotency
-
-Stable ids and natural keys guarantee that rerun/resume does not create duplicate canonical entities.
-
-Writers SHALL validate uniqueness before promotion.
-
-## 9. Incremental rolling design
-
-Rolling observations are evaluated chronologically on the 5m endpoint grid.
-
-For each approved duration maintain bounded deques/state per continuous market segment.
-
-For coarser calculation resolutions, update the relevant constituent state only when that resolution closes.
-
-At an eligible endpoint:
-
-- select the exact complete duration;
-- require all expected constituents;
-- produce the one observation identity for that interval;
-- write resolution-specific feature row(s).
-
-Historical production is linear/incremental. Previously finalized historical rolling rows are not recomputed at every later endpoint.
-
-For implementation simplicity and deterministic replay, partition-level recomputation after a process restart is allowed only for the bounded uncommitted work unit; previously validated/promoted partitions are reused.
-
-## 10. Causality implementation
-
-Each feature definition declares:
-
-- availability class;
-- available-at rule.
-
-Causal fixed/rolling features must be functions only of input whose timestamps/availability are <= observation `available_at`.
-
-Retrospective joins occur after causal/local feature materialization.
-
-The extraction API accepts an `availability_class` filter and optional `as_of`.
-
-A causal-only query never implicitly left-joins macro context.
-
-Future-data invariance is a critical regression test.
-
-## 11. Source-boundary and gap implementation
-
-The exact source boundary is configuration supplied by the finalized source contract.
-
-It is not duplicated in feature code.
-
-Every sequential algorithm uses the same continuity predicate:
-
-- same market type/segment;
-- expected temporal adjacency;
-- complete required rows.
-
-This predicate is shared conceptually across:
-
-- returns;
-- TR/ATR;
-- path;
-- RV;
-- overlap pairs;
-- alternation;
-- rolling windows;
-- adjacent-window comparisons.
-
-Where implementation uses shared helper code, tests must prove that helper semantics match each spec rather than assuming reuse is correct.
-
-## 12. Macro-leg architecture
-
-The approved macro CSV is an input dimension, not a source of new classifications.
-
-Store:
-
-1. original/source macro leg fields;
-2. independent QA/recomputed descriptive fields;
-3. macro observation id;
-4. source-regime/boundary status.
-
-Whole-leg feature calculation reuses the same feature engines where semantics match, with explicit macro anchor handling.
-
-Do not duplicate separate untested formula implementations for macro legs if the fixed/rolling formula is mathematically identical.
-
-Where macro semantics differ, such as anchor-inclusive path or retrospective direction, implement/test that difference explicitly.
-
-## 13. Extraction utility design
-
-Provide a deterministic CLI or repository-standard callable interface.
-
-Required filter dimensions:
-
-- time range;
-- market type;
-- source segment;
-- fixed timeframe;
-- rolling duration;
-- calculation resolution;
-- observation id(s);
-- macro leg id(s);
-- logical feature family;
-- explicit columns;
-- availability class;
-- optional as-of time.
-
-Operation:
-
-1. read logical-table manifest/catalog;
-2. choose candidate Parquet partitions via predicates;
-3. read only requested/needed columns where supported;
-4. apply joins/filters;
-5. validate result schema;
-6. sort deterministically;
-7. export CSV according to review-size contract.
-
-Do not require a full Parquet-to-CSV conversion before filtering.
-
-## 14. Error and status model
-
-Distinguish:
-
-- expected documented source limitation;
-- incomplete calculation because coverage is insufficient;
-- invalid source/schema;
-- calculation bug;
-- QA failure;
-- system/runtime failure.
-
-A documented irrecoverable gap is not itself a pipeline bug.
-
-Incorrectly bridging or hiding that gap is a critical bug.
-
-Stages SHALL not catch critical exceptions and emit successful empty outputs.
-
-Failure state remains visible to final QA.
-
-## 15. Testing and validation architecture
-
-### 15.1 Unit/golden tests
-
-Use isolated synthetic fixtures with exact expected outputs.
-
-### 15.2 Integration tests
-
-Verify real persisted Parquet and manifests, not only in-memory results.
-
-### 15.3 Regression tests
-
-Protect confirmed historical failure classes listed in repository `AGENTS.md` and the golden-test spec.
-
-### 15.4 Real-data smoke
-
-After golden tests pass, run a bounded representative real-data interval.
-
-The smoke should include where practical:
-
-- normal futures continuity;
-- a documented historical source gap or boundary-adjacent case;
-- multiple target timeframes;
-- rolling observations;
-- at least one approved macro leg;
-- extraction.
-
-Do not use the smoke to discover/change business formulas silently.
-
-## 16. Full production execution policy
-
-Full-history production is not automatically launched when implementation/tests complete.
-
-Before full production:
-
-- source contract finalized;
-- critical golden tests pass;
-- real-data smoke passes independent QA;
-- smoke outputs are reviewed;
-- user explicitly authorizes the expensive full run when required by the surrounding task/process.
-
-## 17. Dependency policy
-
-Prefer the existing repository stack.
-
-Do not add new dependencies without checking repository configuration and the `AGENTS.md` dependency rule.
-
-If existing Parquet/dataframe tooling can meet the contract correctly, use it.
-
-A new dependency requires explicit approval before addition.
-
-## 18. Open design dependency
-
-At the time this design is written, one source-contract item remains externally pending: the exact earliest usable Binance BTCUSDT USDT-M futures 1m history and final actual spot-to-futures boundary.
-
-The architecture does not depend on a guessed date.
-
-When the source investigation completes, update the single source-contract/configuration value and associated gap/coverage evidence; feature code and QA shall consume that configuration rather than require redesign.
+Full-history production is a separate deferred execution gate requiring explicit authorization after smoke review. Implementation completion does not authorize a full production run.
