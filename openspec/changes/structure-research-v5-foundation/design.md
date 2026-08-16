@@ -4,7 +4,7 @@
 
 Structure Research v5 is a staged descriptive research-data pipeline, not a trading-decision engine.
 
-Priorities: source fidelity, deterministic time construction, explicit causality, stable identities, exact price identity, bounded memory, resumability, independent QA, exact trade-resolved macro boundaries where evidence permits, and conservative fallback where they do not.
+Priorities: source fidelity, deterministic time construction, explicit causality, stable identities, exact price identity, bounded memory, resumability, independent QA, exact aggTrade-resolved macro boundaries where evidence permits, and conservative fallback where they do not.
 
 ## 2. Canonical market source
 
@@ -31,41 +31,46 @@ SHA-256 `77a6fa1339794a96ddff327e038d66b17347914dcfa8fbb0d9a90765fd3900bc`.
 
 It contains 138 unique pivots: 131 unique localization windows and 7 multiple-window pivots, no unresolved coverage.
 
-There are 145 candidate windows total. 142 are canonical-grid 5m windows. Three spot windows (`E00059`,`E00065`,`E00070`) inherit the known `+20.799s` source offset and are not canonical 5m candles. The trade stage must resolve their exact pivot from official trades and then assign the actual canonical 5m candle containing that pivot.
+There are 145 candidate windows total. 142 are canonical-grid 5m windows. Three spot windows (`E00059`,`E00065`,`E00070`) inherit the known `+20.799s` source offset and are not canonical 5m candles. The refinement stage must resolve their pivot from the approved official Binance `aggTrades` source and then assign the actual canonical 5m candle containing that aggTrade event time.
 
-Before real macro production, a separate trade-refinement stage examines all 145 candidate windows with same-market official Binance trades/aggTrades and freezes a reviewed refinement artifact/checksum.
+Before real macro production, a separate refinement stage examines all 145 candidate windows using the already downloaded same-market official Binance BTCUSDT `aggTrades` data and freezes a reviewed refinement artifact/checksum.
 
-The main v5 pipeline consumes that artifact. It does not independently choose trade touches.
+`aggTrades` are the approved source for this stage. Raw individual trade files are not preferred and are not part of the approved calculation path. Raw trade files already downloaded during the earlier unapproved attempt may remain on disk, but their presence does not authorize their use. They may enter the project only after a separate explicit user decision.
+
+If approved `aggTrades` coverage is missing for a required candidate interval, record/report that limitation. Do not substitute or download raw trades automatically.
+
+The main v5 pipeline consumes the frozen aggTrade-refinement artifact. It does not independently choose touches or switch source type.
 
 ## 4. Macro boundary model
 
 Every anchor preserves:
 - original source coordinate/precision/provenance;
 - localization candidate windows and whether each is canonical-grid or off-grid source-localization;
-- every exact trade touch considered;
-- canonical 5m containment after exact trade resolution;
-- exact pivot time + native sequence id only when one unique touch exists;
+- every exact matching aggTrade row considered;
+- canonical 5m containment after aggTrade resolution;
+- exact pivot time + `agg_trade_id` only when one unique matching aggTrade row exists;
+- first/last underlying trade ids and whether the pivot aggTrade contains one or multiple underlying trades;
 - fallback uncertainty otherwise.
 
-Localization is not exact timing.
+Localization is not exact timing. A resolved timestamp is exact only at the approved aggTrade source resolution; the pipeline does not reconstruct unobserved individual raw-trade timing inside an aggregate.
 
-For a unique exact pivot, create LEFT/RIGHT boundary fragments inside the canonical 5m candle containing the pivot, without altering canonical candles. Pivot record count/volume belongs to LEFT once; RIGHT starts from pivot price state and excludes that record.
+For one unique matching aggTrade row, create LEFT/RIGHT boundary fragments inside the canonical 5m candle containing that row, without altering canonical candles. The pivot aggTrade is an indivisible approved source record and belongs to LEFT once; RIGHT starts from the pivot price state and excludes that aggregate row. If the pivot aggTrade contains multiple underlying trades, its quantity/count is not split internally between LEFT and RIGHT.
 
-At higher TFs, partial boundaries are composed from the trade-resolved partial canonical 5m piece plus complete canonical 5m intervals.
+At higher TFs, partial boundaries are composed from the aggTrade-resolved partial canonical 5m piece plus complete canonical 5m intervals.
 
 ## 5. Macro measurements
 
-Exact whole-leg duration/speed use exact endpoint pivots. Original source duration/speed remain separate provenance.
+Exact whole-leg duration/speed use endpoint coordinates resolved at approved aggTrade resolution. Original source duration/speed remain separate provenance.
 
 Exact macro close-path at resolution R uses:
 `exact start price -> chronological complete R closes ending after start and no later than end -> exact end price if needed`.
 
-Trade fragment path remains a separate microstructure family and is never added to TF close path.
+Aggregate-trade fragment path remains a separate microstructure family and is never added to TF close path.
 
 Exact macro volume/activity uses:
-start RIGHT fragment + complete interior intervals + end LEFT fragment, with no full boundary candle double-counting.
+start RIGHT fragment + complete interior intervals + end LEFT fragment, with no full boundary candle double-counting. Any multi-underlying pivot aggregate remains indivisible at the boundary and carries an explicit aggregate-boundary precision flag.
 
-If a pivot remains ambiguous after trade refinement, exact boundary metrics remain null and fallback uses only fixed-grid intervals guaranteed to lie between all possible boundary touches. Expected fallback count is grid-slot count, not duration/resolution.
+If a pivot remains ambiguous after aggTrade refinement, exact boundary metrics remain null and fallback uses only fixed-grid intervals guaranteed to lie between all possible matching aggTrade touches. Expected fallback count is grid-slot count, not duration/resolution.
 
 Macro RV remains deferred.
 
@@ -81,11 +86,11 @@ A/B/C are macro anchors only. No arbitrary triples and no Fibonacci labels.
 
 Fixed/rolling closed-data features are causal from documented availability.
 
-Macro legs/anchors/trade touches/boundary fragments/retracements/context are retrospective with `available_at=null` and excluded from causal extraction.
+Macro legs/anchors/aggTrade touches/boundary fragments/retracements/context are retrospective with `available_at=null` and excluded from causal extraction.
 
 ## 8. Pipeline stage graph
 
-0. external/preparatory: reviewed localization (already complete, including three known off-grid source windows) and reviewed trade-refinement artifact (must be complete before real macro production)
+0. external/preparatory: reviewed localization (already complete, including three known off-grid source windows) and reviewed aggTrade-refinement artifact (must be complete before real macro production)
 1. `S00_contract_and_config`
 2. `S01_source_inventory`
 3. `S02_canonical_1m`
@@ -112,11 +117,13 @@ Validate:
 - macro checksum and 128 legs
 - localization checksum and 138 pivots/status counts
 - 145 candidate windows, including exactly three known off-grid source windows
-- trade-refinement artifact checksum/statuses
-- canonical 5m containment for every exact pivot
+- aggTrade-refinement artifact checksum/statuses
+- approved source type is `aggTrades` for spot/futures as applicable
+- raw individual trade artifacts, if present on disk, are excluded from calculation/QA truth unless separately user-approved
+- canonical 5m containment for every exact aggTrade-resolved pivot
 - anchor-level provenance
 - exact-price Decimal/fixed-point QA
-- all exact touches/native sequence ids
+- all exact matching aggTrade rows/`agg_trade_id` ordering
 - exact/fallback boundary status
 - canonical market vs historical provenance.
 
@@ -128,7 +135,7 @@ Fixed/rolling speed under canonical names.
 
 Macro:
 - preserve source-coordinate source speed separately;
-- calculate exact one whole-leg macro speed only if both trade pivots exact.
+- calculate one endpoint-to-endpoint whole-leg macro speed only if both pivots are uniquely aggTrade-resolved.
 
 ### S11
 
@@ -138,7 +145,7 @@ Exact macro uses exact-pivot-to-exact-pivot Q sequence per calculation resolutio
 
 Ambiguous macro fallback starts with first eligible constituent open and uses grid-based expected membership.
 
-Trade-level fragment path is stored separately and never mixed with close path.
+AggTrade-level fragment path is stored separately and never mixed with close path.
 
 ### S12/S13
 
@@ -162,4 +169,4 @@ Persist validated work so <=20 minutes completed work is at risk. Resume validat
 
 Implementation/golden tests and bounded smoke may proceed.
 
-Full-history real macro production additionally requires the reviewed trade-refinement artifact and explicit user authorization after smoke review.
+Full-history real macro production additionally requires the reviewed aggTrade-refinement artifact and explicit user authorization after smoke review.
