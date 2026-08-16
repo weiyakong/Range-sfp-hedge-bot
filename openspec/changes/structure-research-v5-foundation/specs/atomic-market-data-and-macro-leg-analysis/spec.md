@@ -2,17 +2,17 @@
 
 ## Purpose
 
-Ensure that one approved research run leaves enough atomic market data and whole-leg measurements to investigate modern BTC movement behavior later without rerunning source-data collection or inventing missing semantics.
+Ensure that one approved research run leaves enough atomic market data and whole-leg measurements across the full locally available BTC history to investigate market movement behavior later without rerunning source-data collection or inventing missing semantics.
 
 ## ADDED Requirements
 
-### Requirement: Primary production coverage begins with the modern research era
+### Requirement: Production coverage uses the full locally available history
 
-The first production research run SHALL target `2023-01-01` onward through the latest locally available approved source coverage.
+The first production research dataset SHALL target the full approved local BTC history from the earliest locally available timestamp through the latest locally available timestamp for each approved source/timeframe, subject to actual source coverage and integrity.
 
-`2024-01-01` onward SHALL be treated as the highest-priority subset for smoke testing, review, and completeness checks.
+The pipeline SHALL NOT impose `2023-01-01` or `2024-01-01` as collection or dataset-coverage cutoffs.
 
-Data before `2023-01-01` MAY be processed later as a historical robustness dataset and SHALL NOT be required for completion of the first modern-era production run.
+The periods `2023-01-01` onward and especially `2024-01-01` onward MAY receive higher priority during later analytical comparison, smoke review, and criteria research, but this analytical prioritization SHALL remain separate from source inventory and production dataset coverage.
 
 No additional market data SHALL be downloaded without explicit approval.
 
@@ -54,7 +54,7 @@ Timestamp semantics SHALL be recorded in provenance and tested on representative
 
 ### Requirement: Whole macro-leg measurements are first-class research outputs
 
-For every approved existing macro leg overlapping available modern-era data, the system SHALL calculate a whole-leg measurement record in addition to fixed-calendar and rolling observations.
+For every approved existing macro leg overlapping available approved candle coverage, the system SHALL calculate a whole-leg measurement record in addition to fixed-calendar and rolling observations.
 
 The whole-leg record SHALL preserve at minimum:
 
@@ -107,8 +107,8 @@ Where complete pair coverage exists inside a macro leg, the whole-leg output SHA
 
 The contributing pair count and coverage status SHALL be retained.
 
-### Requirement: Modern contrast cases are directly extractable
+### Requirement: Modern contrast cases are directly extractable without limiting historical storage
 
 The extraction layer SHALL support selecting complete whole-leg records and their underlying atomic candles/pairs by `macro_leg_id`, including multiple macro legs in one request.
 
-This SHALL make it possible to compare modern cases with similar absolute log movement but materially different duration/path behavior without rerunning source-data collection.
+This SHALL make it possible to prioritize modern cases with similar absolute log movement but materially different duration/path behavior while retaining the full historical dataset for robustness and comparison.
