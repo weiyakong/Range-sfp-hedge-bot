@@ -8,25 +8,27 @@ Keep a very large multi-timeframe research dataset queryable and human-reviewabl
 
 ### Requirement: Research data uses stable join keys
 
-Final and internal research tables SHALL use stable identifiers and timestamps sufficient to join macro legs, candles, cross-timeframe containment, feature families, and retrospective context without relying on row order.
+Final and internal research tables SHALL use stable identifiers and timestamps sufficient to join macro legs, source segments, candles, cross-timeframe containment, feature families, and retrospective context without relying on row order.
 
 ### Requirement: Raw candle and cross-timeframe relationships remain queryable
 
-The research outputs SHALL preserve or expose queryable candle-level records for target resolutions and a deterministic cross-timeframe mapping sufficient to reconstruct which finer candles formed each larger fixed calendar candle.
+The canonical analytical store SHALL preserve queryable candle-level records for retained `1m` source data and target resolutions, plus deterministic cross-timeframe mappings sufficient to reconstruct which finer candles formed each larger fixed calendar candle.
 
-The mapping SHALL preserve ordinal position, expected constituent count, observed constituent count, and coverage status where applicable.
+The mapping SHALL preserve ordinal position, expected constituent count, observed constituent count, coverage status, and source-segment identity where applicable.
 
 ### Requirement: Feature families remain separate logical tables
 
 Momentum/speed, path/overlap/candle geometry, volume/volatility, cross-timeframe mapping, macro-leg context, and other approved semantic families SHALL remain separately queryable logical tables rather than one monolithic wide table.
 
-Physical CSV partitioning rules are governed by the research-output persistence specification.
+Physical analytical storage is governed by the research-output persistence specification.
 
-### Requirement: Macro-leg context is descriptive
+### Requirement: Macro-leg context is descriptive and retrospective where endpoint-dependent
 
-The macro-leg context table SHALL preserve approved existing macro-leg anchors and source metadata, including start/end time and price, price-derived direction, duration, and movement size.
+The macro-leg context table SHALL preserve approved `macro_legs_log20.csv` anchors and source metadata, including start/end time and price, price-derived direction, duration, and movement size.
 
 It SHALL NOT assign a new `impulse` or `correction` class in the first-pass research output.
+
+Fields that require the completed macro-leg endpoint or whole-leg direction SHALL be explicitly marked retrospective.
 
 ### Requirement: Completed macro-leg position is retrospective
 
@@ -38,25 +40,21 @@ when the denominator is positive.
 
 Such fields SHALL be marked retrospective because the final leg endpoint is not known to a live strategy before completion.
 
-### Requirement: Extraction utility supports targeted human-review slices
+### Requirement: Extraction utility reads the canonical analytical store directly
 
-The repository SHALL provide a deterministic extraction utility that can select a small research slice from the stored dataset without requiring manual concatenation of all files.
+The repository SHALL provide a deterministic extraction utility that reads the canonical Parquet/approved columnar analytical store directly and selects a small research slice without requiring conversion of the full dataset to CSV or manual concatenation of all parts.
 
-The utility SHALL support filtering by available stable identifiers/time ranges, one or more target/calculation resolutions, selected feature families/columns, and causal versus retrospective fields where applicable.
+The utility SHALL support filtering by available stable identifiers/time ranges, market type/source segment, one or more target/calculation resolutions, selected feature families/columns, and causal versus retrospective fields where applicable.
 
 Where retrospective macro-leg position exists, the utility SHOULD support selecting portions of completed legs by normalized temporal position.
 
-### Requirement: Extracted outputs are CSV
+### Requirement: Extracted human-review outputs are CSV
 
-Human-review extraction results SHALL follow the final CSV output rules, including the approximate 10 MB target and deterministic partitioning when needed.
-
-### Requirement: Internal storage may remain optimized
-
-The extraction contract SHALL NOT require internal analytical storage to be CSV. Internal Parquet or other approved formats MAY be used for efficient filtering and joins, provided required human-review exports are produced as CSV.
+Human-review extraction results SHALL follow the CSV output rules in the persistence specification, including the approximate 10 MB target and deterministic partitioning when needed.
 
 ### Requirement: Manifests make logical tables reconstructable
 
-For partitioned logical tables, manifests SHALL identify logical table name, part filenames, row counts, temporal coverage, schema/version, and sufficient metadata to reconstruct the table deterministically.
+For partitioned logical tables, manifests SHALL identify logical table name, part filenames/paths, row counts, temporal coverage, schema/version, source segment where applicable, and sufficient metadata to reconstruct the table deterministically.
 
 ### Requirement: Resume cannot create duplicate research rows
 
