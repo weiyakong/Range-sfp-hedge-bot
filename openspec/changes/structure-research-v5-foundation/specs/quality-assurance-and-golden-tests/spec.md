@@ -104,8 +104,8 @@ Synthetic no-trade repair excluded; canonical source gap preserved and sequentia
 ### G28 — Historical macro provenance vs canonical market
 Late-2019 can simultaneously be historical `mixed` and canonical futures.
 
-### G29 — 5m localization is not exact event timing
-A unique 5m candidate alone SHALL NOT populate `exact_pivot_time` or exact macro duration/speed.
+### G29 — Localization is not exact event timing
+A unique localization window alone SHALL NOT populate `exact_pivot_time` or exact macro duration/speed.
 
 ### G30 — Canonical spot gap audit
 Production recomputes valid canonical gaps and reports against audited evidence; unexplained differences fail.
@@ -122,20 +122,29 @@ Macro path/activity/overlap/volume attempted at 5m/15m/1H/4H/1D under exact/fall
 ### G34 — Canonical field-name regression
 Fail deprecated/conflicting names.
 
-### G35 — Approved 5m localization artifact
-Checksum `77a6fa1339794a96ddff327e038d66b17347914dcfa8fbb0d9a90765fd3900bc`; 138 unique event ids; 131 unique-5m; 7 multiple-5m; 0 unresolved/incomplete; all HIGH/LOW candidates exactly match anchor price.
+### G35 — Reviewed localization artifact
+Checksum `77a6fa1339794a96ddff327e038d66b17347914dcfa8fbb0d9a90765fd3900bc`; 138 unique event ids; 131 unique-window; 7 multiple-window; 0 unresolved/incomplete; 145 distinct candidate windows total.
 
-### G36 — Multiple 5m candidates preserved
-A two-candidate anchor passes both candidate intervals to trade refinement; no automatic 5m selection.
+Exactly 142 candidate windows are canonical 5m-grid aligned. Exactly three are known `off_grid_source_5m` windows inherited from the December-2017 `+20.799s` source offset:
+- E00059 `2017-12-07T23:55:20.799Z`
+- E00065 `2017-12-10T04:30:20.799Z`
+- E00070 `2017-12-17T12:10:20.799Z`.
+
+These three SHALL NOT be assigned canonical candle ids from their off-grid start times.
+
+### G36 — Multiple localization windows preserved
+A two-candidate anchor passes both windows to trade refinement; no automatic window selection.
 
 ### G37 — Decimal price identity
 `4039.79000000` and `4039.79` parse to exact `price_units=403979`; `13918.04` -> `1391804`. Binary float/epsilon/nearest matching is prohibited. Any relevant official trade price with >2 significant decimals triggers precision failure rather than rounding.
 
 ### G38 — Anchor-level provenance not copied from leg duration precision
-Fixture where shared anchor belongs to a `1D_fallback` leg and adjacent `4H` leg must retain anchor-level provenance from approved localization artifact, not blindly inherit either leg's duration precision.
+Fixture where shared anchor belongs to a `1D_fallback` leg and adjacent `4H` leg must retain anchor-level provenance from reviewed localization artifact, not blindly inherit either leg's duration precision.
 
 ### G39 — Trade unique touch
-One exact same-market anchor-price touch with complete source coverage yields `exact_unique_trade_touch`, exact time and native sequence id.
+One exact same-market anchor-price touch with complete source coverage yields `exact_unique_trade_touch`, exact time and native sequence id, and the canonical 5m candle containing that time.
+
+For E00059/E00065/E00070 the canonical 5m start must be derived from exact trade time, never copied from the off-grid localization-window start.
 
 ### G40 — Trade multiple touches
 Two or more exact touches preserve every touch; exact pivot time/sequence remains null; no first/last/nearest selection.
@@ -161,7 +170,7 @@ Start pivot inside a candle and end pivot inside another:
 Q begins at exact start price, includes only qualifying complete R closes with `start < candle.end <= end`, then exact end price. Pre-start candle movement and post-end candle close are excluded.
 
 ### G46 — Higher-TF boundary composition
-A 1H boundary fragment is exactly composed from trade-resolved partial 5m plus complete canonical 5m candles to hour edge; no full 1H trade download required; gap breaks exact composition.
+A 1H boundary fragment is exactly composed from trade-resolved partial canonical 5m plus complete canonical 5m candles to hour edge; no full 1H trade download required; gap breaks exact composition.
 
 ### G47 — Fallback path includes first candle open and grid count
 Off-grid fallback interval fixture:
@@ -186,7 +195,8 @@ A/B/C resolve to macro anchors and exactly 118 production retracement relationsh
 - no synthetic row silently repairs canonical completeness;
 - canonical source boundary comes from one contract/config truth;
 - historical macro provenance never overwrites canonical market;
-- 5m localization never masquerades as exact trade timing;
+- localization never masquerades as exact trade timing;
+- off-grid source-localization windows never become canonical candle identities;
 - ambiguous trade touches are never guessed away;
 - exact macro path never mixes trade-level and candle-close path;
 - full boundary candle and its fragment never both contribute to one macro metric;
