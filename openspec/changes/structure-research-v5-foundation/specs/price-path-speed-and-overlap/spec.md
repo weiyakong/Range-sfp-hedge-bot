@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define objective formulas for price movement, speed, path, directional components, candle geometry, and overlap without embedding impulse/correction/chop classifications.
+Define objective formulas for price movement, speed, path, directional components, candle geometry, overlap, retracement, penetration, and extension without embedding impulse/correction/chop classifications.
 
 ## ADDED Requirements
 
@@ -14,7 +14,7 @@ For an observation starting at price `P0` and ending at price `P1`:
 - `absolute_price_change = abs(P1 - P0)`
 - `signed_return_pct = 100 * (P1 / P0 - 1)` when `P0 != 0`
 - `absolute_return_pct = abs(signed_return_pct)`
-- `duration_seconds = end_time - start_time`
+- `duration_seconds = end_time - start_time`.
 
 Undefined divisions SHALL be null with an explicit null meaning, not replaced by zero.
 
@@ -26,6 +26,29 @@ For strictly positive `P0` and `P1`:
 - `absolute_log_move = abs(signed_log_move)`.
 
 Ordinary USD change and ordinary percentage return SHALL remain available separately. A display-scaled value such as `100 * signed_log_move` SHALL be named as a scaled log return, not an ordinary percentage return.
+
+### Requirement: Direct retracement uses only approved anchors and has an exact formula
+
+For an approved reference movement `A -> B` with prices `P_A`, `P_B` and a subsequent approved endpoint `C` with price `P_C`, let:
+
+- `reference_delta = P_B - P_A`
+- `candidate_delta = P_C - P_B`.
+
+When `reference_delta != 0`, preserve the neutral magnitude ratio:
+
+`candidate_vs_reference_pct = 100 * abs(candidate_delta) / abs(reference_delta)`.
+
+Also preserve directional opposition explicitly. Let `d_ref = sign(reference_delta)`:
+
+`opposing_retracement_abs = max(0, -d_ref * candidate_delta)`
+
+and:
+
+`retracement_pct = 100 * opposing_retracement_abs / abs(reference_delta)`.
+
+Thus a continuation in the same direction has `retracement_pct = 0`, a full return to `P_A` has `retracement_pct = 100`, and movement beyond `P_A` MAY exceed 100. The value SHALL NOT be converted to Fibonacci labels or semantic correction classes.
+
+The anchors themselves are governed by the approved-anchor contract; this formula SHALL NOT authorize discovery of new swing anchors.
 
 ### Requirement: Global macro-leg comparison includes log-scale movement and speed
 
@@ -46,7 +69,7 @@ For an observation:
 
 This field SHALL mean only the sign of start-to-end displacement. Macro-regime or macro-leg alignment SHALL use separately named fields.
 
-### Requirement: Ordinary and log speed remain distinct
+### Requirement: Ordinary and log speed remain distinct and direction normalization is exact
 
 For positive duration in hours:
 
@@ -56,7 +79,19 @@ For positive prices and elapsed time:
 
 `signed_log_speed = ln(P1 / P0) / elapsed_time`.
 
-Absolute companions MAY be retained. Ordinary percentage speed and log speed SHALL remain separately named and unit-labelled.
+For a non-flat observation with `d_local = sign(P1-P0)`:
+
+- `local_direction_speed_pct_per_hour = d_local * raw_signed_speed_pct_per_hour`
+- `local_direction_log_speed = d_local * signed_log_speed`.
+
+These values are non-negative by construction and mean magnitude of progress in the observation's own eventual mechanical direction; they SHALL NOT be interpreted as trend/impulse classifications.
+
+When an approved macro direction `d_macro` in `{+1,-1}` is available:
+
+- `macro_aligned_speed_pct_per_hour = d_macro * raw_signed_speed_pct_per_hour`
+- `macro_aligned_log_speed = d_macro * signed_log_speed`.
+
+Positive macro-aligned values mean movement with the approved macro direction; negative values mean movement against it. If the relevant direction is unavailable/flat, the corresponding direction-normalized field SHALL be null.
 
 ### Requirement: Rolling observations are incremental and have exact boundary prices
 
@@ -273,17 +308,25 @@ Where denominators are positive:
 
 Doji/zero-body denominators SHALL produce null rather than zero.
 
-### Requirement: Neutral extensions are explicit
+### Requirement: Neutral and direction-relative extensions are explicit
 
 For an eligible pair:
 
 - `upper_extension_abs = max(0, curr.high - prev.high)`
 - `lower_extension_abs = max(0, prev.low - curr.low)`.
 
-When `prev_range > 0`, also preserve:
+When `prev_range > 0`:
 
 - `upper_extension_share_prev = upper_extension_abs / prev_range`
 - `lower_extension_share_prev = lower_extension_abs / prev_range`.
+
+For an observation with known mechanical direction:
+
+- if observation direction is `up`, `extension_with_move = upper_extension` and `extension_against_move = lower_extension`;
+- if observation direction is `down`, `extension_with_move = lower_extension` and `extension_against_move = upper_extension`;
+- if observation direction is `flat`, direction-relative extension fields SHALL be null while neutral upper/lower fields remain available.
+
+The observation-relative extension fields SHALL identify the observation/direction basis. Fixed/rolling versions become known at observation close; completed macro-leg-relative versions are retrospective.
 
 ### Requirement: Penetration uses one common previous-range reference and stores both orientations
 
@@ -341,4 +384,4 @@ when `eligible_pair_count > 0`, plus eligible pair count and coverage status.
 
 The first pass SHALL NOT create a composite `choppiness` label or score.
 
-It SHALL preserve net displacement, close-path, path efficiency, directional path components, alternation, zero-step behavior, pairwise/rolling overlap, overlap position, candle geometry, penetration, speed evolution, and activity measures as separately inspectable numeric components.
+It SHALL preserve net displacement, close-path, path efficiency, directional path components, alternation, zero-step behavior, pairwise/rolling overlap, overlap position, candle geometry, penetration, extension, speed evolution, and activity measures as separately inspectable numeric components.
