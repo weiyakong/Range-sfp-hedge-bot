@@ -4,59 +4,85 @@
 
 Structure Research v5 is a staged descriptive research-data pipeline, not a trading-decision engine.
 
-Priorities: source fidelity, deterministic time construction, explicit causality, stable identities, bounded memory, resumability, independent semantic validation, honest macro-anchor uncertainty, and efficient later extraction.
+Priorities: source fidelity, deterministic time construction, explicit causality, stable identities, exact price identity, bounded memory, resumability, independent QA, exact trade-resolved macro boundaries where evidence permits, and conservative fallback where they do not.
 
-## 2. Canonical source architecture
+## 2. Canonical market source
 
-The strict canonical 1m spine is:
+Strict canonical 1m:
+- spot before `2019-09-08T17:57:00Z`
+- USDT-M futures from that boundary
+- documented gaps preserved, including futures 19:00
+- post-boundary spot excluded from combined canonical chronology
+- synthetic 19:00 diagnostic excluded from canonical 1m.
 
-- spot before `2019-09-08T17:57:00Z`;
-- USDT-M futures from `2019-09-08T17:57:00Z` onward;
-- documented canonical gaps preserved, including futures `2019-09-08T19:00`;
-- post-boundary spot rows excluded from combined canonical chronology;
-- synthetic 19:00 repair retained only as diagnostic evidence.
+Canonical `5m/15m/1H/4H/1D` derive from strict canonical 1m.
 
-Canonical target intervals `5m/15m/1H/4H/1D` derive from this strict 1m spine.
+Source inventory distinguishes true gaps from continuous off-grid source timestamps. A continuous `+20.799s` source series is not automatically missing; canonicalization requires proven source-specific mapping and retained raw timestamp provenance.
 
-## 3. Macro source architecture
+## 3. Macro prerequisites
 
-The approved `macro_legs_log20.csv` remains a retrospective source segmentation with historical provenance distinct from current canonical market scope.
+Approved macro source:
+`macro_legs_log20.csv`
+SHA-256 `c7f7166a72f57ee9af75ddc0d5711d45d8371b546d83c10cdc77bc129523d0d3`.
 
-Late-2019 macro source may be `mixed` while the canonical wall-clock market is futures. These are separate columns/concepts.
+Approved 5m localization:
+`macro_pivots_5m_all.csv`
+SHA-256 `77a6fa1339794a96ddff327e038d66b17347914dcfa8fbb0d9a90765fd3900bc`.
 
-Coarse macro anchor timestamps identify buckets containing extrema, not exact event times.
+It contains 138 unique pivots: 131 unique 5m candidates and 7 multiple-5m pivots, no unresolved coverage.
 
-Before any macro-specific canonical path/activity/overlap/volume calculation, the pipeline attempts deterministic anchor refinement against compatible complete canonical 1m data.
+Before real macro production, a separate trade-refinement stage examines the 145 candidate 5m intervals with same-market official Binance trades/aggTrades and freezes a reviewed refinement artifact/checksum.
 
-For each anchor preserve:
+The main v5 pipeline consumes that artifact. It does not independently choose trade touches.
 
-- source price/time/precision;
-- initial possible-time interval;
-- refinement status;
-- candidate count/first/last candidate minute;
-- refined possible-time interval;
-- historical provenance and canonical compatibility.
+## 4. Macro boundary model
 
-A unique 1m match narrows the anchor to one minute but that entire minute remains a boundary uncertainty zone because intra-minute event order is unknown.
+Every anchor preserves:
+- original source coordinate/precision/provenance;
+- 5m localization candidates;
+- every exact trade touch considered;
+- exact pivot time + native sequence id only when one unique touch exists;
+- fallback uncertainty otherwise.
 
-Shared pivots are represented once in `macro_anchors` and referenced by both adjacent legs.
+5m localization is not exact timing.
 
-For start uncertainty `[S0,S1)` and end uncertainty `[E0,E1)`, safe canonical interior is `[S1,E0)`.
+For a unique exact pivot, create LEFT/RIGHT boundary fragments without altering canonical candles. Pivot record count/volume belongs to LEFT once; RIGHT starts from pivot price state and excludes that record.
 
-Boundary-overlapping candles remain stored/queryable but are not arbitrarily assigned to either leg safe interior.
+At higher TFs, partial boundaries are composed from the trade-resolved partial 5m piece plus complete canonical 5m intervals.
 
-## 4. Causal and retrospective separation
+## 5. Macro measurements
 
-Fixed/rolling features are causal from documented close/availability.
+Exact whole-leg duration/speed use exact endpoint pivots. Original source duration/speed remain separate provenance.
 
-Macro observations, macro anchors/refinement, completed-leg context and endpoint-dependent relationships are retrospective with `available_at=null` in this pass.
+Exact macro close-path at resolution R uses:
+`exact start price -> chronological complete R closes ending after start and no later than end -> exact end price if needed`.
 
-Causal extraction excludes them regardless of source timestamps.
+Trade fragment path remains a separate microstructure family and is never added to TF close path.
 
-## 5. Pipeline stage graph
+Exact macro volume/activity uses:
+start RIGHT fragment + complete interior intervals + end LEFT fragment, with no full boundary candle double-counting.
 
-Implementation SHALL respect dependencies in this order:
+If a pivot remains ambiguous after trade refinement, exact boundary metrics remain null and fallback uses only fixed-grid intervals guaranteed to lie between all possible boundary touches. Expected fallback count is grid-slot count, not duration/resolution.
 
+Macro RV remains deferred.
+
+## 6. Retracement
+
+First-pass production retracement is the immediately following opposite-direction macro leg relative to the preceding macro leg when the two share the same boundary pivot.
+
+Approved source: 118 such relationships among 127 adjacent transitions; 9 discontinuous transitions are excluded.
+
+A/B/C are macro anchors only. No arbitrary triples and no Fibonacci labels.
+
+## 7. Causal separation
+
+Fixed/rolling closed-data features are causal from documented availability.
+
+Macro legs/anchors/trade touches/boundary fragments/retracements/context are retrospective with `available_at=null` and excluded from causal extraction.
+
+## 8. Pipeline stage graph
+
+0. external/preparatory: reviewed 5m localization (already complete) and reviewed trade-refinement artifact (must be complete before real macro production)
 1. `S00_contract_and_config`
 2. `S01_source_inventory`
 3. `S02_canonical_1m`
@@ -64,7 +90,7 @@ Implementation SHALL respect dependencies in this order:
 5. `S04_fixed_candles`
 6. `S05_candle_geometry`
 7. `S06_cross_timeframe_map`
-8. `S07_macro_source_and_anchor_refinement`
+8. `S07_macro_sources_and_refinement_artifacts`
 9. `S08_observation_index`
 10. `S09_price_speed`
 11. `S10_atomic_pairs`
@@ -77,132 +103,58 @@ Implementation SHALL respect dependencies in this order:
 18. `S17_independent_qa`
 19. `S18_extraction_smoke`.
 
-A stage is complete only after persisted outputs pass required validation.
+### S07 details
 
-## 6. Stage details
+Validate:
+- macro checksum and 128 legs
+- localization checksum and 138 pivots/status counts
+- trade-refinement artifact checksum/statuses
+- anchor-level provenance
+- exact-price Decimal/fixed-point QA
+- all exact touches/native sequence ids
+- exact/fallback boundary status
+- canonical market vs historical provenance.
 
-### S00 — Contract/config freeze
+No real macro exact metric may run before S07 validates.
 
-Freeze schema/source-contract versions, exact approved sources/checksums, canonical boundary, macro checksum/path, calculation matrices, output/checkpoint roots, code commit, and semantic `config_hash`.
+### S09
 
-### S01 — Source inventory
+Fixed/rolling speed under canonical names.
 
-Inventory approved local sources: provenance, market/timeframe, coverage, duplicates, timestamp alignment, OHLC validity, gaps, and checksums. Distinguish canonical source data from diagnostic synthetic/legacy references.
+Macro:
+- preserve source-coordinate source speed separately;
+- calculate exact one whole-leg macro speed only if both trade pivots exact.
 
-### S02 — Canonical 1m
+### S11
 
-Normalize only observed approved rows into strict minute-aligned `candles_1m`. Exclude post-boundary spot and synthetic futures 19:00. Never silently round misaligned source rows.
+Fixed/rolling use approved Q sequences.
 
-### S03 — Source segments/gaps
+Exact macro uses exact-pivot-to-exact-pivot Q sequence per calculation resolution.
 
-Derive continuity from strict canonical 1m. Real spot gaps, futures 19:00 and market transition split sequential continuity. Archive/provenance changes alone do not.
+Ambiguous macro fallback starts with first eligible constituent open and uses grid-based expected membership.
 
-### S04 — Fixed target grid
+Trade-level fragment path is stored separately and never mixed with close path.
 
-Build complete UTC target interval grid directly from canonical 1m. Boundary-crossing rows are `cross_market/incomplete_boundary`; gap rows are incomplete; complete OHLCV null on incomplete intervals.
+### S12/S13
 
-### S05 — Candle geometry
+Exact macro overlap/volume/activity may use typed boundary-fragment relationships plus interior intervals without double counting.
 
-Materialize atomic geometry for every complete target candle; incomplete rows do not produce valid geometry.
+Fallback uses only guaranteed interior set.
 
-### S06 — Cross-timeframe map
+Macro RV deferred.
 
-Persist deterministic target-to-target containment and zero-based ordinals.
+### S15
 
-### S07 — Macro source and anchor refinement
+Materialize the 118 approved adjacent shared-pivot opposite-direction macro retracements. Referential QA must prove A/B/C anchor foreign keys and the 9 excluded discontinuities.
 
-Load exact approved macro source/checksum.
+## 9. Storage/resume
 
-Create shared `macro_anchors` records from source pivot/event ids.
+Canonical analytical storage is Parquet/Zstandard with schema partition plan. Targeted CSV only for review/exchange.
 
-For every non-exact compatible anchor:
+Persist validated work so <=20 minutes completed work is at risk. Resume validates source/config/schema/refinement checksums and skips only proven completed units.
 
-1. derive initial bucket uncertainty interval from source precision;
-2. require complete canonical 1m coverage for uniqueness claims;
-3. search exact source high/low price in compatible canonical market;
-4. classify unique/multiple/no-match/incomplete/source-incompatible;
-5. preserve candidates and refined possible interval;
-6. compute each leg's safe interior from shared start/end uncertainty intervals;
-7. derive canonical macro `market_type` independently of historical provenance.
+## 10. Execution gate
 
-No macro path/activity stage may run before this stage is validated.
+Implementation/golden tests and bounded smoke may proceed.
 
-### S08 — Observation index
-
-Create fixed/rolling/macro identities. Macro rows preserve source-coordinate start/end times/prices, canonical market scope, retrospective availability and null `available_at`; safe-interior times live in macro leg/feature fields.
-
-### S09 — Price/speed
-
-Calculate complete fixed/rolling movement/speed under canonical names. Macro source displacement/speed remain retrospective source-coordinate measurements, not newly exact canonical event timing.
-
-### S10 — Atomic pairs
-
-Build neutral same-segment exact-adjacent target candle pairs and pair geometry.
-
-### S11 — Path/activity/extrema
-
-Fixed/rolling use exact approved matrices and formulas.
-
-Macro rows use only complete calculation candles fully inside the refined safe interior. Persist `safe_*` path/activity/coverage names.
-
-Complete `anchor_inclusive_*` whole-leg path remains null unless full ordered boundary path is genuinely established; coarse or unique-minute timing alone is insufficient.
-
-### S12 — Overlap summaries
-
-Aggregate eligible pairs fully internal to each valid fixed/rolling interval or macro safe interior.
-
-### S13 — Volume/volatility
-
-Compute canonical volume/TR/ATR and fixed/rolling RV. Macro volume/activity may use safe interior; macro RV is deferred.
-
-### S14 — Macro context
-
-Build retrospective observation-to-macro relationships using source-coordinate and safe-interior concepts explicitly. Do not invent parent hierarchy or live availability.
-
-### S15 — Retracement measurements
-
-Materialize only explicitly configured A-B-C relationships. No arbitrary tuple generation.
-
-### S16 — Dictionary/manifests
-
-Generate dictionary/manifests for every logical table including `macro_anchors`, geometry and retracement tables. Dictionary must distinguish source-coordinate, safe-interior and anchor-inclusive macro metrics.
-
-### S17 — Independent QA
-
-Run G01-G40 and persisted-artifact invariants independently of builder success flags. Critical macro QA includes anchor refinement, candidate ambiguity, incomplete search coverage, boundary-minute exclusion, canonical-vs-historical market separation, retrospective availability and safe-interior membership.
-
-### S18 — Extraction smoke
-
-Exercise real extraction for market/time/resolution, geometry, macro leg/anchor uncertainty, boundary candles, safe-interior features, retracements, causal exclusion and CSV export with no hidden recomputation.
-
-## 7. Materialization strategy
-
-Materialize once:
-
-- canonical 1m;
-- source segments/gaps;
-- fixed target grid;
-- candle geometry;
-- cross-TF map;
-- macro anchors/refinement;
-- observation index;
-- price/speed;
-- atomic pairs;
-- path/activity;
-- overlap;
-- volume/volatility;
-- macro legs/context;
-- approved retracement relationships;
-- dictionary/manifests.
-
-Boundary-ambiguous candles are not deleted; they remain canonical data and can be extracted with the relevant anchor.
-
-## 8. Physical storage and resume
-
-Use schema partition plan with Zstandard, bounded writes, validate-before-promotion, then manifest update.
-
-Checkpoint validated work often enough that no more than 20 minutes of validated work is at risk. Resume validates source/config/schema/stage/artifacts and skips only proven completed units.
-
-## 9. Execution gate
-
-Implementation may proceed through golden tests and bounded smoke only. Full-history production requires a separate explicit authorization after smoke review.
+Full-history real macro production additionally requires the reviewed trade-refinement artifact and explicit user authorization after smoke review.
