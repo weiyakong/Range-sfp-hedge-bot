@@ -20,11 +20,11 @@ For a derived candle built from canonical finer candles:
 
 `derived_volume = sum(constituent_volume)`
 
-only when all required constituent candles are present, belong to the same approved source segment, and the source-native volume field is additive.
+only when all required constituent candles are present, belong to the same approved continuous source segment, and the source-native volume field is additive.
 
 Additional additive native fields such as quote volume, trade count, or taker-side volume MAY be summed under source-accurate names when source semantics support addition.
 
-A derived candle SHALL NOT sum volume across a source boundary or incomplete constituent set. Observed-only diagnostics MAY use explicit `observed_only_*` names but SHALL NOT be exposed as complete volume.
+A derived candle SHALL NOT sum volume across a source-segment boundary or incomplete constituent set. Observed-only diagnostics MAY use explicit `observed_only_*` names but SHALL NOT be exposed as complete volume.
 
 ### Requirement: Volume direction is preserved under two distinct mechanical conventions
 
@@ -160,11 +160,13 @@ Futures data SHALL NOT reconstruct spot candles and spot data SHALL NOT reconstr
 
 If same-market lower-level official data is incomplete/unavailable, the gap SHALL remain documented. Interpolation, forward/backward fill, synthetic candles, and cross-market substitution are prohibited.
 
-### Requirement: Sequential calculations do not cross source boundaries or real gaps
+### Requirement: Sequential calculations use canonical source-segment semantics
 
-Every canonical candle SHALL belong to an explicit continuous `source_segment_id` identifying at minimum venue, market type, source identity, and continuous coverage segment.
+`source_segment_id` SHALL use the continuity definition in the atomic-market-data contract. It represents one continuous market sequence, not a raw archive filename, local path, download batch, or row-level provenance label.
 
 Sequential calculations including close-step returns, log returns, True Range, ATR, realized volatility, rolling speed, path, overlap pairs, alternation, and previous-window comparisons SHALL NOT treat different source segments or non-adjacent timestamps as one continuous sequence.
+
+A change from one monthly/daily archive part to another SHALL NOT itself reset sequential state when market continuity remains valid. Likewise, a validated reconstructed candle from approved same-market lower-level official data SHALL NOT itself force a segment reset when it fully repairs the continuity.
 
 The spot-to-futures transition MAY be stored as a separate source-transition diagnostic, but its price difference SHALL NOT enter ordinary path, volatility, overlap, ATR, volume-window comparison, or rolling-feature calculations.
 
