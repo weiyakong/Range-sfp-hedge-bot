@@ -126,6 +126,17 @@ The reviewed reference has 128 rows with `leg_id`, direction, start/end event id
 
 A different checksum/source requires explicit provenance review before it may be treated as the same approved anchor input.
 
+### Requirement: Macro-leg anchor market source follows the same approved spot-to-futures regime
+
+The approved `macro_legs_log20.csv` anchors SHALL be interpreted under the same market-source regime as the canonical research history:
+
+- anchors before `2019-12-31T00:00:00Z` belong to the approved Binance BTCUSDT spot source regime;
+- anchors at or after `2019-12-31T00:00:00Z` belong to the approved Binance BTCUSDT USDT-M futures source regime.
+
+Within a macro leg whose start/end anchors and required candle path lie entirely inside one valid continuous market/source segment, the source anchor prices are approved for anchor-inclusive path and efficiency calculations under this contract; no separate source-compatibility discovery step is required.
+
+A macro leg that crosses the spot-to-futures boundary SHALL preserve its original source anchor movement/duration as a retrospective macro-structure measurement, but complete sequential whole-leg path, ATR/RV-style sequential summaries, overlap sequence, and path efficiency SHALL NOT bridge the spot/futures transition as though it were one continuous traded instrument. Per-segment diagnostics MAY be retained separately.
+
 ### Requirement: Whole macro-leg measurements are first-class retrospective outputs
 
 For every approved macro leg overlapping approved candle coverage, the system SHALL calculate a whole-leg record in addition to fixed/rolling observations.
