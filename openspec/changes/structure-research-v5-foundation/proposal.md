@@ -16,23 +16,20 @@ Macro layer:
 - approved 128 `macro_legs_log20` legs
 - reviewed 138-pivot localization artifact
 - same-market official Binance `aggTrades` refinement of all localization candidate windows before exact macro production
-- exact pivot time + `agg_trade_id` only when one exact anchor-price aggTrade row exists
-- canonical 5m containment determined from that resolved aggTrade event time
+- exact source-anchor price: earliest exact aggTrade touch wins
+- no exact source-anchor price: high pivot uses highest realized aggTrade price, low pivot uses lowest realized aggTrade price
+- source anchor coordinate remains preserved separately from refined realized pivot coordinate
+- canonical 5m containment determined from resolved aggTrade event time
 - LEFT/RIGHT boundary fragments as retrospective macro-analysis entities
-- conservative fallback only when aggTrade evidence remains ambiguous.
+- conservative fallback only when one authoritative boundary time remains unresolved.
 
 ## Approved refinement source
 
-The approved source for the pre-v5 macro-boundary refinement stage is the already downloaded official Binance BTCUSDT `aggTrades` dataset for the corresponding market:
+The approved source is the already downloaded official Binance BTCUSDT `aggTrades` dataset for the corresponding market. Raw individual trade data are outside the approved calculation path unless later explicitly approved.
 
-- spot anchors -> spot `aggTrades`;
-- futures anchors -> USDT-M futures `aggTrades`.
+Every candidate localization window is scanned as half-open `[candidate_start,candidate_start+5m)`.
 
-Raw individual trade data are NOT the preferred source and are NOT part of the approved calculation path.
-
-Raw trade files already downloaded during an earlier unapproved attempt may remain on disk, but they SHALL NOT be used for pivot selection, boundary construction, feature calculation, QA truth or refinement outputs unless the user later explicitly approves that source change.
-
-If `aggTrades` are insufficient for a particular pivot or metric, preserve/report the limitation and ask for a separate source decision rather than silently switching to raw trades.
+If `aggTrades` are insufficient for a particular pivot or metric, preserve/report the limitation rather than silently switching source.
 
 ## Approved macro localization facts
 
@@ -47,40 +44,46 @@ Localization checksum:
 - 7 multiple-window pivots
 - 0 incomplete/unresolved.
 
-145 candidate windows exist in total. 142 are canonical-grid 5m windows. Three spot windows (`E00059`,`E00065`,`E00070`) inherited the proven `+20.799s` source offset and are not canonical 5m candles. They remain valid source-localization search windows, but the aggTrade stage must determine the resolved pivot coordinate and therefore its true canonical 5m containment.
+145 candidate windows exist in total. 142 are canonical-grid 5m windows. Three spot windows (`E00059`,`E00065`,`E00070`) inherited the proven `+20.799s` source offset and remain source-localization windows only.
 
 Localization is not treated as exact pivot timing.
 
 ## Exact macro measurement principle
 
-When both endpoints are uniquely resolved at approved aggTrade-source granularity:
-- whole-leg duration/speed use the resolved aggTrade event times/prices;
+When both endpoint times are deterministically resolved at approved aggTrade-source granularity:
+- whole-leg duration/speed use refined realized event times/prices;
 - one whole-leg speed exists;
-- macro path at each TF uses exact start price, chronological canonical closes at that TF, and exact end price;
+- macro path at each TF uses refined start price, chronological canonical closes at that TF, and refined end price;
 - aggTrade-level LEFT/RIGHT path remains separate microstructure;
 - macro volume/activity uses non-overlapping boundary fragments + complete interior intervals.
 
 Canonical fixed candles are never split/replaced.
 
-An aggTrade is an indivisible approved source record. If a pivot aggTrade contains multiple underlying raw trades, the pipeline must not invent their internal timestamps/order/volume split. That boundary carries an explicit aggregate-source precision flag.
+An aggTrade is indivisible. If it contains multiple underlying raw trades, the pipeline does not invent internal timestamps/order/volume split.
 
-If aggTrade touches remain ambiguous, exact endpoint-dependent metrics stay null and only the guaranteed fallback interior is aggregated.
+If one authoritative boundary time remains unresolved, exact endpoint-dependent metrics stay null and only guaranteed fallback interior is aggregated. If no guaranteed interior slot exists, boundary-dependent fallback metrics are null.
 
 ## Source timestamp integrity
 
-Non-minute source timestamps do not automatically mean missing data.
-
-The proven December-2017 `+20.799s` local spot kline series is a required regression case: a continuous 60-second source series must be classified as off-grid source data, not 1440 missing minutes. Canonicalization may occur only under a proven source-specific mapping with raw provenance retained.
+Non-minute source timestamps do not automatically mean missing data. Proven off-grid source series require source-specific mapping with raw provenance retained.
 
 ## Price identity
 
-Relevant audited BTCUSDT spot/futures/macro prices have maximum two significant decimal places.
+Relevant audited BTCUSDT spot/futures/macro prices have maximum two fractional decimal places after exact decimal normalization.
 
-Use Decimal/string parsing and exact integer `price_units=price*100`; binary float identity/nearest-price matching is prohibited. New approved aggTrade evidence with >2 significant decimals fails QA rather than being rounded silently.
+Use Decimal/string parsing and exact integer `price_units=price*100`; binary float identity/nearest-price matching is prohibited. New approved aggTrade evidence that cannot be represented exactly at scale 2 fails QA rather than being rounded silently.
+
+## Volatility
+
+Materialize both approved ATR14 forms:
+- `atr14_sma`
+- `atr14_wilder`.
+
+Both initialize only after 14 consecutive valid TR values. A real gap/source boundary resets continuity; the first following TR is null when there is no valid adjacent previous close, and both ATR series reinitialize from a new run of 14 valid TR values.
 
 ## Retracement
 
-First-pass retracement is specifically the following opposite-direction macro leg relative to the immediately preceding macro leg when they share one pivot.
+First-pass retracement is the following opposite-direction macro leg relative to the immediately preceding macro leg when they share one pivot.
 
 The approved 128-leg source yields 118 production retracement relationships; 9 adjacent transitions are discontinuous and excluded.
 
@@ -110,8 +113,6 @@ Deferred:
 - Elliott
 - macro RV
 - broad full-history tick path reconstruction.
-
-Later, after macro analysis identifies meaningful internal-leg/correction boundaries, the same approved boundary method may be applied selectively to those boundaries.
 
 ## Availability
 
