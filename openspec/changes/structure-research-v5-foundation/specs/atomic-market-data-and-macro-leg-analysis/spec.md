@@ -2,150 +2,99 @@
 
 ## Purpose
 
-Ensure one approved Structure Research v5 run preserves enough atomic market data and exact/fallback macro-leg measurements to analyze movement behavior later without inventing missing semantics.
+Ensure one approved Structure Research v5 run preserves enough atomic market data and refined/fallback macro-leg measurements to analyze movement behavior later without inventing missing semantics.
 
 ## Canonical market coverage
 
-The production dataset targets the full approved BTC history. The canonical 1m chronology is:
-
+The production dataset targets the full approved BTC history. Canonical 1m chronology:
 - Binance BTCUSDT spot before `2019-09-08T17:57:00Z`;
 - Binance BTCUSDT USDT-M futures from `2019-09-08T17:57:00Z`;
-- the native futures 19:00 gap remains a real canonical gap;
+- native futures 19:00 remains a real canonical gap;
 - post-boundary spot is provenance only;
 - synthetic diagnostic rows never satisfy canonical completeness.
 
-A `source_segment_id` identifies continuous same-market canonical 1m data. Archive/provenance changes alone do not split continuity.
-
-Canonical `5m/15m/1H/4H/1D` are derived from strict canonical 1m. Native higher-TF data are QA/reference unless explicitly approved otherwise.
+A `source_segment_id` identifies continuous same-market canonical 1m data. Archive/provenance changes alone do not split continuity. Canonical `5m/15m/1H/4H/1D` derive strictly from canonical 1m.
 
 ## Timestamp-source validation
 
-Canonical 1m starts are exactly on the UTC minute grid, but source validation SHALL distinguish:
-
-1. true absence of source bars;
-2. a continuous 60-second source series whose stored timestamps are consistently off-grid.
-
-The December-2017 spot source proved that a full 1m series can be stored with `open_time` offset `+20.799s`; such a series SHALL NOT be counted as 1440 missing minutes merely because timestamps are not `:00`.
-
-Off-grid rows SHALL NOT be silently rounded. The source-specific canonicalization rule must first be proven from continuity/provenance and recorded. True gaps remain gaps.
+Canonical 1m starts are on the UTC minute grid, but source validation distinguishes true absence from continuous off-grid source timestamps. The proven December-2017 `+20.799s` series SHALL NOT be counted as 1440 missing minutes. Off-grid rows are not silently rounded; source-specific mapping must be proven and preserved as provenance.
 
 ## Approved macro source and localization
 
-Macro legs use the approved `macro_legs_log20.csv`, SHA-256:
+Approved macro source: `macro_legs_log20.csv`, SHA-256 `c7f7166a72f57ee9af75ddc0d5711d45d8371b546d83c10cdc77bc129523d0d3`, 128 legs.
 
-`c7f7166a72f57ee9af75ddc0d5711d45d8371b546d83c10cdc77bc129523d0d3`
+Reviewed localization: `macro_pivots_5m_all.csv`, SHA-256 `77a6fa1339794a96ddff327e038d66b17347914dcfa8fbb0d9a90765fd3900bc`, 138 pivots: 131 unique-window, 7 multiple-window, 0 unresolved. There are 145 candidate windows, 142 canonical-grid and three off-grid source-localization windows E00059/E00065/E00070 with +20.799s starts.
 
-with 128 legs.
-
-The reviewed localization artifact is `macro_pivots_5m_all.csv`, SHA-256:
-
-`77a6fa1339794a96ddff327e038d66b17347914dcfa8fbb0d9a90765fd3900bc`
-
-with 138 unique macro pivots:
-
-- 131 unique localization windows;
-- 7 pivots with two localization windows;
-- no incomplete/unresolved pivots.
-
-There are 145 distinct candidate windows. 142 are canonical-grid 5m windows. Three spot windows (`E00059`, `E00065`, `E00070`) inherited the proven `+20.799s` source timestamp offset and are not canonical 5m candles. Trade refinement must resolve the exact pivot and canonical 5m containment for those three; the off-grid start is retained only as source localization evidence.
-
-This localization artifact supplies anchor-level source precision/market/refinement fields. Per-leg `duration_precision` is preserved as source leg provenance and SHALL NOT be copied blindly onto each anchor.
+Every candidate window is scanned as half-open `[candidate_start,candidate_start+5m)`.
 
 ## Trade refinement precedes exact macro production
 
-Localization is not exact event timing. Before exact macro-leg duration/path/speed/membership are materialized, all approved candidate windows SHALL be refined with same-market official Binance trade evidence according to `macro-trade-boundary-refinement`.
+Localization is not exact event timing. Refinement uses only approved same-market official Binance `aggTrades` according to `macro-trade-boundary-refinement`.
 
-A unique exact touch must be identified by exact price plus deterministic native sequence identity. Timestamp alone is insufficient when multiple source records share one event time.
+For each anchor:
+- preserve all exact source-anchor-price aggTrade touches;
+- if one or more exact touches exist with complete approved coverage, select the earliest by `(event_time,agg_trade_id)`;
+- if no exact touch exists, a high pivot selects the maximum realized aggTrade price and a low pivot selects the minimum realized aggTrade price across all approved candidate windows;
+- preserve every aggTrade row attaining the selected directional extremum;
+- if the selected extremum occurs once, its event time/id resolve the pivot;
+- if the selected extremum repeats, refined realized price is known but authoritative time/id remain unresolved until a separate tie-break rule is explicitly approved.
 
-If multiple exact touches remain, no first/last/nearest touch is selected automatically.
+Multiple exact touches are therefore not ambiguous: earliest exact touch wins while all touches remain evidence.
 
 ## Price identity
 
-Parse prices from exact decimal strings/`Decimal`. Relevant audited spot/futures/macro prices have at most two significant decimal places.
+Parse prices from exact decimal strings/`Decimal`. Relevant approved prices must be exactly representable with no more than two fractional decimal places after exact decimal normalization.
 
-Use integer:
+Use `price_units = exact_decimal_price * 100` as integer identity. If new approved aggTrade evidence requires greater scale, fail precision QA rather than rounding.
 
-`price_units = exact_decimal_price * 100`.
+## Refined macro boundaries and fragments
 
-If new official trade evidence cannot be represented exactly at two decimals, fail precision QA instead of rounding silently.
+When one authoritative pivot aggTrade key exists:
+- resolved time/id/price become the refined macro boundary coordinate;
+- original source anchor time/price remain separately preserved;
+- canonical 5m containment derives from the resolved event time;
+- canonical candles remain unchanged;
+- LEFT/RIGHT boundary fragments are created;
+- pivot aggTrade belongs LEFT once;
+- RIGHT starts from resolved pivot price state but excludes pivot aggTrade from its source-row volume/count.
 
-## Exact macro boundaries and fragments
+For higher resolutions, fragments compose from the trade-resolved partial canonical 5m piece plus complete canonical 5m candles to the enclosing boundary. A macro metric never includes both a full boundary candle and its partial fragment.
 
-When a pivot has one exact trade touch:
+## Bounded aggTrade access
 
-- exact pivot time and native sequence id become the macro boundary;
-- exact pivot is mapped to the canonical 5m candle that contains it;
-- canonical fixed candles remain unchanged;
-- a LEFT and RIGHT boundary fragment are created for macro analysis;
-- the pivot source record's volume/count belongs to LEFT exactly once;
-- RIGHT starts from the pivot price state but excludes the pivot source record from its own trade volume/count.
+Anchor and fragment processing SHALL NOT repeatedly load whole daily/monthly aggTrade archives.
 
-For higher resolutions, boundary fragments are composed from the trade-resolved partial canonical 5m piece plus complete canonical 5m candles up to the enclosing resolution boundary. No extra trade download for an entire 15m/1H/4H/1D interval is required.
+- candidate refinement reads only rows needed for the candidate window(s);
+- canonical 5m fragment construction reads only the complete required `[B0,B1)` bucket;
+- higher-TF composition uses that 5m fragment plus canonical 5m data, not larger aggTrade rescans;
+- identical source buckets/windows encountered repeatedly within a pass should be cached/reused where practical;
+- per-anchor/per-fragment helpers must be streaming/range-filtered/partition-pruned and bounded in memory.
 
-A macro metric never includes both a full boundary candle and its partial boundary fragment.
+For ZIP/CSV aggTrade archives, fragment-stage access SHALL use a robust streaming parser/filter that can select the required 5m bucket without materializing the whole archive. A pandas full-file parser/read is prohibited inside the per-anchor/per-fragment hot loop. Parser failure must be surfaced explicitly; it may not trigger raw-trade fallback.
 
-## Macro whole-leg duration and speed
+## Macro duration, speed and path
 
-When both endpoint pivots are exact, whole-leg duration is the exact time difference and whole-leg speed is calculated once from the exact endpoint prices/times.
+When both endpoint times are deterministically resolved, whole-leg duration is exact time difference and whole-leg speed is calculated once from refined endpoint prices/times. Original source duration/speed remains separate retrospective provenance.
 
-Original source duration/speed from `macro_legs_log20` remains separately preserved as retrospective source-coordinate provenance.
+At resolution `R`, refined macro path sequence is:
+- `Q0 = refined start pivot price`;
+- chronological closes of complete canonical `R` candles with `start_pivot_time < candle.end_time <= end_pivot_time`;
+- append refined end pivot price if needed.
 
-Timeframe-specific features describe how the leg evolved internally; they do not create different definitions of whole-leg speed.
+Trade-fragment path remains separate `trade_*` microstructure and is never added to TF close path.
 
-## Macro path
+## Unresolved-time fallback
 
-Trade-level fragment path and timeframe close-path are different measurements and SHALL NOT be added together.
+If authoritative pivot time remains unresolved/unavailable, exact duration/speed/boundary-dependent metrics remain null. Fallback uses only canonical fixed-grid intervals guaranteed to lie between all possible boundary occurrences.
 
-For exact macro path at calculation resolution `R`:
-
-- `Q0` = exact start pivot price;
-- then chronological closes of complete canonical `R` candles with `start_pivot_time < candle.end_time <= end_pivot_time`;
-- append exact end pivot price if needed.
-
-This same sequence defines close path, log path, displacement, efficiency, directional path and alternation at `R`.
-
-Trade-level LEFT/RIGHT path remains separately named `trade_*` microstructure data.
-
-## Ambiguity fallback
-
-Exact trade refinement is the primary path.
-
-If a pivot remains ambiguous/unavailable after trade refinement, exact duration/speed/boundary-dependent metrics remain null. Fallback macro metrics may use only canonical calculation intervals guaranteed to lie between all possible boundary touches.
-
-For fallback constituents `B1...Bn`, the sequence begins at `Q0=open(B1)` followed by each `close(Bi)`, so the first eligible candle's open-to-close movement is retained.
-
-At resolution `R`, expected fallback count is the number of fixed-grid `R` slots wholly contained in the unambiguous interval, not `duration/R`.
-
-Persist measured start/end of the actual eligible constituent sequence.
+For fallback constituents `B1...Bn`, `Q0=open(B1)` followed by each `close(Bi)`. Expected count is the number of wholly contained fixed-grid slots, not `duration/R`. If no guaranteed slot exists, expected/observed counts are zero and boundary-dependent fallback metrics are null with explicit `no_unambiguous_interior` status.
 
 ## Macro overlap/volume/activity
 
-For exact boundaries, resolution-dependent macro summaries use the non-overlapping union:
+For resolved boundaries use non-overlapping union: start RIGHT fragment + complete interior canonical intervals + end LEFT fragment. For unresolved boundaries use only guaranteed fallback set. Macro RV remains deferred.
 
-start RIGHT boundary fragment
-+ complete interior canonical intervals
-+ end LEFT boundary fragment.
+## Historical provenance, availability and retracement
 
-For ambiguous boundaries, only the fallback unambiguous set contributes.
+Historical old-source provenance and current canonical market remain separate. Macro entities are retrospective with `available_at=null` and excluded from causal extraction.
 
-Macro RV remains deferred in this pass.
-
-## Historical provenance vs canonical market
-
-Historical old-source provenance and current canonical market scope are separate facts. Late-2019 macro provenance may be mixed while canonical market type is futures.
-
-## Retrospective availability
-
-Macro legs/anchors/trade refinement/fragments/retracements are retrospective research entities with `availability_class=retrospective`, `available_at=null`. Causal extraction excludes them.
-
-## Retracement
-
-First-pass macro retracement is defined for consecutive opposite-direction macro legs sharing a pivot:
-
-`A -> B` followed immediately by `B -> C`.
-
-Retracement of `B->C` is measured relative to the preceding `A->B`.
-
-In the approved 128-leg file, 118 of 127 adjacent transitions share one boundary pivot and are opposite-direction; these 118 are the production retracement relationships. The 9 discontinuous transitions are excluded.
-
-No Fibonacci labeling is produced.
+First-pass retracement applies to consecutive opposite-direction macro legs sharing a pivot. Approved source contains 118 such relationships among 127 adjacent transitions; 9 discontinuous transitions excluded. No Fibonacci labeling.
