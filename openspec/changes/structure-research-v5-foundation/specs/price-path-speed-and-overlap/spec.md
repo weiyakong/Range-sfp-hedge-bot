@@ -18,6 +18,36 @@ For an observation starting at price `P0` and ending at price `P1`:
 
 Undefined divisions SHALL be stored as null with an explicit null meaning, not replaced by zero.
 
+### Requirement: Log-scale movement is preserved alongside ordinary price and percentage movement
+
+For strictly positive start and end prices, the system SHALL calculate:
+
+- `signed_log_move = ln(P1 / P0)`
+- `absolute_log_move = abs(signed_log_move)`
+
+Ordinary USD change and ordinary percentage return SHALL remain available for human interpretation, but log-scale movement SHALL be preserved for cross-era and up-versus-down comparisons of large market moves.
+
+If a display-scaled log value is exported as `100 * signed_log_move`, its name and feature-dictionary entry SHALL make clear that it is a scaled log return and not an ordinary percentage return.
+
+#### Scenario: Reciprocal up and down moves are compared
+
+* **GIVEN** one move changes price by a multiplicative factor `k`
+* **AND** another move reverses that factor by changing price by `1/k`
+* **WHEN** log-scale movement is calculated
+* **THEN** the two signed log moves SHALL have equal absolute magnitude and opposite signs
+* **AND** the system SHALL retain ordinary percentage returns separately rather than treating log return as ordinary percent change.
+
+### Requirement: Global macro-leg comparison includes log-scale movement and speed
+
+For every approved existing macro leg with positive prices and positive duration, the research output SHALL preserve `signed_log_move`, `absolute_log_move`, and time-normalized log-speed measures such as:
+
+- `signed_log_speed_per_day = signed_log_move / duration_days`
+- `absolute_log_speed_per_day = absolute_log_move / duration_days`
+
+Equivalent per-hour fields MAY be stored where useful, but units SHALL be explicit.
+
+No threshold on log move or log speed SHALL classify a leg as impulse or correction in the first pass.
+
 ### Requirement: Local direction is a mechanical sign, not a semantic class
 
 For an observation window:
@@ -40,11 +70,23 @@ Where local-direction-normalized speed is required, the system SHALL store it un
 
 Where macro-direction-aligned speed is calculated from an approved macro direction, it SHALL be stored under a separate explicitly macro-aligned name.
 
+### Requirement: Log speed is available for multiplicative price comparison
+
+For strictly positive prices and non-zero duration, the system SHALL support time-normalized log speed:
+
+`signed_log_speed = ln(P1 / P0) / elapsed_time`.
+
+Its absolute version SHALL be available for direction-neutral comparison of movement magnitude per unit time.
+
+Log speed SHALL be stored separately from ordinary percentage-per-time speed because the two measures are numerically different for large moves.
+
 ### Requirement: Rolling recent speed is measured over approved durations
 
 At each eligible closed observation point `t`, rolling speed for duration `W` SHALL use the price at the start of the eligible rolling interval and the price at `t`, with the result normalized by the actual elapsed hours.
 
 Approved rolling durations are defined by the time contract: `30m`, `1h`, `4h`, `12h`, `24h`, and `3d` where supported by the calculation resolution and coverage.
+
+Where both ordinary percentage speed and log speed are exported, their names and units SHALL remain distinct.
 
 ### Requirement: Numeric speed change and acceleration remain unlabeled
 
@@ -55,6 +97,8 @@ For two consecutive non-overlapping windows of equal duration `W`:
 When time-normalized acceleration is exported:
 
 `acceleration_W = speed_change_W / W_hours`.
+
+The same change/acceleration logic MAY be applied to log speed under explicitly log-named fields.
 
 The first-pass output SHALL store numeric values and SHALL NOT convert them into threshold-based `accelerating` or `decelerating` labels.
 
@@ -68,6 +112,14 @@ For a larger observation measured through a finer candle resolution, close-path 
 
 The system SHALL NOT assume an unsupported sequence such as `open -> high -> low -> close` inside a candle.
 
+### Requirement: Log close-path is available for cross-era path comparison
+
+For a sequence of strictly positive prices `P_0 ... P_n` at an approved finer resolution:
+
+`log_close_path = sum(abs(ln(P_i / P_(i-1))))`.
+
+This SHALL be stored separately from dollar close-path and SHALL preserve the finer calculation resolution used.
+
 ### Requirement: Path is measured at multiple approved resolutions
 
 Where source coverage permits, the system SHALL calculate:
@@ -79,6 +131,8 @@ Where source coverage permits, the system SHALL calculate:
 
 Each path metric SHALL identify both the observation interval and the finer calculation resolution.
 
+Where log-path is available, the same observation and calculation resolutions SHALL be identifiable.
+
 ### Requirement: Path efficiency is net displacement divided by close-path
 
 For non-zero `close_path`:
@@ -89,6 +143,14 @@ A signed/local-direction-aware companion MAY be stored, but SHALL be explicitly 
 
 If `close_path == 0`, the efficiency SHALL be null unless a later approved contract explicitly defines another convention.
 
+### Requirement: Log path efficiency is preserved for multiplicative comparison
+
+For positive prices and non-zero `log_close_path`:
+
+`log_path_efficiency = absolute_log_move / log_close_path`.
+
+The system SHALL preserve ordinary path efficiency and log path efficiency as separate fields. Neither SHALL be used as a first-pass impulse/correction threshold.
+
 ### Requirement: Local-direction path components are separate from macro-direction path components
 
 For a non-flat observation, let `d_local = sign(P1 - P0)` and let each finer close-to-close step be `delta_i`.
@@ -98,6 +160,8 @@ For a non-flat observation, let `d_local = sign(P1 - P0)` and let each finer clo
 - `counter_local_path_share = path_against_local_direction / close_path` when `close_path > 0`.
 
 If equivalent metrics are calculated relative to an approved macro direction, they SHALL use separate names such as `path_with_macro_direction` and `path_against_macro_direction`.
+
+Equivalent log-step direction components MAY be stored for cross-era comparison, but SHALL use explicitly log-prefixed names.
 
 ### Requirement: Alternation is measured from observed finer-step signs
 
