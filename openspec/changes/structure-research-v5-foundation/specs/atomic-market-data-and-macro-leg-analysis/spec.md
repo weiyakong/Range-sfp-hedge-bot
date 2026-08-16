@@ -29,7 +29,7 @@ The December-2017 spot source proved that a full 1m series can be stored with `o
 
 Off-grid rows SHALL NOT be silently rounded. The source-specific canonicalization rule must first be proven from continuity/provenance and recorded. True gaps remain gaps.
 
-## Approved macro source and 5m localization
+## Approved macro source and localization
 
 Macro legs use the approved `macro_legs_log20.csv`, SHA-256:
 
@@ -37,21 +37,23 @@ Macro legs use the approved `macro_legs_log20.csv`, SHA-256:
 
 with 128 legs.
 
-The reviewed 5m localization artifact is `macro_pivots_5m_all.csv`, SHA-256:
+The reviewed localization artifact is `macro_pivots_5m_all.csv`, SHA-256:
 
 `77a6fa1339794a96ddff327e038d66b17347914dcfa8fbb0d9a90765fd3900bc`
 
 with 138 unique macro pivots:
 
-- 131 unique 5m candidates;
-- 7 pivots with two 5m candidates;
+- 131 unique localization windows;
+- 7 pivots with two localization windows;
 - no incomplete/unresolved pivots.
+
+There are 145 distinct candidate windows. 142 are canonical-grid 5m windows. Three spot windows (`E00059`, `E00065`, `E00070`) inherited the proven `+20.799s` source timestamp offset and are not canonical 5m candles. Trade refinement must resolve the exact pivot and canonical 5m containment for those three; the off-grid start is retained only as source localization evidence.
 
 This localization artifact supplies anchor-level source precision/market/refinement fields. Per-leg `duration_precision` is preserved as source leg provenance and SHALL NOT be copied blindly onto each anchor.
 
 ## Trade refinement precedes exact macro production
 
-The 5m localization is not exact event timing. Before exact macro-leg duration/path/speed/membership are materialized, the approved candidate 5m intervals SHALL be refined with same-market official Binance trade evidence according to `macro-trade-boundary-refinement`.
+Localization is not exact event timing. Before exact macro-leg duration/path/speed/membership are materialized, all approved candidate windows SHALL be refined with same-market official Binance trade evidence according to `macro-trade-boundary-refinement`.
 
 A unique exact touch must be identified by exact price plus deterministic native sequence identity. Timestamp alone is insufficient when multiple source records share one event time.
 
@@ -72,12 +74,13 @@ If new official trade evidence cannot be represented exactly at two decimals, fa
 When a pivot has one exact trade touch:
 
 - exact pivot time and native sequence id become the macro boundary;
+- exact pivot is mapped to the canonical 5m candle that contains it;
 - canonical fixed candles remain unchanged;
 - a LEFT and RIGHT boundary fragment are created for macro analysis;
 - the pivot source record's volume/count belongs to LEFT exactly once;
 - RIGHT starts from the pivot price state but excludes the pivot source record from its own trade volume/count.
 
-For higher resolutions, boundary fragments are composed from the trade-resolved partial 5m piece plus complete canonical 5m candles up to the enclosing resolution boundary. No extra trade download for an entire 15m/1H/4H/1D interval is required.
+For higher resolutions, boundary fragments are composed from the trade-resolved partial canonical 5m piece plus complete canonical 5m candles up to the enclosing resolution boundary. No extra trade download for an entire 15m/1H/4H/1D interval is required.
 
 A macro metric never includes both a full boundary candle and its partial boundary fragment.
 
@@ -107,7 +110,7 @@ Trade-level LEFT/RIGHT path remains separately named `trade_*` microstructure da
 
 Exact trade refinement is the primary path.
 
-If a pivot remains ambiguous/unavailable after trade refinement, exact duration/speed/boundary-inclusive metrics remain null. Fallback macro metrics may use only canonical calculation intervals guaranteed to lie between all possible boundary touches.
+If a pivot remains ambiguous/unavailable after trade refinement, exact duration/speed/boundary-dependent metrics remain null. Fallback macro metrics may use only canonical calculation intervals guaranteed to lie between all possible boundary touches.
 
 For fallback constituents `B1...Bn`, the sequence begins at `Q0=open(B1)` followed by each `close(Bi)`, so the first eligible candle's open-to-close movement is retained.
 
