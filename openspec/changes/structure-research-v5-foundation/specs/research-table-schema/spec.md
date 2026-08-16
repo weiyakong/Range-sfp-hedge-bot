@@ -38,7 +38,8 @@ At minimum:
 - completeness: `complete`, `incomplete_gap`, `incomplete_boundary`, `invalid`
 - historical macro provenance: `spot`, `futures`, `mixed`, `unknown`
 - source anchor precision: `exact`, `1m_bucket`, `5m_bucket`, `15m_bucket`, `1H_bucket`, `4H_bucket`, `1D_bucket`, `unknown`
-- 5m localization status: `unique_5m_match`, `multiple_5m_matches`, `no_5m_match`, `incomplete_5m_search_coverage`, `unresolved`
+- localization status: `unique_5m_match`, `multiple_5m_matches`, `no_5m_match`, `incomplete_5m_search_coverage`, `unresolved`
+- localization window kind: `canonical_5m`, `off_grid_source_5m`
 - trade refinement status: `exact_unique_trade_touch`, `multiple_exact_trade_touches`, `no_exact_trade_touch`, `incomplete_trade_coverage`, `source_unavailable`, `not_attempted`.
 
 Unknown future values remain explicit and are never silently coerced.
@@ -73,22 +74,26 @@ Required fields separate every precision layer instead of overwriting one pair o
 
 - identity: `macro_anchor_id`, `macro_source_checksum`, `source_event_id`
 - source facts: `source_anchor_time`, `source_anchor_price`, `source_anchor_price_units`, `anchor_extreme_type`
-- anchor-level provenance from approved localization artifact: `source_time_precision`, `source_market`, `source_parent_market`, `source_refinement_market`, `source_refinement_timeframe`, `historical_source_classification`
+- anchor-level provenance from reviewed localization artifact: `source_time_precision`, `source_market`, `source_parent_market`, `source_refinement_market`, `source_refinement_timeframe`, `historical_source_classification`
 - original source uncertainty: `source_possible_time_start`, `source_possible_time_end`
-- approved 5m localization: `localization_5m_status`, `candidate_5m_count`, `candidate_5m_start_times`, nullable `localized_5m_start_time`, `localized_5m_end_time`, localization artifact checksum
+- reviewed localization: `localization_status`, `candidate_window_count`, `candidate_window_start_times`, `candidate_window_end_times`, `candidate_window_kinds`, localization artifact checksum
+- known anomaly flag for windows inherited from off-grid source timestamps
 - trade refinement: `trade_refinement_status`, `trade_source_granularity`, `trade_touch_count`, `first_trade_touch_time`, `last_trade_touch_time`
+- canonical exact containment after trade resolution: `canonical_pivot_5m_start_time`, `canonical_pivot_5m_end_time`
 - exact boundary only when unique: `exact_pivot_time`, `exact_pivot_sequence_id`
 - fallback uncertainty after all available evidence: `refined_possible_time_start`, `refined_possible_time_end`, `boundary_uncertainty_seconds`
 - evidence/provenance/checksums
 - `availability_class=retrospective`, `available_at=null`
 - schema/run provenance.
 
-The approved 5m localization artifact, not per-leg `duration_precision`, supplies anchor-level source precision/provenance. The original per-leg `duration_precision` remains a source-leg field only.
+The reviewed localization artifact, not per-leg `duration_precision`, supplies anchor-level source precision/provenance. The original per-leg `duration_precision` remains a source-leg field only.
+
+The current localization artifact contains 145 distinct candidate windows. 142 are canonical-grid 5m windows. Three (`E00059`, `E00065`, `E00070`) are 5-minute off-grid source-localization windows with `+20.799s`; they SHALL NOT populate canonical 5m fields until official trade evidence locates the exact pivot and therefore its actual canonical 5m candle.
 
 A shared pivot is referenced by both adjacent legs through the same `macro_anchor_id`.
 
 ### `macro_trade_touches`
-One row per exact matching source trade/aggTrade touch considered for an anchor. Primary key may be `(macro_anchor_id,candidate_5m_start_time,event_time,native_sequence_id)`. Preserve price/price_units, source market, granularity, native ids, first/last underlying trade ids where present, artifact/checksum and eligibility.
+One row per exact matching source trade/aggTrade touch considered for an anchor. Primary key may be `(macro_anchor_id,candidate_window_start,event_time,native_sequence_id)`. Preserve price/price_units, source market, granularity, native ids, first/last underlying trade ids where present, artifact/checksum and eligibility.
 
 ### `macro_boundary_fragments`
 One row per authoritative exact LEFT/RIGHT boundary fragment and calculation resolution when a unique trade pivot exists.
