@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the preparatory aggregate-trade refinement required before Structure Research v5 assigns exact macro-leg boundaries. The approved macro segmentation remains unchanged; this stage only determines where each approved macro pivot occurred inside its already-localized candidate window(s), preserves ambiguity when equal extrema repeat, and prepares boundary fragments for later macro calculations.
+Define the preparatory aggregate-trade refinement required before Structure Research v5 assigns macro-leg boundaries. The approved macro segmentation remains unchanged. This stage refines each approved macro pivot inside its reviewed source-localization window(s), preserves all supporting aggTrade evidence, and prepares retrospective boundary fragments for later macro calculations.
 
 ## Approved prerequisite inputs
 
@@ -28,7 +28,9 @@ Important source anomaly: 142 candidate starts are on the canonical 5m grid, but
 - `E00065`: `2017-12-10T04:30:20.799Z`
 - `E00070`: `2017-12-17T12:10:20.799Z`.
 
-The refinement stage SHALL use the approved existing same-market official Binance `aggTrades` stream covering each complete source-localization window, locate all exact anchor-price touches, and then record the canonical 5m candle containing the resolved touch when resolution is unique at aggTrade-source granularity. It SHALL NOT pretend an off-grid source-window start is a canonical 5m candle start.
+Every source-localization candidate is scanned as a half-open five-minute interval `[candidate_start, candidate_start + 5m)`. A stored historical end such as `...59.999` is provenance only and SHALL NOT change half-open scan semantics.
+
+The refinement stage SHALL use the approved existing same-market official Binance `aggTrades` stream covering each complete source-localization window. It SHALL NOT pretend an off-grid source-window start is a canonical 5m candle start.
 
 The localization artifact, rather than per-leg `duration_precision`, is the approved anchor-level source for `source_time_precision`, `source_market`, `source_refinement_market`, and `source_refinement_timeframe`.
 
@@ -61,7 +63,9 @@ Preserve at minimum where supplied by the source:
 - first underlying trade id;
 - last underlying trade id;
 - event time;
-- maker-side source field.
+- source field `m` under an unambiguous canonical name such as `buyer_is_maker`.
+
+For Binance aggTrades, `m` means whether the buyer is the market maker. Do not rename it to a vague generic `maker_side` field.
 
 The deterministic source ordering key is:
 
@@ -75,9 +79,9 @@ Any timestamp/sequence exactness claimed by this stage means exact at the approv
 
 ### Requirement: Exact price identity uses Decimal/fixed point, never binary float
 
-The completed candle audit established a maximum of two significant decimal places for relevant BTCUSDT spot/futures prices and macro anchor prices.
+The completed candle audit established a maximum of two fractional decimal places for relevant BTCUSDT spot/futures prices and macro anchor prices.
 
-Parse price from the source decimal string/`Decimal`, verify that no relevant approved `aggTrades` price has more than two significant decimal places, and then use:
+Parse price from the source decimal string/`Decimal`, verify that no relevant approved `aggTrades` price has more than two non-zero fractional decimal places after exact decimal normalization, and then use:
 
 `price_units = exact_decimal_price * 100`
 
@@ -88,47 +92,72 @@ Examples:
 - `4039.79000000` -> `403979`;
 - `13918.04` -> `1391804`.
 
-If a relevant official `aggTrades` price cannot be represented exactly at `N=2`, fail the precision QA and stop rather than round silently.
+If a relevant official `aggTrades` price cannot be represented exactly at scale 2, fail the precision QA and stop rather than round silently.
 
 ## Pivot refinement
 
-### Requirement: Trade refinement never changes macro structure
+### Requirement: Trade refinement preserves source macro structure but refines the realized pivot coordinate
 
-The stage SHALL NOT create new macro pivots, delete pivots, move an anchor to a different price, alter leg direction, or create impulse/correction labels.
+The stage SHALL NOT create new macro pivots, delete pivots, alter leg ordering, alter source leg direction, or create impulse/correction labels.
 
-It refines only the time/sequence location of the approved anchor price inside approved candidate window(s).
+The approved source macro anchor price/time remains preserved under explicit `source_*` fields.
 
-### Requirement: All exact anchor-price aggTrade touches are preserved
+The refinement stage MAY assign a resolved realized pivot price/time from approved aggTrade evidence according to the deterministic rules below. When no exact source-anchor price is traded, the resolved realized price is the directional extremum reached inside the approved candidate window(s), while the original source anchor price remains unchanged as provenance.
 
-For each macro anchor, scan every approved candidate window and collect every eligible `aggTrades` row whose exact `price_units` equals the anchor `price_units`.
+### Requirement: All exact source-anchor price aggTrade touches are preserved
+
+For each macro anchor, scan every approved candidate window and collect every eligible `aggTrades` row whose exact `price_units` equals the source anchor `price_units`.
+
+All matching rows are preserved in deterministic `(event_time, agg_trade_id)` order.
+
+If one or more exact matching rows exist with complete approved aggTrade coverage, the resolved pivot is the earliest exact touch by that ordering key.
+
+Therefore multiple exact touches are evidence, not ambiguity: preserve their count and every row, but select the earliest exact touch as the authoritative resolved pivot.
+
+### Requirement: If no exact touch exists, resolve by the furthest directional extremum
+
+With complete approved aggTrade coverage and no exact source-anchor price touch:
+
+- for a `high` pivot, resolved pivot price is the maximum eligible aggTrade price across all approved candidate windows;
+- for a `low` pivot, resolved pivot price is the minimum eligible aggTrade price across all approved candidate windows.
+
+This is the furthest realized extremum in the direction of the pivot, not the nearest price to the source anchor.
+
+Preserve the source anchor price separately and preserve every aggTrade row that attains the selected directional extremum.
+
+If the selected extremum price occurs exactly once, its `(event_time, agg_trade_id)` becomes the resolved pivot coordinate.
+
+If the selected extremum price occurs more than once, the resolved realized pivot price is known but the authoritative time/sequence remains unresolved until a separate explicit tie-break rule is approved. Do not silently choose first/last/nearest among repeated equal extrema.
+
+### Requirement: Refinement statuses are explicit
 
 Refinement statuses include at minimum:
 
-- `exact_unique_trade_touch`: exactly one eligible matching aggTrade row across all candidate windows and complete approved source coverage;
-- `multiple_exact_trade_touches`: two or more eligible matching aggTrade rows; preserve all and do not choose first/last/nearest;
-- `no_exact_trade_touch`;
+- `exact_trade_touch_resolved`: one or more exact source-anchor price touches exist with complete approved source coverage; earliest exact touch selected;
+- `extreme_trade_price_resolved`: no exact touch exists, complete approved source coverage exists, directional extremum occurs once and resolves price/time/sequence;
+- `repeated_extreme_trade_price`: no exact touch exists, complete approved source coverage exists, directional extremum price occurs multiple times; resolved realized price known but time/sequence unresolved;
 - `incomplete_trade_coverage`;
 - `source_unavailable`.
 
-The status names are retained for schema compatibility, but `trade_source_granularity=agg_trade` SHALL make clear that uniqueness/exactness is at aggregate-source resolution, not reconstructed raw-trade resolution.
+A unique 5m localization window does not itself imply a resolved aggTrade pivot.
 
-A unique 5m localization window does not imply a unique aggTrade touch.
+### Requirement: Resolved pivot coordinate is materialized only when deterministic at approved aggTrade granularity
 
-### Requirement: Exact pivot coordinate is materialized only for one unique aggTrade touch
+For `exact_trade_touch_resolved` and `extreme_trade_price_resolved`, preserve:
 
-For `exact_unique_trade_touch`, preserve:
-
-- `exact_pivot_time` = matching aggTrade event time;
-- `exact_pivot_sequence_id` = matching `agg_trade_id`;
-- exact anchor price/price units;
-- canonical 5m candle start/end containing that event time;
+- `resolved_pivot_time` = selected aggTrade event time;
+- `resolved_pivot_sequence_id` = selected `agg_trade_id`;
+- `resolved_pivot_price` and `resolved_pivot_price_units`;
+- original `source_anchor_price` and `source_anchor_price_units` separately;
+- `resolution_method = earliest_exact_touch | directional_extreme`;
+- canonical 5m candle start/end containing the selected event time;
 - source market/granularity/artifact ids;
 - first/last underlying trade ids;
-- whether the pivot aggTrade contains one or multiple underlying trades.
+- whether the selected pivot aggTrade contains one or multiple underlying trades.
 
-For multiple matching aggTrade rows, `exact_pivot_time` and exact sequence id remain null. Preserve touch count, every matching row/key, first/last touch time, candidate windows and canonical 5m candle(s) containing those touches.
+For exact-touch cases also preserve touch count, every matching row/key, first/last exact-touch time and candidate windows.
 
-No semantic rule such as first touch, last touch, nearest touch, or the touch before the largest move is authorized.
+For `repeated_extreme_trade_price`, preserve the selected extremum price, occurrence count, every equal-extremum row/key, first/last occurrence time and candidate windows, while `resolved_pivot_time` and `resolved_pivot_sequence_id` remain null.
 
 ## Boundary fragments
 
@@ -138,9 +167,9 @@ Refinement SHALL NOT split, replace, or rewrite canonical fixed 5m candles.
 
 Boundary fragments are additional retrospective macro-analysis entities.
 
-### Requirement: Unique aggTrade touch creates deterministic LEFT and RIGHT canonical-5m source fragments
+### Requirement: Deterministically resolved aggTrade pivot creates LEFT and RIGHT canonical-5m source fragments
 
-After one unique matching aggTrade row is located, use the canonical 5m interval `[B0,B1)` containing its event time. With pivot aggregate ordering key `K=(event_time,agg_trade_id)` and pivot price `P`:
+When a pivot has one authoritative aggTrade ordering key, use the canonical 5m interval `[B0,B1)` containing its event time. With pivot aggregate ordering key `K=(event_time,agg_trade_id)` and resolved pivot price `P`:
 
 - LEFT source records contain approved aggTrade rows from canonical `B0` through ordering key `<=K`;
 - RIGHT source records contain approved aggTrade rows with ordering key `>K` through canonical `B1`;
@@ -154,7 +183,7 @@ If RIGHT has no later aggTrade row, its starting/ending price state remains `P`,
 
 ### Requirement: Boundary fragments retain objective aggTrade-level measurements separately
 
-For exact LEFT/RIGHT canonical-5m fragments preserve, where source semantics permit:
+For resolved LEFT/RIGHT canonical-5m fragments preserve, where source semantics permit:
 
 - exact source-resolution start/end time and duration;
 - open/high/low/close price state;
@@ -177,11 +206,11 @@ These are explicitly aggregate-trade/boundary-fragment measurements. They are no
 
 A macro path at `5m`, `15m`, `1H`, `4H`, or `1D` SHALL NOT be computed by adding an aggTrade-level fragment path to candle-close path values.
 
-For an exact macro leg from pivot `(t0,P0)` to `(t1,P1)`, the canonical close-path sequence at calculation resolution `R` is:
+For a resolved macro leg from pivot `(t0,P0)` to `(t1,P1)`, the canonical close-path sequence at calculation resolution `R` is:
 
 - `Q0=P0`;
 - chronological closes of complete canonical `R` candles with `t0 < candle.end_time <= t1`;
-- append `P1` if the last sequence value is not already the exact end-anchor price/state.
+- append `P1` if the last sequence value is not already the resolved end-pivot price/state.
 
 The same Q sequence defines displacement, directional close-path components, alternation and close-path efficiency at that resolution.
 
@@ -197,7 +226,7 @@ Composition SHALL preserve coverage and SHALL fail exactness across a canonical 
 
 ### Requirement: Exact macro membership uses fragments plus complete interior candles
 
-For macro volume/activity/geometry/overlap at calculation resolution `R`, a uniquely aggTrade-resolved leg is represented by the non-overlapping union of:
+For macro volume/activity/geometry/overlap at calculation resolution `R`, a deterministically aggTrade-resolved leg is represented by the non-overlapping union of:
 
 - the start RIGHT boundary fragment at `R`;
 - complete canonical `R` candles wholly between the start and end boundary intervals;
@@ -207,16 +236,18 @@ A full canonical boundary candle SHALL NOT be included together with its partial
 
 Pairs involving boundary fragments are explicitly identified as fragment pairs and are not stored as ordinary canonical fixed-candle pairs.
 
-### Requirement: Ambiguous aggTrade touches use conservative fallback rather than forced exact fragments
+### Requirement: Unresolved pivot time uses conservative fallback rather than a forced split
 
-If an anchor has multiple exact aggTrade touches or otherwise lacks one unique aggregate-source pivot key:
+If an anchor has `repeated_extreme_trade_price`, incomplete approved aggTrade coverage, unavailable source, or otherwise lacks one authoritative aggregate-source pivot key:
 
 - do not materialize one authoritative LEFT/RIGHT split;
-- preserve all candidate touch rows and candidate-specific diagnostics if useful;
-- macro exact duration/speed and exact boundary-dependent metrics remain null;
-- fallback macro metrics may use only complete calculation candles whose entire intervals are unambiguously between all possible boundary touches.
+- preserve all candidate/equal-extremum rows and diagnostics;
+- exact duration/speed and exact boundary-dependent metrics remain null;
+- fallback macro metrics may use only complete calculation candles whose entire intervals are guaranteed to lie between all possible unresolved boundary occurrences.
 
-The fallback is an uncertainty mechanism, not the primary path when approved aggTrade evidence resolves the anchor uniquely.
+If no guaranteed interior fixed-grid slot exists, fallback expected/observed constituent counts are zero and boundary-dependent fallback metrics are null with an explicit `no_unambiguous_interior` status.
+
+The fallback is an uncertainty mechanism, not the primary path when approved aggTrade evidence deterministically resolves the pivot.
 
 ## Gate
 
@@ -224,7 +255,7 @@ The fallback is an uncertainty mechanism, not the primary path when approved agg
 
 Before real macro production, persist a deterministic aggregate-trade refinement artifact/manifest for all 138 anchors and freeze its checksum in the v5 run configuration.
 
-The main pipeline SHALL consume that artifact rather than independently re-selecting touches.
+The main pipeline SHALL consume that artifact rather than independently re-selecting touches/extrema.
 
 Raw trade files are outside the approved calculation path unless the user later explicitly authorizes a source change.
 
