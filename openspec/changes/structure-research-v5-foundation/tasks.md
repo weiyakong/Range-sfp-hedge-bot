@@ -7,7 +7,7 @@ Implement in order. Do not launch full-history production without explicit appro
 ## Phase 0 — Freeze contracts
 
 ### T00 Source/config truth
-Freeze canonical boundary/gap evidence, macro checksum, 5m localization checksum, price-unit rule, calculation matrices, output/checkpoint roots and code/config hash.
+Freeze canonical boundary/gap evidence, macro checksum, localization checksum, price-unit rule, calculation matrices, output/checkpoint roots and code/config hash.
 
 ### T01 Typed schemas
 Implement all logical tables including macro anchors, trade touches, boundary fragments and 118 macro retracement relationships.
@@ -42,21 +42,27 @@ Deterministic containment/ordinal mappings.
 ### T20 Macro source
 Verify exact `macro_legs_log20.csv` checksum and 128 legs.
 
-### T21 5m localization artifact
-Verify checksum `77a6fa1339794a96ddff327e038d66b17347914dcfa8fbb0d9a90765fd3900bc`, 138 unique pivots, 131 unique-5m, 7 multiple-5m, zero unresolved.
+### T21 Localization artifact
+Verify checksum `77a6fa1339794a96ddff327e038d66b17347914dcfa8fbb0d9a90765fd3900bc`, 138 unique pivots, 131 unique localization windows, 7 multiple-window pivots, zero unresolved.
+
+Verify 145 distinct candidate windows total:
+- 142 canonical-grid 5m windows;
+- exactly three known off-grid source-localization windows: E00059/E00065/E00070 with `+20.799s` starts.
 
 Use this artifact for anchor-level source precision/market/refinement fields. Do not derive anchor precision from per-leg `duration_precision`.
 
 ### T22 Trade-refinement artifact
 Before real macro production, load/freeze separately reviewed trade-refinement output generated under `macro-trade-boundary-refinement`.
 
-Verify official same-market provenance, checksums, source granularity, all candidate 5m intervals, exact price_units, every touch and native sequence ordering.
+Verify official same-market provenance, checksums, source granularity, all 145 candidate windows, exact price_units, every touch and native sequence ordering.
+
+For E00059/E00065/E00070, official trade evidence must locate the exact pivot and actual canonical 5m candle containing it; the off-grid source window start must never become canonical candle identity.
 
 ### T23 Shared macro anchors
-Create one `macro_anchor_id` per source event. Store separate source window, 5m localization, trade status/exact time, and fallback uncertainty fields.
+Create one `macro_anchor_id` per source event. Store separate source window, localization windows/kinds, trade status/exact time, canonical pivot 5m containment and fallback uncertainty.
 
 ### T24 Boundary fragments
-For unique exact pivots create LEFT/RIGHT fragments at 5m and compose higher-TF fragments from 5m + complete canonical 5m intervals.
+For unique exact pivots create LEFT/RIGHT fragments inside canonical 5m containment and compose higher-TF fragments from canonical 5m + complete canonical 5m intervals.
 
 Pivot source record count/volume belongs to LEFT once. Canonical candles unchanged.
 
