@@ -40,7 +40,9 @@ At minimum:
 - source anchor precision: `exact`, `1m_bucket`, `5m_bucket`, `15m_bucket`, `1H_bucket`, `4H_bucket`, `1D_bucket`, `unknown`
 - localization status: `unique_5m_match`, `multiple_5m_matches`, `no_5m_match`, `incomplete_5m_search_coverage`, `unresolved`
 - localization window kind: `canonical_5m`, `off_grid_source_5m`
-- trade refinement status: `exact_unique_trade_touch`, `multiple_exact_trade_touches`, `no_exact_trade_touch`, `incomplete_trade_coverage`, `source_unavailable`, `not_attempted`.
+- approved refinement source granularity: `agg_trade`
+- refinement status: `exact_unique_trade_touch`, `multiple_exact_trade_touches`, `no_exact_trade_touch`, `incomplete_trade_coverage`, `source_unavailable`, `not_attempted`
+- aggregate boundary precision: `single_underlying_trade`, `aggregate_boundary_indivisible`, `not_applicable`.
 
 Unknown future values remain explicit and are never silently coerced.
 
@@ -78,25 +80,42 @@ Required fields separate every precision layer instead of overwriting one pair o
 - original source uncertainty: `source_possible_time_start`, `source_possible_time_end`
 - reviewed localization: `localization_status`, `candidate_window_count`, `candidate_window_start_times`, `candidate_window_end_times`, `candidate_window_kinds`, localization artifact checksum
 - known anomaly flag for windows inherited from off-grid source timestamps
-- trade refinement: `trade_refinement_status`, `trade_source_granularity`, `trade_touch_count`, `first_trade_touch_time`, `last_trade_touch_time`
-- canonical exact containment after trade resolution: `canonical_pivot_5m_start_time`, `canonical_pivot_5m_end_time`
-- exact boundary only when unique: `exact_pivot_time`, `exact_pivot_sequence_id`
-- fallback uncertainty after all available evidence: `refined_possible_time_start`, `refined_possible_time_end`, `boundary_uncertainty_seconds`
+- approved aggTrade refinement: `trade_refinement_status`, `trade_source_granularity=agg_trade`, `trade_touch_count`, `first_trade_touch_time`, `last_trade_touch_time`
+- canonical exact containment after approved aggTrade resolution: `canonical_pivot_5m_start_time`, `canonical_pivot_5m_end_time`
+- resolved boundary only when one unique matching aggTrade exists: `exact_pivot_time`, `exact_pivot_sequence_id=agg_trade_id`
+- pivot aggregate metadata: `pivot_first_trade_id`, `pivot_last_trade_id`, `pivot_underlying_trade_count`, `aggregate_boundary_precision`
+- fallback uncertainty after all approved evidence: `refined_possible_time_start`, `refined_possible_time_end`, `boundary_uncertainty_seconds`
 - evidence/provenance/checksums
 - `availability_class=retrospective`, `available_at=null`
 - schema/run provenance.
 
 The reviewed localization artifact, not per-leg `duration_precision`, supplies anchor-level source precision/provenance. The original per-leg `duration_precision` remains a source-leg field only.
 
-The current localization artifact contains 145 distinct candidate windows. 142 are canonical-grid 5m windows. Three (`E00059`, `E00065`, `E00070`) are 5-minute off-grid source-localization windows with `+20.799s`; they SHALL NOT populate canonical 5m fields until official trade evidence locates the exact pivot and therefore its actual canonical 5m candle.
+The current localization artifact contains 145 distinct candidate windows. 142 are canonical-grid 5m windows. Three (`E00059`, `E00065`, `E00070`) are 5-minute off-grid source-localization windows with `+20.799s`; they SHALL NOT populate canonical 5m fields until approved aggTrade evidence locates the resolved pivot and therefore its actual canonical 5m candle.
+
+Raw individual trade files are outside the approved schema path for this stage. Their existence on disk does not permit populating these fields from raw trades unless the user later explicitly approves a source change.
 
 A shared pivot is referenced by both adjacent legs through the same `macro_anchor_id`.
 
 ### `macro_trade_touches`
-One row per exact matching source trade/aggTrade touch considered for an anchor. Primary key may be `(macro_anchor_id,candidate_window_start,event_time,native_sequence_id)`. Preserve price/price_units, source market, granularity, native ids, first/last underlying trade ids where present, artifact/checksum and eligibility.
+One row per exact matching approved `aggTrades` row considered for an anchor. Primary key `(macro_anchor_id,candidate_window_start,event_time,agg_trade_id)`. Preserve:
+
+- exact price/price_units
+- source market
+- `source_granularity=agg_trade`
+- `agg_trade_id`
+- first/last underlying trade ids
+- underlying trade count where derivable exactly
+- event time
+- quantity/quote quantity where source provides exact values
+- maker-side source field where present
+- artifact/checksum
+- eligibility/status.
+
+Do not store reconstructed individual raw-trade rows here.
 
 ### `macro_boundary_fragments`
-One row per authoritative exact LEFT/RIGHT boundary fragment and calculation resolution when a unique trade pivot exists.
+One row per authoritative LEFT/RIGHT boundary fragment and calculation resolution when one unique approved aggTrade pivot exists.
 
 Required identity/context:
 
@@ -105,12 +124,15 @@ Required identity/context:
 - calculation resolution `5m|15m|1H|4H|1D`
 - market type
 - enclosing canonical interval id/times
-- exact pivot time/sequence id/price
+- resolved pivot event time/agg_trade_id/price
 - fragment start/end and duration
-- composition method (`trade_only_5m` or `trade_5m_plus_complete_5m`)
+- composition method (`agg_trade_only_5m` or `agg_trade_5m_plus_complete_5m`)
+- `aggregate_boundary_precision`
 - coverage/status.
 
-Persist fragment OHLCV/geometry/activity as mathematically applicable. Trade-sequence measurements use explicit `trade_*` names. The pivot source record volume/count belongs to LEFT once; RIGHT begins from pivot price state but excludes the pivot record from its trade volume/count.
+Persist fragment OHLCV/geometry/activity as mathematically applicable at approved aggTrade-source granularity. Aggregate-sequence measurements use explicit aggregate/trade-level names and SHALL NOT be described as reconstructed raw-trade measurements.
+
+The pivot aggTrade row belongs to LEFT once as an indivisible source record. RIGHT begins from pivot price state but excludes that aggregate row. If the pivot aggregate contains multiple underlying trades, its quantity/count SHALL NOT be split internally between LEFT and RIGHT.
 
 Canonical fixed candles remain unchanged.
 
@@ -120,7 +142,7 @@ Canonical fixed candles remain unchanged.
 Primary key `observation_id`. Preserve observation kind, market scope, times, duration, endpoints/direction where valid, source segment, fixed/rolling/macro ids, availability, completeness and provenance.
 
 For macro:
-- if both pivots are `exact_unique_trade_touch`, `start_time/end_time` are exact pivot times and `duration_seconds` is exact;
+- if both pivots are `exact_unique_trade_touch` under approved aggTrade-source resolution, `start_time/end_time` are the resolved aggTrade event times and `duration_seconds` follows them;
 - otherwise exact macro start/end/duration are null and source-coordinate start/end/duration remain in explicitly `source_*` fields;
 - `availability_class=retrospective`, `available_at=null`.
 
@@ -141,7 +163,7 @@ For macro:
 ### Macro calculation matrix
 Attempt macro path/activity/overlap/volume at `5m/15m/1H/4H/1D`.
 
-For exact trade-resolved legs use exact pivots plus exact boundary-fragment composition.
+For uniquely aggTrade-resolved legs use resolved pivots plus boundary-fragment composition.
 
 For unresolved/ambiguous pivots use fallback unambiguous interior only. At resolution `R`:
 
@@ -160,23 +182,23 @@ Fixed/rolling use canonical ordinary/log speed names.
 
 Macro separates:
 - original `source_*` displacement/duration/speed from `macro_legs_log20`;
-- exact `macro_*` displacement/duration/speed only when both trade pivots are exact.
+- resolved `macro_*` displacement/duration/speed only when both pivots have one unique approved aggTrade touch.
 
-Generic exact macro speed SHALL NOT be populated from bucket-limited source timestamps.
+Generic macro speed SHALL NOT be populated from bucket-limited source timestamps.
 
-There is one exact whole-leg macro speed. Timeframe-specific tables describe internal evolution; they do not redefine the whole-leg speed.
+There is one whole-leg macro speed. Timeframe-specific tables describe internal evolution; they do not redefine the whole-leg speed.
 
 ### `observation_path_activity`
 Primary key `(observation_id,calculation_resolution)`.
 
 Fixed/rolling: close path/log path/efficiency/directional components/alternation/activity/extrema/coverage.
 
-Exact macro close-path sequence at resolution `R`:
-- `Q0 = exact start pivot price`;
+Resolved macro close-path sequence at resolution `R`:
+- `Q0 = resolved start pivot price`;
 - chronological closes of complete canonical `R` candles satisfying `start_pivot_time < candle.end_time <= end_pivot_time`;
-- append exact end pivot price if not already the final price state.
+- append resolved end pivot price if not already the final price state.
 
-The same sequence defines macro displacement, close path, log path, efficiency, directional components and alternation. Trade-level boundary path is never added to this close path.
+The same sequence defines macro displacement, close path, log path, efficiency, directional components and alternation. AggTrade-level boundary path is never added to this close path.
 
 For ambiguous fallback macro rows, use explicit `fallback_*` names. If fallback constituents `B1...Bn` are used, the measured sequence starts with `Q0=open(B1)` and `Qi=close(Bi)`, so the first eligible candle's open->close movement is not lost. Also persist `fallback_measured_start_time=B1.start_time` and `fallback_measured_end_time=Bn.end_time`.
 
@@ -184,12 +206,12 @@ For ambiguous fallback macro rows, use explicit `fallback_*` names. If fallback 
 Canonical same-resolution adjacent complete fixed-candle pairs only. Boundary-fragment pairs are a separate relationship type/table or explicitly typed rows and never masquerade as canonical pairs.
 
 ### `observation_overlap_summary`
-Fixed/rolling aggregate eligible canonical pairs. Exact macro may additionally aggregate explicitly typed boundary-fragment relationships plus complete interior pairs without double counting. Ambiguous macro fallback uses only pairs wholly inside fallback interval.
+Fixed/rolling aggregate eligible canonical pairs. Resolved macro may additionally aggregate explicitly typed boundary-fragment relationships plus complete interior pairs without double counting. Ambiguous macro fallback uses only pairs wholly inside fallback interval.
 
 ### `observation_volume_volatility`
 Fixed/rolling preserve volume summaries, directional volume, TR/ATR, RV, width/range summaries and rolling comparisons.
 
-Exact macro volume/activity uses the non-overlapping union of start RIGHT fragment + full interior canonical intervals + end LEFT fragment at the stated resolution. Never include a full boundary candle together with its fragment. Ambiguous fallback uses only the fallback constituent set. Macro RV remains null/deferred.
+Resolved macro volume/activity uses the non-overlapping union of start RIGHT fragment + full interior canonical intervals + end LEFT fragment at the stated resolution. Never include a full boundary candle together with its fragment. A multi-underlying pivot aggTrade remains indivisible and carries aggregate-boundary precision. Ambiguous fallback uses only the fallback constituent set. Macro RV remains null/deferred.
 
 ## Retracement
 
@@ -217,9 +239,9 @@ Preserve all approved source columns plus:
 - source direction QA
 - historical source classification
 - canonical market type
-- exact-boundary status
-- exact start/end pivot times when resolved
-- exact duration when resolved
+- approved aggTrade-boundary status
+- resolved start/end pivot times when available
+- resolved duration when both endpoints are unique under approved aggTrade-source resolution
 - fallback uncertainty interval only when needed
 - canonical coverage/status
 - schema/run provenance.
@@ -227,13 +249,15 @@ Preserve all approved source columns plus:
 Historical provenance never overwrites canonical market scope.
 
 ## `observation_macro_context`
-Retrospective observation-to-macro relationships. Exact temporal fractions may be exposed only when exact pivot boundaries exist; otherwise source-coordinate/fallback concepts are explicitly named. `availability_class=retrospective`, `available_at=null`.
+Retrospective observation-to-macro relationships. Exact temporal fractions may be exposed only when both boundary coordinates are resolved under the approved aggTrade source; otherwise source-coordinate/fallback concepts are explicitly named. `availability_class=retrospective`, `available_at=null`.
 
 ## Feature dictionary / extraction safety
 
 Every materialized feature has exactly one dictionary definition including table, name, formula, units, applicability, calculation resolution, availability, null meaning and provenance.
 
-Causal extraction excludes macro observations/anchors/touches/fragments/context/retracement and every retrospective feature.
+Causal extraction excludes macro observations/anchors/aggTrade touches/fragments/context/retracement and every retrospective feature.
+
+Raw individual trade artifacts are excluded from the approved feature lineage unless a later explicit user decision changes the source contract.
 
 ## Physical partitioning
 
