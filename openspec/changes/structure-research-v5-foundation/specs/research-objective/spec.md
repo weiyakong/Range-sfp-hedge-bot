@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the first-pass research objective: collect objective, inspectable measurements of market movement so that later research can formulate and validate criteria for movement hierarchy, parent impulse construction, impulse/correction distinction, and the relevant structural timeframe.
+Define the first-pass research objective: collect objective, inspectable measurements of market movement across the full locally available BTC history so that later research can formulate and validate criteria for movement hierarchy, parent impulse construction, impulse/correction distinction, and the relevant structural timeframe.
 
 ## ADDED Requirements
 
@@ -38,20 +38,23 @@ The collected data SHALL make it possible to compare movements by log-scale dist
 * **WHEN** the first-pass research outputs are complete
 * **THEN** the outputs SHALL contain enough objective measurements to compare candidate structural relationships without requiring a predefined parent-impulse rule.
 
-### Requirement: Modern BTC behavior is the primary research era
+### Requirement: Full history is retained while modern BTC behavior is prioritized analytically
 
-The research SHALL distinguish a primary modern-market era from older historical data rather than pooling the complete BTC history with equal analytical weight.
+The research dataset SHALL retain the full approved locally available BTC history rather than imposing a modern-era collection cutoff.
 
-The primary research era SHALL be `2023-01-01` onward, with `2024-01-01` onward treated as the highest-priority modern subset when source coverage permits.
+For later criteria discovery and trading-relevant interpretation, `2023-01-01` onward SHALL be treated as the primary analytical era, with `2024-01-01` onward treated as the highest-priority modern subset when coverage permits.
 
-Data before `2023-01-01` MAY be retained as a historical robustness/reference era, but it SHALL NOT determine thresholds or first-pass criteria with equal weight to the primary modern era unless a later approved analysis explicitly requests that comparison.
+Older observations SHALL remain available for historical comparison, rare-pattern research, and robustness checks, but they SHALL NOT automatically receive equal analytical weight when the goal is to characterize current BTC market behavior.
+
+This analytical prioritization SHALL NOT reduce source inventory scope, production collection scope, or stored historical coverage.
 
 #### Scenario: Criteria are explored from the research dataset
 
 * **GIVEN** both modern and older BTC observations are available
-* **WHEN** researchers compare candidate quantitative signatures of market movement
+* **WHEN** researchers compare candidate quantitative signatures of market movement for current-market use
 * **THEN** the primary analysis SHALL report modern-era results separately
-* **AND** SHALL NOT allow the larger count or larger historical volatility of early BTC observations to dominate modern-market conclusions by default.
+* **AND** SHALL NOT allow the larger count or different volatility regime of early BTC observations to dominate modern-market conclusions by default
+* **AND** SHALL keep the older observations available for separate robustness analysis.
 
 ### Requirement: Research focuses on how comparable price distances are traversed
 
