@@ -126,18 +126,26 @@ The reviewed reference has 128 rows with `leg_id`, direction, start/end event id
 
 A different checksum/source requires explicit provenance review before it may be treated as the same approved anchor input.
 
-### Requirement: Macro-leg anchor market source follows actual futures candle availability, not archive publication coverage
+### Requirement: Macro-leg source regime follows the finalized canonical source contract
 
-The approved `macro_legs_log20.csv` source regime SHALL be aligned to the actual historical BTCUSDT market data used by the macro-structure work, not to the later start date of Binance public archive packages.
+The approved `macro_legs_log20.csv` anchors SHALL be interpreted under the same finalized market-source chronology as Structure Research v5 canonical candles.
 
-Prior verified project analysis found actual Binance BTCUSDT USDT-M perpetual historical klines beginning at `2019-09-08T00:00:00Z`. Therefore the canonical research source contract SHALL treat:
+The exact evidence is defined by the source-contract specification:
 
-- times before `2019-09-08T00:00:00Z` as belonging to the approved Binance BTCUSDT spot regime;
-- times at or after `2019-09-08T00:00:00Z` as belonging to the approved Binance BTCUSDT USDT-M futures regime, once the corresponding futures candles have been locally acquired/validated for the required resolution.
+- first actual BTCUSDT USDT-M futures trade: `2019-09-08T17:57:50.575000Z`;
+- first real futures 1m candle bucket: `[2019-09-08T17:57:00Z, 2019-09-08T17:58:00Z)`;
+- candle-based spot-to-futures boundary: `2019-09-08T17:57:00Z`.
 
-The later `2019-12-31T00:00:00Z` start of the currently downloaded official Binance public 1m archive SHALL NOT be interpreted as futures market inception.
+Therefore, for canonical candle-based research:
 
-Before production, the source contract SHALL verify/acquire the missing futures candle interval `2019-09-08T00:00:00Z` through `2019-12-30T23:59:00Z` rather than filling that interval with spot solely because public 1m archive packages begin later.
+- anchors/times before `2019-09-08T17:57:00Z` belong to the approved Binance BTCUSDT spot regime;
+- anchors/times at or after `2019-09-08T17:57:00Z` belong to the approved Binance BTCUSDT USDT-M futures regime.
+
+The earlier starts of legacy 1D/4H futures caches SHALL NOT be interpreted as market inception because those timestamps can reflect enclosing higher-timeframe bucket starts. The later `2019-12-31T00:00:00Z` public 1m archive start SHALL likewise NOT be interpreted as market inception.
+
+The approved early futures 1m block is complete from `2019-09-08T17:57:00Z` through `2019-12-30T23:59:00Z` after one `2019-09-08T19:00:00Z` native API missing bucket was deterministically resolved from official daily-trades no-trade evidence. The combined early block has `163083` rows, zero duplicate timestamps, and zero remaining gaps, and joins continuously to the public archive at `2019-12-31T00:00:00Z`.
+
+Legacy local `cache_futures_1d/4h` material remains QA/reference evidence only because at least one materially inconsistent area was identified near `2019-09-24`; it SHALL NOT override fresh canonical 1m source data.
 
 Within a macro leg whose start/end anchors and required candle path lie entirely inside one validated continuous market/source segment, source anchor prices are approved for anchor-inclusive path and efficiency calculations; no separate source-compatibility discovery step is required.
 
