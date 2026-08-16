@@ -12,6 +12,16 @@ All candle boundaries, fixed intervals, rolling-window endpoints, containment re
 
 Local time zones and daylight-saving transitions SHALL NOT change research interval boundaries.
 
+### Requirement: Canonical interval end is exclusive and distinct from source-reported close time
+
+Canonical candle intervals SHALL use half-open UTC semantics `[start_time, end_time)`.
+
+When Binance or another source reports a final inclusive close timestamp such as `23:59:59.999`, that source-native value MAY be retained separately as provenance but SHALL NOT be used as the canonical interval boundary.
+
+For example, a canonical `1D` candle beginning `2026-08-15T00:00:00Z` SHALL have canonical `end_time = 2026-08-16T00:00:00Z`, even if the source-reported close timestamp is `2026-08-15T23:59:59.999Z`.
+
+The implementation SHALL NOT create interval boundaries by adding arbitrary milliseconds to source timestamps. Canonical start/end SHALL be derived from the documented timeframe grid and verified against source timestamp semantics.
+
 ### Requirement: Fixed candle intervals are calendar aligned
 
 Fixed intervals SHALL use the exchange/source UTC calendar grid and SHALL NOT be shifted to arbitrary observation times.
@@ -54,7 +64,9 @@ A rolling metric SHALL record the source/calculation resolution used to derive i
 
 ### Requirement: Target candle resolutions
 
-The target first-pass candle resolutions are `1D`, `4H`, `1H`, `15m`, and `5m`, subject to source inventory and actual local coverage.
+The target first-pass feature-producing candle resolutions are `1D`, `4H`, `1H`, `15m`, and `5m`, subject to source inventory and approved coverage.
+
+Canonical `1m` candles are retained as the finest source/drill-down layer under the atomic-market-data contract but are not required to carry the complete heavy feature family.
 
 Missing target data SHALL NOT be silently synthesized or downloaded without explicit approval.
 
@@ -85,9 +97,40 @@ The system SHALL separately record the exact temporal intersection between the m
 * **AND** the intersection SHALL begin at `13:35`
 * **AND** the system SHALL record the partial temporal coverage rather than shifting the 4H candle to `13:35`.
 
+### Requirement: Repeated extrema preserve first, last, and count at the available resolution
+
+For an observation constructed from an approved finer calculation resolution, the system SHALL preserve the observation high and low and SHALL make repeated equal extrema unambiguous.
+
+For the maximum observed high it SHALL preserve at minimum:
+
+- `high_first_time`: start time of the first constituent candle at the calculation resolution whose `high` equals the observation high;
+- `high_last_time`: start time of the last constituent candle at the calculation resolution whose `high` equals the observation high;
+- `high_occurrence_count`: number of constituent candles at that resolution whose `high` equals the observation high.
+
+Equivalent `low_first_time`, `low_last_time`, and `low_occurrence_count` SHALL be preserved for the minimum observed low.
+
+These timestamps/counts are resolution-limited candle observations and SHALL NOT be described as exact tick-level touch times/counts unless tick data was actually used.
+
+### Requirement: Upward and downward excursion from observation start use explicit formulas
+
+For an observation start price `P0`, observed maximum `H`, and observed minimum `L`:
+
+- `upward_excursion_abs = max(0, H - P0)`
+- `downward_excursion_abs = max(0, P0 - L)`.
+
+When `P0 > 0`, percentage counterparts SHALL be:
+
+- `upward_excursion_pct = 100 * (H / P0 - 1)` when `H` is valid;
+- `downward_excursion_pct = 100 * (1 - L / P0)` when `L` is valid.
+
+For strictly positive prices, log counterparts MAY be preserved as:
+
+- `upward_excursion_log = max(0, ln(H / P0))`;
+- `downward_excursion_log = max(0, ln(P0 / L))`.
+
 ### Requirement: Zero net displacement does not imply zero activity
 
-For every fixed or rolling observation, the system SHALL preserve net displacement separately from intraperiod high/low range, high and low timestamps where available at the calculation resolution, upward and downward excursion from the observation start, close-path, and approved range/body/wick activity measurements.
+For every fixed or rolling observation, the system SHALL preserve net displacement separately from intraperiod high/low range, repeated-extremum timing/count information where available, upward and downward excursion from the observation start, close-path, and approved range/body/wick activity measurements.
 
 #### Scenario: Price leaves and returns to its starting level
 
@@ -95,4 +138,4 @@ For every fixed or rolling observation, the system SHALL preserve net displaceme
 * **AND** price moved materially above or below the start during the interval
 * **WHEN** the observation is exported
 * **THEN** net displacement MAY equal zero
-* **BUT** the intraperiod range, excursions, path, and activity fields SHALL preserve the observed movement.
+* **BUT** the intraperiod range, excursions, path, extrema, and activity fields SHALL preserve the observed movement.
