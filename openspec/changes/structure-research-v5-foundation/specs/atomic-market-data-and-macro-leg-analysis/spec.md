@@ -12,27 +12,27 @@ The first production research dataset SHALL target the full approved BTC history
 
 The pipeline SHALL NOT impose `2023-01-01` or `2024-01-01` as collection cutoffs. Those periods MAY receive higher analytical priority later without reducing stored historical coverage.
 
-### Requirement: Source segment means continuous market continuity, not file provenance
+### Requirement: Source segment means canonical 1m market continuity, not file provenance or target timeframe
 
-Every canonical candle SHALL carry both row-level provenance and a `source_segment_id`.
+Every canonical 1m candle SHALL carry row-level provenance and a `source_segment_id`.
 
-`source_segment_id` SHALL identify one temporally continuous sequence of the same venue, instrument, market type, and canonical timeframe/source stream. It SHALL NOT change merely because:
+`source_segment_id` SHALL identify one temporally continuous sequence of canonical 1m candles for the same venue, instrument, and market type. It is defined on the canonical 1m market spine and inherited by complete target candles/observations that lie wholly within one such segment.
+
+It SHALL NOT change merely because:
 
 - a new monthly/daily archive file begins;
 - a different local path stores the next raw part;
 - a candle was downloaded in a different run;
-- an otherwise valid missing candle was deterministically reconstructed from approved lower-level official data of the same venue/instrument/market type.
-
-Row-level `source_id`, raw artifact/file identity, download/reconstruction provenance, and validation status SHALL remain separately preserved.
+- row-level provenance changes while canonical market continuity remains valid.
 
 A new source segment SHALL begin when continuity is genuinely broken, including at minimum:
 
 - spot -> futures or futures -> spot market-type transition;
 - venue or instrument change;
-- unresolved real candle gap;
+- unresolved real canonical 1m gap;
 - another explicitly documented discontinuity that makes sequential calculations invalid.
 
-If a previously unresolved gap is later completely repaired and validated from approved same-market lower-level official data, the repaired continuous sequence MAY be represented as one source segment while retaining reconstruction provenance on the repaired rows.
+A synthetic diagnostic bucket whose OHLC is not observed from approved source data SHALL NOT repair canonical continuity merely because it fills a timestamp.
 
 ### Requirement: Canonical 1m source layer is retained without heavy 1m feature materialization
 
@@ -40,13 +40,15 @@ The approved canonical `1m` OHLCV history SHALL remain queryable as the finest c
 
 Each retained 1m candle SHALL preserve at minimum stable candle identity, symbol/instrument, venue, market type, `source_segment_id`, canonical UTC `[start_time,end_time)`, OHLC, source-native volume, row-level provenance, validation status, and completeness/gap status.
 
+Every canonical 1m start SHALL be exactly minute-grid aligned. Non-minute-aligned source rows SHALL be explicitly validated/classified rather than silently rounded into canonical candles.
+
 The first production pass SHALL NOT be required to materialize the complete heavy feature family on every 1m candle. Full-market feature production SHALL begin at `5m` unless a separately approved feature requires 1m calculation.
 
 ### Requirement: Canonical target candles are deterministically derived from canonical 1m
 
-For this first-pass research dataset, canonical `5m`, `15m`, `1H`, `4H`, and `1D` candles SHALL be deterministically aggregated from the approved canonical `1m` layer.
+For this first-pass research dataset, canonical `5m`, `15m`, `1H`, `4H`, and `1D` candle intervals SHALL be deterministically evaluated from the strict canonical `1m` spine.
 
-Existing native/local higher-timeframe candle datasets SHALL be treated as QA/reference sources and SHALL NOT silently replace the canonical 1m-derived representation.
+Existing native/local higher-timeframe candle datasets SHALL be treated as QA/reference sources only and SHALL NOT silently replace the canonical 1m-derived representation.
 
 A different canonical construction source requires explicit user approval and a source-contract update.
 
@@ -68,31 +70,35 @@ Expected 1m constituent counts are:
 - `4H`: 240
 - `1D`: 1440.
 
-Each target row SHALL preserve expected count, observed count, coverage ratio, source segment, and completeness state.
+Each target row SHALL preserve expected count, observed valid canonical count, coverage ratio, source scope, and completeness state.
 
-### Requirement: Incomplete target intervals cannot masquerade as complete candles
+### Requirement: Boundary-crossing and gap-containing target intervals remain explicit rows but cannot masquerade as candles from one market
 
-If any required 1m constituent is missing, misaligned, or belongs to another source segment, the complete canonical target candle SHALL be marked incomplete.
+The fixed UTC grid SHALL remain complete as an interval index even where a target interval intersects:
 
-Complete OHLC/volume fields used by the research feature pipeline SHALL be null for that interval rather than presenting a partial aggregation as a valid complete candle.
+- the spot-to-futures market boundary;
+- an unresolved canonical source gap;
+- more than one source segment.
 
-For diagnostics, the system MAY separately retain explicitly named `observed_only_open`, `observed_only_high`, `observed_only_low`, `observed_only_close`, `observed_only_volume`, and related counts/coverage calculated only from the observed constituents.
+Such a row SHALL be retained with `completeness_status` such as `incomplete_boundary` or `incomplete_gap`, logical `market_type = cross_market` where more than one market type contributes to the interval, and `source_segment_id = null`.
 
-Observed-only values SHALL never be consumed interchangeably with complete canonical candle fields.
+Complete canonical OHLC/volume fields used by the research feature pipeline SHALL be null for any incomplete interval.
+
+For diagnostics, explicitly named `observed_only_*` values MAY be retained from actual observed constituents, but SHALL never be consumed interchangeably with complete canonical candle fields.
 
 No interpolation or synthetic constituent candle is permitted.
 
 ### Requirement: Atomic target-candle records remain queryable
 
-For canonical target resolutions `5m`, `15m`, `1H`, `4H`, and `1D`, the analytical store SHALL retain queryable candle-level rows sufficient to recompute later features without rerunning market-data download.
+For canonical target resolutions `5m`, `15m`, `1H`, `4H`, and `1D`, the analytical store SHALL retain queryable candle-level rows sufficient to inspect/recompute later features without rerunning market-data download.
 
 Each row SHALL contain at minimum:
 
 - stable candle identifier;
 - instrument/symbol;
 - venue;
-- market type;
-- `source_segment_id`;
+- market type/source scope;
+- `source_segment_id` when single-segment complete;
 - timeframe;
 - canonical `start_time` and exclusive `end_time`;
 - complete OHLC/volume when valid;
@@ -100,13 +106,13 @@ Each row SHALL contain at minimum:
 - source calculation resolution (`1m`);
 - expected/observed constituent counts;
 - coverage ratio;
-- completeness/gap status.
+- completeness/gap/boundary status.
 
 ### Requirement: Source construction map is explicit
 
 Before full production, run provenance SHALL record the exact canonical 1m source artifacts/manifest and the deterministic 1m->target construction contract, including venue, instrument, market type, source segments, first/last timestamps, known gaps, and schema/version.
 
-Native higher-timeframe QA sources MAY also be listed separately, clearly marked `qa_reference`, and SHALL NOT be confused with canonical target-candle provenance.
+Native higher-timeframe QA sources MAY be listed separately, clearly marked as diagnostic or validated QA references, and SHALL NOT be confused with canonical target-candle provenance.
 
 ### Requirement: Canonical timestamp semantics are explicit
 
@@ -126,56 +132,84 @@ The reviewed reference has 128 rows with `leg_id`, direction, start/end event id
 
 A different checksum/source requires explicit provenance review before it may be treated as the same approved anchor input.
 
-### Requirement: Macro-leg source regime follows the finalized canonical source contract
+### Requirement: Macro source provenance is historical source provenance, not reassignment by the new canonical boundary
 
-The approved `macro_legs_log20.csv` anchors SHALL be interpreted under the same finalized market-source chronology as Structure Research v5 canonical candles.
+The approved `macro_legs_log20.csv` was built from an older mixed research source and SHALL preserve that provenance as originally constructed.
 
-The exact evidence is defined by the source-contract specification:
+The forensic audit establishes:
 
-- first actual BTCUSDT USDT-M futures trade: `2019-09-08T17:57:50.575000Z`;
-- first real futures 1m candle bucket: `[2019-09-08T17:57:00Z, 2019-09-08T17:58:00Z)`;
-- candle-based spot-to-futures boundary: `2019-09-08T17:57:00Z`.
+- old merged daily source remained spot through `2019-12-30T00:00:00Z`;
+- old merged daily source switched to futures at `2019-12-31T00:00:00Z`;
+- the macro build also used futures 4H refinement beginning in September 2019;
+- audited Oct-Nov 2019 refined anchor timestamps/prices match futures 4H rows while their parent daily rows remain from the old spot daily regime.
 
-Therefore, for canonical candle-based research:
+Therefore disputed Sep-Dec 2019 macro source provenance SHALL be represented as `mixed` where applicable, including explicit parent-daily regime and refinement-source fields. Those anchors SHALL NOT be relabeled as pure spot or pure futures solely from the Structure Research v5 canonical boundary.
 
-- anchors/times before `2019-09-08T17:57:00Z` belong to the approved Binance BTCUSDT spot regime;
-- anchors/times at or after `2019-09-08T17:57:00Z` belong to the approved Binance BTCUSDT USDT-M futures regime.
+Canonical market type covering the same wall-clock time is a separate research attribute.
 
-The earlier starts of legacy 1D/4H futures caches SHALL NOT be interpreted as market inception because those timestamps can reflect enclosing higher-timeframe bucket starts. The later `2019-12-31T00:00:00Z` public 1m archive start SHALL likewise NOT be interpreted as market inception.
+### Requirement: Macro anchor time precision is explicit
 
-The approved early futures 1m block is complete from `2019-09-08T17:57:00Z` through `2019-12-30T23:59:00Z` after one `2019-09-08T19:00:00Z` native API missing bucket was deterministically resolved from official daily-trades no-trade evidence. The combined early block has `163083` rows, zero duplicate timestamps, and zero remaining gaps, and joins continuously to the public archive at `2019-12-31T00:00:00Z`.
+A refined macro anchor whose timestamp equals a 4H candle start while its anchor price is that candle's high/low SHALL be described as a `4H_bucket` or equivalent resolution-limited anchor time, not an exact tick-time extreme.
 
-Legacy local `cache_futures_1d/4h` material remains QA/reference evidence only because at least one materially inconsistent area was identified near `2019-09-24`; it SHALL NOT override fresh canonical 1m source data.
+For each macro anchor preserve at minimum where known:
 
-Within a macro leg whose start/end anchors and required candle path lie entirely inside one validated continuous market/source segment, source anchor prices are approved for anchor-inclusive path and efficiency calculations; no separate source-compatibility discovery step is required.
+- source parent regime;
+- refinement source market/timeframe;
+- anchor timestamp;
+- anchor price;
+- anchor-time precision/class;
+- compatibility with the current canonical market source.
 
-A macro leg crossing the actual spot-to-futures boundary SHALL preserve its original macro-structure anchor movement/duration as retrospective source measurement, but complete sequential whole-leg path, ATR/RV-style sequential summaries, overlap sequence, and path efficiency SHALL NOT bridge the spot/futures transition as though it were one continuous traded instrument. Per-segment diagnostics MAY be retained separately.
+A 4H bucket-start timestamp SHALL NOT be interpreted as proof that the high/low occurred at the start of the 4H candle.
 
 ### Requirement: Whole macro-leg measurements are first-class retrospective outputs
 
-For every approved macro leg overlapping approved candle coverage, the system SHALL calculate a whole-leg record in addition to fixed/rolling observations.
+For every approved macro leg overlapping approved candle coverage, the system SHALL preserve the source anchors, duration, ordinary/log movement and speed, and shall calculate retrospective whole-leg descriptive measurements where their required canonical coverage and anchor semantics are valid.
 
-It SHALL preserve anchors, duration, ordinary/log movement and speed, multi-resolution path/efficiency, directional path components, alternation, overlap/penetration summaries, candle activity, volume/volatility summaries, and coverage status where calculable.
+Supported whole-leg families include internal multi-resolution path/efficiency, directional path components, alternation, overlap/penetration summaries, candle activity, and volume/volatility summaries where explicitly defined by the relevant formula/matrix contracts.
 
 Measurements that depend on the known macro-leg endpoint or whole-leg direction SHALL be explicitly `retrospective` and SHALL NOT be exposed as live-available features.
 
 No new semantic `impulse` or `correction` class is permitted.
 
-### Requirement: Macro-leg path uses explicit anchors and does not bridge discontinuities
+### Requirement: Macro internal canonical path is separate from source-anchor movement
 
-For macro leg `(T0,P0)->(T1,P1)` and an approved finer resolution, preserve internal finer-close path separately from anchor-inclusive path.
+For a macro leg `(T0,P0)->(T1,P1)` and an approved finer calculation resolution, preserve:
 
-Internal path SHALL use chronologically consecutive eligible finer closes inside each continuous source segment.
+1. source macro movement between the approved source anchor prices;
+2. canonical internal close path constructed only from chronologically eligible complete canonical candles whose intervals lie within the macro observation;
+3. anchor-inclusive canonical path only when both anchor market/source compatibility and temporal precision make the ordering valid.
 
-Anchor-inclusive path SHALL add `P0 -> first eligible finer close` and `last eligible finer close -> P1` only when those transitions are valid under the same market/source semantics and are not already represented by the same observed point.
+Internal canonical path SHALL never bridge a source-segment boundary or unresolved gap. If the required whole-leg sequence crosses one, complete whole-leg path/efficiency at that resolution SHALL be null; per-segment diagnostics MAY be retained separately.
 
-A macro leg intersecting a source-segment boundary or unresolved gap SHALL NOT bridge it as one complete path. Per-segment partial/observed-only diagnostics MAY be retained, while complete whole-leg path/efficiency for that resolution SHALL be null.
+### Requirement: Anchor-inclusive macro path requires proven ordering, not merely matching market name
+
+Anchor-inclusive path SHALL add `P0 -> first eligible canonical close` and `last eligible canonical close -> P1` only when BOTH endpoint anchors satisfy all of the following:
+
+- the anchor price source is compatible with the canonical market source used for that endpoint/path;
+- the anchor time is exact enough to establish ordering relative to the canonical constituent sequence;
+- the anchor transition is not already represented by the same observed point;
+- no source gap/boundary is crossed by that transition.
+
+A macro anchor known only as a high/low somewhere inside a 4H bucket, while timestamped at the bucket start, does NOT satisfy exact ordering for finer anchor-inclusive path. In that case:
+
+- source macro displacement remains valid as source measurement;
+- internal canonical path may remain valid where coverage permits;
+- anchor-inclusive canonical path/efficiency SHALL be null with explicit status such as `anchor_time_precision_insufficient`.
+
+A mixed historical source anchor likewise SHALL NOT be forced into anchor-inclusive canonical path unless compatibility is explicitly established.
 
 Equivalent log path SHALL use absolute log ratios for strictly positive prices.
 
+### Requirement: Macro volatility applicability is explicit
+
+Macro observations MAY receive volume/activity/overlap summaries from complete canonical constituents according to the approved feature matrix.
+
+Realized variance/volatility for macro observations is NOT a required first-pass canonical feature unless a separate approved formula defines its exact boundary-price sequence independently of the source macro anchors. The fixed/rolling RV formula SHALL NOT be silently reused for macro legs with resolution-limited/mixed source anchors.
+
 ### Requirement: Gaps cannot masquerade as valid path
 
-Every path-dependent observation SHALL preserve expected finer count, observed finer count, coverage ratio, and gap status.
+Every path-dependent observation SHALL preserve expected finer count, observed finer count, coverage ratio, and gap/boundary status.
 
 Complete path/efficiency SHALL be null with incomplete required coverage. Any `observed_only_*` path SHALL be explicitly marked incomplete and SHALL NOT be used interchangeably with complete path.
 
