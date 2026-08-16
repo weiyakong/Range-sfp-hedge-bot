@@ -171,7 +171,7 @@ For the sequence of non-zero finer-step signs, the system SHALL store the number
 
 `alternation_rate = sign_change_count / (nonzero_step_count - 1)`.
 
-### Requirement: Candle geometry is preserved
+### Requirement: Candle geometry is preserved in absolute and price-normalized form
 
 For every candle:
 
@@ -182,7 +182,15 @@ For every candle:
 - `upper_wick = high - body_high`
 - `lower_wick = body_low - low`
 
-When `full_range > 0`, the system SHALL also store `body_share`, `upper_wick_share`, and `lower_wick_share` relative to full range. Undefined ratios SHALL be null.
+When `full_range > 0`, the system SHALL also store `body_share`, `upper_wick_share`, and `lower_wick_share` relative to full range.
+
+For strictly positive `open`, the system SHALL additionally preserve multiplicative/log-normalized candle geometry sufficient for cross-price-era comparison, including at minimum:
+
+- `log_full_range = ln(high / low)` when `low > 0`;
+- `log_body_size = abs(ln(close / open))` when `close > 0`;
+- price-normalized or log-normalized upper/lower wick magnitudes under explicitly documented formulas.
+
+Undefined ratios or logs SHALL be null.
 
 ### Requirement: Candle activity complements close-path
 
@@ -194,45 +202,47 @@ For an observation built from finer candles, the system SHALL preserve at minimu
 - sum of finer lower wicks;
 - sum of finer True Range where available.
 
+For cross-era comparison, corresponding price-normalized/log activity summaries SHALL be available where the underlying prices are strictly positive.
+
 These SHALL be described as activity measures, not exact market path, because intra-candle event order is unknown.
 
-### Requirement: Pairwise overlap preserves geometry, not only magnitude
+### Requirement: Pairwise overlap preserves explicit geometry and normalization
 
 For consecutive candles `prev` and `curr`:
 
 - `range_overlap_low = max(prev.low, curr.low)`
 - `range_overlap_high = min(prev.high, curr.high)`
-- `range_overlap_abs = max(0, range_overlap_high - range_overlap_low)`.
+- `range_overlap_abs = max(0, range_overlap_high - range_overlap_low)`
+- `prev_range = prev.high - prev.low`
+- `curr_range = curr.high - curr.low`
+- `range_union_abs = max(prev.high, curr.high) - min(prev.low, curr.low)`.
 
-The system SHALL preserve normalized overlap magnitude, overlap position within both candles, body-to-body overlap, and the current candle's upper and lower extensions beyond the previous candle.
+Where denominators are positive, the system SHALL calculate separately named overlap normalizations rather than one ambiguous `overlap_ratio`:
 
-### Requirement: Overlap penetration is direction-aware relative to local movement
+- `overlap_share_prev = range_overlap_abs / prev_range`
+- `overlap_share_curr = range_overlap_abs / curr_range`
+- `overlap_jaccard = range_overlap_abs / range_union_abs`.
 
-The system SHALL preserve enough numeric geometry to distinguish shallow wick-only return, body penetration, close penetration, and extension relative to the current local observation direction.
+The system SHALL also preserve body-to-body overlap and the current candle's upper/lower extension beyond the previous candle. Undefined ratios SHALL be null.
 
-For an upward local observation, return/penetration into the previous candle is measured from the previous candle's upper side downward; for a downward local observation the formulas SHALL be mirrored from the previous candle's lower side upward.
+### Requirement: Overlap penetration preserves direction-aware raw geometry
 
-The contract SHALL expose separately named numeric fields for at least:
+For every consecutive candle pair, the atomic record SHALL preserve enough raw values to reconstruct penetration relative to either local direction later, including both candles' OHLC/body bounds, overlap bounds, and upper/lower extensions.
 
-- `wick_penetration_against_local_move`;
-- `body_penetration_against_local_move`;
-- `close_penetration_against_local_move`;
-- `extension_with_local_move`;
-- `extension_against_local_move`.
-
-No field name SHALL imply macro direction when the formula is relative to local direction.
+When direction-aware penetration fields are exported for a specified observation direction, their formulas and normalization denominators SHALL be explicitly documented in the feature dictionary before implementation. No implementation SHALL silently choose a penetration formula or call it macro-directional when it is relative to a local observation direction.
 
 ### Requirement: Pairwise overlap supports arbitrary later aggregation
 
-The atomic pairwise overlap records SHALL retain timestamps and calculation resolution so that overlap can later be aggregated over arbitrary periods without rerunning source-data collection.
+The atomic pairwise overlap records SHALL retain both candle identifiers/timestamps and calculation resolution so that overlap can later be aggregated over arbitrary periods without rerunning source-data collection.
 
-For approved rolling windows, the system SHALL also export at least:
+For approved rolling windows, the system SHALL export at least:
 
-- mean normalized overlap;
-- median normalized overlap;
-- `any_overlap_share`, defined as the share of eligible consecutive pairs with positive overlap.
+- mean and median `overlap_share_prev`;
+- mean and median `overlap_share_curr`;
+- mean and median `overlap_jaccard`;
+- `any_overlap_share`, defined as the share of eligible consecutive pairs with `range_overlap_abs > 0`.
 
-The output SHALL identify the rolling duration and calculation resolution explicitly.
+The output SHALL identify the rolling duration, calculation resolution, eligible pair count, and coverage status explicitly.
 
 ### Requirement: Choppiness remains decomposed
 
