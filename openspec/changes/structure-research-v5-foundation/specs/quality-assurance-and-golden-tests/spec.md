@@ -182,6 +182,14 @@ Expected safe interior `[05:24,11:17)`.
 
 At 5m resolution only candles wholly contained in this interval qualify. Any candle overlapping 05:23 minute or the end uncertainty is excluded from safe metrics but remains queryable. `safe_internal_*` fields describe only this guaranteed interior; generic/anchor-inclusive whole-leg path remains null unless full boundary path becomes known.
 
+### G41 — Exact UUID fixtures for new macro-anchor and retracement identities
+Using namespace `87411ce4-8483-55b7-a348-700b7ad4b9ab`:
+
+- identity string `macro_anchor|c7f7166a72f57ee9af75ddc0d5711d45d8371b546d83c10cdc77bc129523d0d3|E00210` SHALL produce `macro_anchor_id=3adfa46c-f5f9-5580-b083-ed22f2d5a696`;
+- identity string `retracement|ANCHOR_A|ANCHOR_B|ANCHOR_C|REL_001` SHALL produce `retracement_id=ccdc33cf-94bf-5362-ae36-b060e81f6648`.
+
+Changing run id, local path, or mutable provenance SHALL NOT change either id. Changing one identity component SHALL change the UUID deterministically.
+
 ## Production invariants
 
 ### Requirement: Approved source gaps are visible, never hidden
@@ -194,6 +202,6 @@ Tests/features consume configured canonical boundary, not duplicated conflicting
 Coarse/multiple/incomplete anchor timing SHALL remain explicit. The builder SHALL NOT choose a convenient candidate merely to complete a leg.
 
 ### Requirement: QA status is mechanically derived
-G01-G40 and schema/source/referential invariants are critical unless explicitly documented not-applicable by contract.
+G01-G41 and schema/source/referential invariants are critical unless explicitly documented not-applicable by contract.
 
 `qa_status=PASS` only when all applicable critical tests pass and `failure_report.json` has zero unresolved critical failures. Otherwise `FAIL`.
