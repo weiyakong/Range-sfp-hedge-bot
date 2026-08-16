@@ -25,13 +25,15 @@ Approved macro source:
 `macro_legs_log20.csv`
 SHA-256 `c7f7166a72f57ee9af75ddc0d5711d45d8371b546d83c10cdc77bc129523d0d3`.
 
-Approved 5m localization:
+Reviewed localization:
 `macro_pivots_5m_all.csv`
 SHA-256 `77a6fa1339794a96ddff327e038d66b17347914dcfa8fbb0d9a90765fd3900bc`.
 
-It contains 138 unique pivots: 131 unique 5m candidates and 7 multiple-5m pivots, no unresolved coverage.
+It contains 138 unique pivots: 131 unique localization windows and 7 multiple-window pivots, no unresolved coverage.
 
-Before real macro production, a separate trade-refinement stage examines the 145 candidate 5m intervals with same-market official Binance trades/aggTrades and freezes a reviewed refinement artifact/checksum.
+There are 145 candidate windows total. 142 are canonical-grid 5m windows. Three spot windows (`E00059`,`E00065`,`E00070`) inherit the known `+20.799s` source offset and are not canonical 5m candles. The trade stage must resolve their exact pivot from official trades and then assign the actual canonical 5m candle containing that pivot.
+
+Before real macro production, a separate trade-refinement stage examines all 145 candidate windows with same-market official Binance trades/aggTrades and freezes a reviewed refinement artifact/checksum.
 
 The main v5 pipeline consumes that artifact. It does not independently choose trade touches.
 
@@ -39,16 +41,17 @@ The main v5 pipeline consumes that artifact. It does not independently choose tr
 
 Every anchor preserves:
 - original source coordinate/precision/provenance;
-- 5m localization candidates;
+- localization candidate windows and whether each is canonical-grid or off-grid source-localization;
 - every exact trade touch considered;
+- canonical 5m containment after exact trade resolution;
 - exact pivot time + native sequence id only when one unique touch exists;
 - fallback uncertainty otherwise.
 
-5m localization is not exact timing.
+Localization is not exact timing.
 
-For a unique exact pivot, create LEFT/RIGHT boundary fragments without altering canonical candles. Pivot record count/volume belongs to LEFT once; RIGHT starts from pivot price state and excludes that record.
+For a unique exact pivot, create LEFT/RIGHT boundary fragments inside the canonical 5m candle containing the pivot, without altering canonical candles. Pivot record count/volume belongs to LEFT once; RIGHT starts from pivot price state and excludes that record.
 
-At higher TFs, partial boundaries are composed from the trade-resolved partial 5m piece plus complete canonical 5m intervals.
+At higher TFs, partial boundaries are composed from the trade-resolved partial canonical 5m piece plus complete canonical 5m intervals.
 
 ## 5. Macro measurements
 
@@ -82,7 +85,7 @@ Macro legs/anchors/trade touches/boundary fragments/retracements/context are ret
 
 ## 8. Pipeline stage graph
 
-0. external/preparatory: reviewed 5m localization (already complete) and reviewed trade-refinement artifact (must be complete before real macro production)
+0. external/preparatory: reviewed localization (already complete, including three known off-grid source windows) and reviewed trade-refinement artifact (must be complete before real macro production)
 1. `S00_contract_and_config`
 2. `S01_source_inventory`
 3. `S02_canonical_1m`
@@ -108,7 +111,9 @@ Macro legs/anchors/trade touches/boundary fragments/retracements/context are ret
 Validate:
 - macro checksum and 128 legs
 - localization checksum and 138 pivots/status counts
+- 145 candidate windows, including exactly three known off-grid source windows
 - trade-refinement artifact checksum/statuses
+- canonical 5m containment for every exact pivot
 - anchor-level provenance
 - exact-price Decimal/fixed-point QA
 - all exact touches/native sequence ids
