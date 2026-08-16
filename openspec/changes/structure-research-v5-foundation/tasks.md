@@ -6,443 +6,422 @@ Implement in the order below unless a task explicitly permits parallel work.
 
 Do not launch the full-history production run as part of implementation completion.
 
-Each task must satisfy its acceptance criteria and applicable golden/regression tests before downstream tasks rely on its outputs.
+Each task must satisfy its acceptance criteria and applicable golden/regression tests before downstream tasks rely on its outputs. A task that merely writes files but fails semantic validation is incomplete.
 
-A task that produces files but fails semantic validation is incomplete.
+## Phase 0 — Contract freeze and scaffolding
 
-## Phase 0 — Contract freeze and implementation scaffolding
+### T00. Freeze final source contract
 
-### T00. Finalize source contract
+Record exactly:
 
-- Incorporate the completed early-futures investigation.
-- Record exact first usable BTCUSDT USDT-M futures timestamp.
-- Record exact canonical spot-to-futures boundary.
-- Record unresolved spot/futures gaps and evidence.
-- Record approved source artifacts/manifests and fingerprints.
-- Preserve the already accepted 6,235 irrecoverable spot minutes as documented gaps unless a later explicitly approved source repair changes that result.
-
-Acceptance:
-
-- one source-contract/configuration source of truth exists;
-- feature/test code does not independently hardcode a conflicting market boundary;
-- source gaps and market transitions are explicit and machine-readable.
-
-### T01. Define runtime schemas and typed domain contracts
-
-Implement typed runtime contracts for:
-
-- source segment;
-- source gap;
-- canonical 1m candle;
-- canonical fixed candle;
-- observation identity;
-- atomic candle pair;
-- feature-family outputs;
-- manifests/checkpoints/run config.
+- first futures trade `2019-09-08T17:57:50.575000Z`;
+- first futures 1m bucket/canonical boundary `2019-09-08T17:57:00Z`;
+- raw spot gaps 6235;
+- cutoff-audit expectation 5972 canonical-relevant spot missing minutes / 16 intervals, subject to strict minute-grid revalidation;
+- native/source futures gap at `2019-09-08T19:00:00Z`;
+- diagnostic synthetic 19:00 row exclusion from canonical data;
+- macro forensic source provenance including mixed Sep-Dec 2019 behavior;
+- approved evidence artifact paths/fingerprints.
 
 Acceptance:
 
-- required columns/dtypes/nullability/enums/keys are validated at material pipeline boundaries;
-- public production functions and structured config are type-annotated;
-- the repository-configured type checker passes.
+- one source-contract/config source of truth exists;
+- no feature/test code hardcodes a conflicting market boundary;
+- synthetic diagnostic rows cannot satisfy canonical completeness;
+- source/audit expectations are machine-readable.
 
-### T02. Implement deterministic identity helpers
+### T01. Define typed runtime schemas
 
-Implement UUIDv5 ids exactly as specified.
-
-Acceptance:
-
-- G17 exact identifier fixture passes;
-- ids are independent of run id/local path/archive filename where specified.
-
-## Phase 1 — Source and canonical candle spine
-
-### T10. Implement source inventory
-
-Read approved local market-data artifacts and report:
-
-- provenance;
-- market type;
-- timeframe;
-- first/last timestamp;
-- row count;
-- duplicates;
-- gaps;
-- OHLC/numeric validity;
-- checksums where feasible.
+Implement typed contracts for all canonical logical tables, manifests, checkpoints, and run configuration, including `cross_market`, anchor precision/source provenance, `candle_geometry`, and `retracement_measurements`.
 
 Acceptance:
 
-- inventory is reproducible;
-- no unapproved downloads occur;
+- required columns/dtypes/nullability/enums/keys validated at material boundaries;
+- public production functions/config typed;
+- configured type checker passes.
+
+### T02. Implement deterministic ids
+
+Implement UUIDv5 identities exactly as schema specifies, including retracement ids.
+
+Acceptance: G17 and idempotency tests pass.
+
+## Phase 1 — Source/canonical spine
+
+### T10. Inventory approved sources
+
+Inventory provenance, market type, timeframe, first/last timestamp, rows, duplicates, timestamp alignment, gaps, OHLC/numeric validity, and checksums.
+
+Explicitly distinguish raw spot files, canonical pre-cutoff spot candidates, native early futures, diagnostic synthetic 19:00 row, public futures archives, and legacy higher-TF diagnostic references.
+
+Acceptance:
+
+- no unapproved downloads;
+- non-minute source timestamps are reported, not silently rounded;
 - inventory failures affect QA/status.
 
-### T11. Build canonical 1m Parquet
-
-Normalize approved source rows into canonical `candles_1m`.
+### T11. Build strict canonical 1m Parquet
 
 Requirements:
 
-- UTC half-open intervals;
-- exact OHLCV preservation;
+- UTC half-open minute intervals;
+- observed approved OHLCV only;
+- stable ids;
 - row-level provenance;
 - no synthetic missing candles;
-- stable ids;
+- exclude post-boundary spot rows from canonical combined chronology;
+- exclude diagnostic synthetic futures 19:00 row;
 - bounded/chunked processing;
-- partitioning `market_type/year/month`;
-- Zstandard compression.
+- Zstandard, partition `market_type/year/month`.
 
 Acceptance:
 
 - natural keys unique;
-- source-gap minutes absent rather than fabricated;
-- schema and manifest validation pass.
+- every start time minute-aligned;
+- synthetic 19:00 absent;
+- source gaps remain absent rows;
+- manifest/schema validation passes.
 
-### T12. Build source segments and source gaps
+### T12. Build canonical source gaps and segments
 
-Assign continuity segments from canonical 1m and finalized source contract.
+Derive strict source continuity from canonical 1m plus source contract.
 
 Acceptance:
 
-- real gaps split continuity;
 - spot/futures boundary splits continuity;
-- archive/provenance changes alone do not split continuity;
-- G03 and G04 pass;
-- `source_segments` and `source_gaps` referentially agree with 1m rows.
+- 19:00 futures gap splits continuity;
+- validated historical spot gaps split continuity;
+- archive/provenance changes alone do not;
+- all canonical gap boundaries minute-aligned;
+- production spot gap totals compared against 5972/16 audit expectation with explicit discrepancy handling;
+- G03, G04, G27, G30 pass.
 
-### T13. Build canonical fixed candles from 1m
+### T13. Build canonical fixed UTC interval grid
 
-Build `5m`, `15m`, `1H`, `4H`, `1D` directly from canonical 1m.
+Build 5m/15m/1H/4H/1D directly from canonical 1m.
 
 Acceptance:
 
 - G01/G02 pass;
-- incomplete target intervals have null complete OHLCV and explicit coverage;
-- canonical construction never recursively substitutes native higher-TF candles.
+- gap intervals have null complete OHLCV;
+- source-boundary-crossing intervals exist as `cross_market/incomplete_boundary`, complete OHLCV null;
+- G26 passes;
+- native higher TF never replaces canonical derived values.
 
-### T14. Build cross-timeframe containment
+### T14. Build atomic target candle geometry
 
-Persist target-to-target containment map.
+Materialize `candle_geometry` for every complete 5m-and-higher canonical candle.
 
 Acceptance:
 
-- zero-based ordinals;
-- deterministic parent membership;
-- G06 passes;
-- no required exploded 1m-to-parent mapping is created.
+- one geometry row per complete target candle;
+- no valid geometry for incomplete/boundary intervals;
+- exact absolute/log geometry formulas;
+- G31 passes.
 
-## Phase 2 — Observation identity and base geometry
+### T15. Build cross-timeframe containment
+
+Persist target-to-target mappings with zero-based ordinals.
+
+Acceptance: G06 passes; no exploded 1m→all-parent map.
+
+## Phase 2 — Observations and basic movement
 
 ### T20. Build observation index
 
-Create fixed, rolling, and macro observation identities.
-
-Rolling observations:
-
-- evaluated on 5m endpoint grid;
-- durations `30m`, `1h`, `4h`, `12h`, `24h`, `3d`;
-- one observation id per interval/duration.
+Create fixed, rolling, macro observations.
 
 Acceptance:
 
-- fixed vs rolling remain distinct;
-- G05 and G16 pass;
-- availability class/available-at semantics are valid.
+- fixed/rolling distinct;
+- `expected_base_resolution`: fixed=1m, rolling=5m, macro=null unless explicitly materialized;
+- incomplete fixed/rolling ordinary endpoints/net features not presented as complete;
+- rolling identity reused across calculation resolutions;
+- G05/G16 pass.
 
 ### T21. Build price/speed features
 
-Calculate basic movement, log movement, local direction, speed, rolling adjacent-window speed change and acceleration.
+Use canonical field names only.
 
 Acceptance:
 
 - G07 passes;
-- no threshold labels are emitted;
-- future-data invariance applies to causal rows.
+- `local_direction_speed_pct_per_hour` and `local_direction_log_speed_per_hour` used;
+- deprecated normalized-name variants absent;
+- future-data invariance passes.
 
-## Phase 3 — Pair geometry and path/activity
+## Phase 3 — Pair/path/activity
 
-### T30. Build atomic candle-pair table
+### T30. Build atomic pair geometry
 
-For each target calculation resolution, create chronological neighbor candidates and calculate neutral pair geometry only for eligible pairs.
+Eligibility: same source segment, same resolution, exact adjacency.
 
 Acceptance:
 
-- same-segment + same-resolution + exact adjacency required;
-- source/gap boundary candidates cannot masquerade as eligible;
-- overlap/body overlap/position/penetration/extension formulas match spec;
+- boundary/gap candidates cannot be eligible;
+- neutral overlap/body overlap/position/penetration/extension formulas exact;
 - G11 passes.
 
-### T31. Build path/activity/extrema features
+### T31. Build path/activity/extrema using exact matrices
 
-For supported observation/calculation-resolution combinations compute:
+Fixed matrix:
 
-- close/log path;
-- path efficiencies;
-- upward/downward path;
-- local-direction path;
-- alternation/zero-step behavior;
-- range/body/wick/TR activity;
-- extrema first/last/count;
-- excursions.
+- 15m via 5m
+- 1H via 5m,15m
+- 4H via 5m,15m,1H
+- 1D via 5m,15m,1H,4H.
 
-Acceptance:
+Rolling matrix:
 
-- G08/G09/G10 pass;
-- incomplete required constituent coverage nulls complete metrics;
-- calculation-resolution matrix respected.
-
-### T32. Build macro internal and anchor-inclusive path
-
-Reuse tested path engine where semantics match; add explicit approved macro anchor transitions.
+- 30m via 5m,15m
+- 1h via 5m,15m
+- 4h via 5m,15m,1H
+- 12h via 5m,15m,1H,4H
+- 24h via 5m,15m,1H,4H
+- 3d via 5m,15m,1H,4H,1D.
 
 Acceptance:
 
-- G15 passes;
-- boundary/gap-crossing macro legs do not bridge complete path;
-- macro source movement remains preserved independently.
+- G08/G09/G10/G16/G32 pass;
+- incomplete coverage nulls complete metrics.
 
-## Phase 4 — Overlap aggregation
+### T32. Build macro internal path/activity
+
+At 5m/15m/1H/4H/1D when at least two eligible complete constituents exist.
+
+Acceptance:
+
+- source macro displacement preserved independently;
+- no path bridges canonical gaps/boundaries;
+- historical macro provenance is not overwritten by current boundary;
+- G28/G33 pass.
+
+### T33. Build gated macro anchor-inclusive path
+
+Use source anchors only when market/source compatibility and anchor-time precision are sufficient for the requested calculation resolution.
+
+Acceptance:
+
+- a 4H-bucket-start refined extreme is not treated as exact event time;
+- insufficient precision => anchor-inclusive metrics null with explicit status;
+- G15 synthetic exact-anchor fixture still tests the math engine;
+- G29 passes.
+
+## Phase 4 — Overlap
 
 ### T40. Build observation overlap summaries
 
-Aggregate only eligible atomic pairs fully internal to each observation.
+Aggregate eligible pairs fully internal to observations under the exact fixed/rolling/macro matrices.
 
 Acceptance:
 
-- pair crossing observation start boundary is not included as internal pair;
-- mean/median/share metrics match atomic source rows;
-- direction-relative summaries are derived only after observation direction exists;
-- causal/retrospective availability remains correct.
+- start-boundary crossing pair excluded from internal aggregation;
+- direction-relative summaries computed only when valid direction exists;
+- coverage/status exact.
 
-## Phase 5 — Volume and volatility
+## Phase 5 — Volume/volatility
 
 ### T50. Build dual volume-direction groupings
 
-Implement body-direction and close-step-direction totals/shares independently.
+Acceptance: G12; no ambiguous generic up/down volume.
+
+### T51. Build TR/ATR
 
 Acceptance:
 
-- G12 passes;
-- generic ambiguous `up_volume/down_volume` outputs are prohibited.
+- G13;
+- state resets at every true source gap/boundary, including futures 19:00;
+- no previous close borrowed across discontinuity.
 
-### T51. Build TR and ATR state
+### T52. Build realized volatility and numeric range/TR/ATR components
 
-Implement per-resolution/per-source-segment TR, ATR14 SMA, and Wilder ATR.
+Fixed/rolling only for RV in first pass.
 
-Acceptance:
+Use canonical names:
 
-- G13 passes;
-- gap/source boundary resets state;
-- first invalid previous-close TR is null.
-
-### T52. Build realized volatility and numeric compression/expansion components
-
-Use the same boundary-aware Q sequence as path for RV.
-
-Calculate required range/TR/ATR comparison fields without semantic state labels.
+- `observation_high_low_width`
+- `observation_high_low_width_pct_start`
+- `observation_log_high_low_width`
+- `mean_full_range`, `median_full_range`
+- `mean_log_full_range`, `median_log_full_range`
+- declared current-vs-prev rolling deltas/ratios.
 
 Acceptance:
 
-- G08 RV values pass;
-- no annualization;
-- incomplete/gap-crossing observations have null complete RV;
-- no composite compression/expansion score is created.
+- G08 RV;
+- macro RV not materialized as valid first-pass metric;
+- no composite compression/expansion label;
+- G33/G34 pass.
 
 ### T53. Build rolling volume comparisons
 
-Implement current versus immediately previous equal complete window comparisons.
+Use `volume_sum_change_vs_prev` and `volume_sum_ratio_vs_prev`.
 
 Acceptance:
 
-- exact adjacent-window semantics;
-- zero/undefined denominator null handling;
-- no semantic accumulation/exhaustion labels.
+- exact adjacent non-overlap window semantics;
+- denominator-null behavior;
+- deprecated `volume_delta/volume_ratio` absent;
+- G34 passes.
 
-## Phase 6 — Macro retrospective context
+## Phase 6 — Macro provenance/context + retracement
 
-### T60. Load and validate approved macro source
+### T60. Load/validate approved macro source
 
-Load exact configured `macro_legs_log20.csv` and verify expected fingerprint/provenance.
+Verify exact `macro_legs_log20.csv` checksum.
+
+Enrich source rows with forensic evidence:
+
+- old parent daily regime;
+- refinement source market/timeframe;
+- effective source class;
+- anchor-time precision;
+- canonical-compatibility status.
 
 Acceptance:
 
-- no similarly named substitute file is auto-selected;
-- source fields preserved distinctly from recomputed fields;
-- source-vs-derived direction QA emitted.
+- late-2019 audited mixed provenance preserved;
+- current source boundary does not relabel historical source;
+- source-vs-derived direction QA emitted;
+- G28 passes.
 
-### T61. Build observation-to-macro retrospective context
+### T61. Build retrospective observation-macro context
 
-Calculate temporal intersection, leg-time progress, macro-aligned numeric features where approved.
+Calculate approved temporal intersection/progress and macro-aligned numeric context only in retrospective table.
+
+Acceptance: no endpoint-derived macro leakage into causal tables; no parent hierarchy.
+
+### T62. Implement direct retracement formula engine
+
+Implement exact approved A-B-C formula independently of relationship discovery.
+
+Acceptance: G14 passes including >100% retracement and same-direction continuation=0.
+
+### T63. Materialize explicitly approved retracement relationships only
+
+Build `retracement_measurements` only from a configured list of approved A-B-C tuples.
 
 Acceptance:
 
-- table is explicitly retrospective;
-- no macro endpoint-derived values written into causal feature tables;
-- no validated parent hierarchy is invented.
+- no arbitrary anchor combinations;
+- tuple provenance/precision/availability stored;
+- zero rows is valid if no production tuple list configured;
+- G14 tests formula regardless of row count.
 
-## Phase 7 — Dictionary, manifests, extraction
+## Phase 7 — Dictionary/manifests/extraction
 
 ### T70. Generate canonical feature dictionary
 
-Build dictionary from declared schema/feature definitions.
-
 Acceptance:
 
-- G20 passes;
-- every materialized metric has formula/units/null/availability/provenance definition;
-- small CSV review copy emitted.
+- every materialized metric defined once with exact canonical name/formula/units/availability/null/provenance;
+- deprecated conflicting names absent;
+- G20/G34 pass.
 
 ### T71. Generate deterministic manifests/catalog
 
-For every logical table record parts, schemas, partitions, coverage, row counts, run id, integrity evidence.
+Acceptance: G22; reconstruct all logical tables without duplicate keys.
+
+### T72. Implement deterministic Parquet extraction
+
+Support time/market/source segment/timeframe/rolling duration/calculation resolution/observation ids/macro ids/retracement ids/feature families/availability/as-of filters.
 
 Acceptance:
 
-- G22 passes;
-- logical tables reconstruct without duplicate canonical keys.
+- predicate/column pruning;
+- no full conversion before filtering;
+- no hidden recomputation;
+- geometry and retracement tables extractable;
+- G23.
 
-### T72. Implement deterministic Parquet extraction utility
+## Phase 8 — Checkpoint/resume
 
-Support filtering by:
+### T80. Stage/work-unit checkpoints
 
-- time range;
-- market/source segment;
-- fixed timeframe;
-- rolling duration;
-- calculation resolution;
-- observation ids;
-- macro leg ids;
-- feature families/columns;
-- availability class;
-- as-of time.
+Acceptance: <=20 minutes validated work at risk.
 
-Acceptance:
+### T81. Resume verification
 
-- predicate/column pruning used where supported;
-- no full Parquet-to-CSV conversion before filtering;
-- no hidden feature recomputation;
-- G23 passes;
-- review CSV size/partition rules respected.
+Acceptance: G24; incompatible/corrupt state rejected; no duplicate rows.
 
-## Phase 8 — Checkpoint/resume and artifact safety
+### T82. Atomic artifact promotion
 
-### T80. Implement stage/work-unit checkpoints
+Temporary write -> validate -> atomic promote -> manifest update.
 
-Checkpoint only validated completed units.
-
-Acceptance:
-
-- <=20 minutes validated work at risk between persistence points during long stages;
-- checkpoint records semantic compatibility and artifact evidence.
-
-### T81. Implement resume verification
-
-Resume must validate config/input/schema/stage/checkpoint/artifact compatibility and skip only proven completed units.
-
-Acceptance:
-
-- G24 passes;
-- stale/incompatible/corrupt checkpoints are rejected;
-- no duplicate rows on resume.
-
-### T82. Implement atomic artifact promotion
-
-Use temporary write -> validation -> atomic promotion -> manifest update.
-
-Acceptance:
-
-- interrupted writes cannot appear as valid final canonical parts;
-- manifests never reference unvalidated partial artifacts.
+Acceptance: manifests never reference partial/unvalidated parts.
 
 ## Phase 9 — QA
 
-### T90. Implement golden fixture suite G01-G25
+### T90. Implement complete golden suite G01-G34
 
-Tests SHALL be written/updated before relying on corresponding implementation behavior.
+Acceptance: every applicable critical golden test executes and passes.
 
-Acceptance:
+### T91. Independent persisted-artifact QA
 
-- every applicable critical golden test executes and passes;
-- exact failure evidence recorded.
-
-### T91. Implement independent persisted-artifact QA
-
-Validate produced Parquet/manifests independently of builder success flags.
+Inspect actual canonical Parquet/manifests, not builder flags.
 
 Acceptance:
 
-- key/reference/schema/source/gap/boundary/causality checks inspect real artifacts;
+- schema/keys/references;
+- minute-grid alignment;
+- strict 19:00 gap;
+- source-boundary isolation;
+- historical macro provenance;
+- anchor precision;
+- fixed/rolling/macro matrices;
+- causal leakage;
 - final QA status derived mechanically.
 
-### T92. Implement forbidden-label regression check
+### T92. Forbidden-label/name regression
 
 Acceptance:
 
-- G19 passes;
-- first-pass generated features contain no new impulse/correction/range/breakout/choppiness/parent/Fib/FibTime labels.
+- G19/G34;
+- no impulse/correction/range/breakout/choppiness/parent/Fib/FibTime generated labels;
+- no deprecated conflicting feature names.
 
-### T93. Implement native higher-timeframe reference QA
+### T93. Higher-timeframe reference QA with trust classification
 
-Compare selected/available complete canonical 1m-derived candles against approved native Binance higher-TF references.
+Every QA reference classified `critical_validated_reference` or `diagnostic_reference`.
 
-Acceptance:
+Known legacy inconsistent 1D/4H caches remain diagnostic where trust is not established.
 
-- G25 passes where applicable;
-- unexplained material mismatches fail QA rather than replacing canonical values silently.
+Acceptance: G25; diagnostic mismatch cannot overwrite canonical data or fail critical QA by itself.
 
 ## Phase 10 — Bounded real-data smoke only
 
-### T100. Select representative smoke coverage
+### T100. Select representative smoke slice
 
-Choose the smallest real-data slice that exercises:
+Exercise:
 
-- normal continuous futures data;
+- ordinary continuous futures;
+- source gap behavior including 19:00 if practical;
+- boundary-crossing fixed rows;
 - multiple target resolutions;
-- rolling windows;
-- atomic pairs/path/volume/volatility;
-- at least one approved macro leg;
-- extraction;
-- where practical, a documented gap/boundary-adjacent condition.
-
-Do not change formulas based on smoke results without updating approved specs/tests.
+- rolling features;
+- geometry;
+- pairs/path/overlap/volume/volatility;
+- at least one approved macro leg, preferably including a mixed-provenance test case;
+- extraction.
 
 ### T101. Run smoke pipeline
 
-Run through persisted canonical outputs and independent QA.
-
 Acceptance:
 
-- golden tests already PASS;
-- smoke QA PASS;
+- golden G01-G34 already PASS;
+- independent smoke QA PASS;
 - manifests reconstruct;
-- causal extraction contains no retrospective leakage;
-- row counts/coverage are plausible and independently checked.
+- causal extraction clean;
+- row counts/coverage independently plausible.
 
 ### T102. Stop and report
 
-After smoke:
+Report exact smoke coverage, output/manifests, QA/golden results, warnings/source limitations, and measured storage/runtime evidence. STOP.
 
-- report exact coverage;
-- report output paths/manifests;
-- report QA/golden results;
-- report warnings/known source limitations;
-- report approximate production storage/runtime evidence if measured;
-- STOP.
+Do not run full history without explicit authorization.
 
-Do not run full history without the next explicit authorization/review gate.
-
-## Phase 11 — Full production (deferred execution gate)
+## Phase 11 — Full production (deferred gate)
 
 ### T110. Full-history run
 
-This task is defined for planning but SHALL NOT be executed as part of the implementation/smoke assignment unless explicitly authorized after smoke review.
-
-Prerequisites:
-
-- source contract finalized;
-- all critical golden tests PASS;
-- bounded smoke QA PASS;
-- no unresolved critical failures;
-- user/approved process authorizes full production.
-
-Production acceptance criteria are the full applicable OpenSpec contracts, manifests, independent QA, and honest coverage status.
+Defined for planning only. Execute only after explicit approval following successful implementation/golden/smoke review.
