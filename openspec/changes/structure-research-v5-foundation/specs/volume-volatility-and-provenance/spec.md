@@ -26,11 +26,31 @@ Any additional additive native fields such as quote volume, trade count, or take
 
 A derived candle SHALL NOT silently sum volume across a spot/futures source boundary or across an incomplete constituent set. Incomplete-window diagnostics MAY preserve observed-only sums under explicitly `observed_only_*` names, but those values SHALL NOT be exposed as complete derived volume.
 
+### Requirement: Volume direction is preserved under two distinct mechanical conventions
+
+When volume is grouped by finer-bar direction, the research output SHALL preserve two separately named conventions because they answer different questions and SHALL NOT be conflated.
+
+Body-direction convention:
+
+- `body_direction = up` when `close > open`;
+- `body_direction = down` when `close < open`;
+- `body_direction = flat` when `close == open`.
+
+Close-step-direction convention, when a valid previous close exists in the same continuous source segment:
+
+- `close_step_direction = up` when `close_t > close_(t-1)`;
+- `close_step_direction = down` when `close_t < close_(t-1)`;
+- `close_step_direction = flat` when `close_t == close_(t-1)`.
+
+Observation/window summaries SHALL be able to preserve separately named volume totals/shares for body-up/body-down/body-flat and close-step-up/close-step-down/close-step-flat constituent bars where source volume is valid.
+
+No implementation SHALL use an ambiguous generic `up_volume` or `down_volume` name without identifying which convention was used.
+
 ### Requirement: Rolling volume behavior is measurable
 
 For approved rolling durations supported by the calculation resolution and coverage, the system SHALL support numeric summaries including volume sum, mean, median, change versus the previous equal-duration window, and ratio versus the previous equal-duration window where the denominator is non-zero.
 
-The system SHALL also preserve enough information to compare volume on objectively defined finer-bar price-direction groupings without assigning accumulation, distribution, absorption, or exhaustion labels. The exact grouping convention SHALL be explicit in the feature dictionary and SHALL NOT be inferred from an ambiguous `up_bar` or `down_bar` name.
+The system SHALL also preserve the approved body-direction and close-step-direction volume groupings without assigning accumulation, distribution, absorption, or exhaustion labels.
 
 ### Requirement: Effort-versus-result measurements remain numeric
 
@@ -98,6 +118,14 @@ The system SHALL NOT infer from a derived-feature manifest alone that all higher
 ### Requirement: Missing data is not synthesized silently
 
 The research pipeline SHALL preserve actual source gaps and coverage limitations. It SHALL NOT synthesize missing market history or download additional data without explicit approval.
+
+If an approved source-repair pass is performed, missing candles MAY be reconstructed only from lower-level official data for the same venue, instrument, and market type and only under a documented deterministic aggregation rule. For example, missing Binance spot `1m` candles MAY be reconstructed from official Binance spot trades or aggTrades covering the same interval when those records are available and complete enough to determine OHLCV.
+
+A reconstructed candle SHALL preserve distinct provenance such as `reconstructed_from_spot_trades` or `reconstructed_from_spot_aggtrades`, the contributing source interval/count, and validation status. It SHALL NOT be relabeled as an original archived kline.
+
+Futures data SHALL NOT be used to reconstruct missing spot candles, and spot data SHALL NOT be used to reconstruct missing futures candles.
+
+If the same-market lower-level official data is also incomplete or unavailable, the gap SHALL remain a real documented gap. Interpolation, forward fill, backward fill, synthetic candles, or cross-market substitution are prohibited.
 
 ### Requirement: Sequential calculations do not cross source boundaries
 
