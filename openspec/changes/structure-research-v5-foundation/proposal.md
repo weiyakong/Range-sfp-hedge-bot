@@ -1,125 +1,64 @@
 # Proposal: Structure Research v5 Foundation
 
 ## Summary
-
-Build a reproducible first-pass BTC research dataset that preserves objective multi-timeframe movement measurements without prematurely classifying impulse/correction/range/chop/parent/Elliott/Fibonacci structure.
+Build a reproducible first-pass BTC research dataset preserving objective multi-timeframe movement measurements without prematurely classifying impulse/correction/range/chop/parent/Elliott/Fibonacci structure.
 
 ## Core architecture
-
-Canonical market layer:
-- strict observed 1m spot/futures chronology
-- deterministic 5m/15m/1H/4H/1D
-- explicit gaps/source transitions
-- candle geometry, rolling/fixed path/speed/overlap/volume/volatility.
+Canonical layer: strict observed 1m spot/futures chronology, deterministic 5m/15m/1H/4H/1D, explicit gaps/source transitions, geometry and objective fixed/rolling measurements.
 
 Macro layer:
-- approved 128 `macro_legs_log20` legs
-- reviewed 138-pivot localization artifact
-- same-market official Binance `aggTrades` refinement of all localization candidate windows before exact macro production
-- exact source-anchor price: earliest exact aggTrade touch wins
-- no exact source-anchor price: high pivot uses highest realized aggTrade price, low pivot uses lowest realized aggTrade price
-- source anchor coordinate remains preserved separately from refined realized pivot coordinate
-- canonical 5m containment determined from resolved aggTrade event time
-- LEFT/RIGHT boundary fragments as retrospective macro-analysis entities
-- conservative fallback only when one authoritative boundary time remains unresolved.
+- approved 128 `macro_legs_log20` legs;
+- reviewed 138-pivot/145-candidate localization artifact;
+- same-market official Binance aggTrades refinement before exact macro production;
+- exact source-anchor price -> earliest exact aggTrade touch;
+- no exact source-anchor price -> highest realized price for high pivot / lowest realized price for low pivot;
+- source anchor coordinate preserved separately;
+- LEFT/RIGHT retrospective boundary fragments;
+- conservative fallback when authoritative time remains unresolved.
 
-## Approved refinement source
+Repeated equal selected directional extrema remain an explicitly deferred tie-break decision. Until that rule is approved, realized price is preserved but authoritative time/id and endpoint-dependent exact metrics remain unresolved. No implementation may infer a time threshold, retest/range classification, or first/last selection.
 
-The approved source is the already downloaded official Binance BTCUSDT `aggTrades` dataset for the corresponding market. Raw individual trade data are outside the approved calculation path unless later explicitly approved.
+## Approved refinement source and access
+Only already downloaded official Binance BTCUSDT aggTrades for the corresponding market are approved. Raw individual trades are outside the calculation path unless separately approved.
 
-Every candidate localization window is scanned as half-open `[candidate_start,candidate_start+5m)`.
+Every localization candidate is half-open `[candidate_start,candidate_start+5m)`.
 
-If `aggTrades` are insufficient for a particular pivot or metric, preserve/report the limitation rather than silently switching source.
+Source access is bounded and archive-aware. Per-anchor/per-fragment code may not repeatedly parse whole day/month archives. Multiple requested windows/buckets in one physical archive must be served by one shared streaming scan, validated indexed/range access, or validated bounded cache. One whole-archive scan per different 5m bucket is prohibited.
 
-## Approved macro localization facts
+Fragment source is exactly its canonical `[B0,B1)` 5m bucket. Higher-TF fragments reuse the 5m fragment plus canonical 5m candles. ZIP/CSV hot paths use robust streaming/bounded parsing; pandas whole-file DataFrame parsing is prohibited. Parser failure is `source_reader_failure`, not missing coverage and not permission for raw fallback.
 
-Macro checksum:
-`c7f7166a72f57ee9af75ddc0d5711d45d8371b546d83c10cdc77bc129523d0d3`
+## Approved localization facts
+Macro SHA-256 `c7f7166a72f57ee9af75ddc0d5711d45d8371b546d83c10cdc77bc129523d0d3`.
+Localization SHA-256 `77a6fa1339794a96ddff327e038d66b17347914dcfa8fbb0d9a90765fd3900bc`.
+138 pivots: 131 unique-window, 7 multiple-window, 0 localization unresolved. 145 candidate windows: 142 canonical-grid starts; E00059/E00065/E00070 are known +20.799s off-grid source-localization windows.
 
-Localization checksum:
-`77a6fa1339794a96ddff327e038d66b17347914dcfa8fbb0d9a90765fd3900bc`
-
-138 pivots:
-- 131 unique localization windows
-- 7 multiple-window pivots
-- 0 incomplete/unresolved.
-
-145 candidate windows exist in total. 142 are canonical-grid 5m windows. Three spot windows (`E00059`,`E00065`,`E00070`) inherited the proven `+20.799s` source offset and remain source-localization windows only.
-
-Localization is not treated as exact pivot timing.
-
-## Exact macro measurement principle
-
-When both endpoint times are deterministically resolved at approved aggTrade-source granularity:
-- whole-leg duration/speed use refined realized event times/prices;
+## Exact macro measurement
+When both endpoint times resolve at approved aggTrade granularity:
+- duration/speed use refined realized endpoints;
 - one whole-leg speed exists;
-- macro path at each TF uses refined start price, chronological canonical closes at that TF, and refined end price;
-- aggTrade-level LEFT/RIGHT path remains separate microstructure;
-- macro volume/activity uses non-overlapping boundary fragments + complete interior intervals.
+- TF path uses refined start price, qualifying canonical closes and refined end price;
+- aggTrade fragment path remains separate microstructure;
+- volume/activity uses non-overlapping boundary fragments plus complete interiors.
 
-Canonical fixed candles are never split/replaced.
+Canonical fixed candles are never split/replaced. AggTrade rows are indivisible approved source records.
 
-An aggTrade is indivisible. If it contains multiple underlying raw trades, the pipeline does not invent internal timestamps/order/volume split.
+If authoritative boundary time is unresolved, exact endpoint-dependent metrics stay null and fallback uses only guaranteed fixed-grid interior. No guaranteed slot -> boundary-dependent fallback null.
 
-If one authoritative boundary time remains unresolved, exact endpoint-dependent metrics stay null and only guaranteed fallback interior is aggregated. If no guaranteed interior slot exists, boundary-dependent fallback metrics are null.
+## Price and volatility
+Prices use Decimal/string identity and exact integer `price_units=price*100`; approved evidence requiring greater than two fractional decimal places fails QA rather than rounding.
 
-## Source timestamp integrity
-
-Non-minute source timestamps do not automatically mean missing data. Proven off-grid source series require source-specific mapping with raw provenance retained.
-
-## Price identity
-
-Relevant audited BTCUSDT spot/futures/macro prices have maximum two fractional decimal places after exact decimal normalization.
-
-Use Decimal/string parsing and exact integer `price_units=price*100`; binary float identity/nearest-price matching is prohibited. New approved aggTrade evidence that cannot be represented exactly at scale 2 fails QA rather than being rounded silently.
-
-## Volatility
-
-Materialize both approved ATR14 forms:
-- `atr14_sma`
-- `atr14_wilder`.
-
-Both initialize only after 14 consecutive valid TR values. A real gap/source boundary resets continuity; the first following TR is null when there is no valid adjacent previous close, and both ATR series reinitialize from a new run of 14 valid TR values.
+Materialize both `atr14_sma` and `atr14_wilder`. Continuity breaks reset TR/ATR; first following TR is null and 14 new consecutive valid TRs are required.
 
 ## Retracement
+First-pass retracement is the immediately following opposite-direction macro leg when adjacent legs share one pivot. Approved count: 118 relationships; 9 discontinuous adjacent transitions excluded. No arbitrary tuples/Fibonacci labels.
 
-First-pass retracement is the following opposite-direction macro leg relative to the immediately preceding macro leg when they share one pivot.
-
-The approved 128-leg source yields 118 production retracement relationships; 9 adjacent transitions are discontinuous and excluded.
-
-No arbitrary tuples/Fibonacci labels.
+## Storage/resume
+Canonical analytical storage is Parquet/Zstandard. Targeted CSV is for review/exchange. Persist validated collected/derived progress no later than every 20 minutes. Restart-safe bounded source caches may be used only with source checksum + exact interval identity and validation.
 
 ## Scope
+In scope: canonical history/features, macro source/localization/refinement, bounded aggTrade source access, fragments, exact/fallback macro metrics, 118 retracements, Parquet/manifests/extraction/checkpoint/resume, independent QA and bounded smoke.
 
-In scope:
-- full approved history
-- canonical candles and objective fixed/rolling features
-- macro source/provenance
-- localization ingestion
-- approved aggTrade-refinement ingestion
-- macro boundary fragments
-- exact/fallback macro metrics
-- 118 macro retracements
-- Parquet/manifests/extraction/checkpoint/resume
-- independent QA and bounded smoke.
+Deferred: repeated-directional-extremum time tie-break; raw individual trade refinement unless separately approved; new swing hierarchy; impulse/correction/range/breakout/chop/parent/Fib/FibTime/Elliott labels; macro RV; broad full-history tick path reconstruction.
 
-Deferred:
-- raw individual trade refinement unless separately approved
-- new internal swing/leg hierarchy
-- impulse/correction thresholds/labels
-- parent impulse
-- range/breakout/chop labels
-- Fib/FibTime
-- Elliott
-- macro RV
-- broad full-history tick path reconstruction.
-
-## Availability
-
-Macro source/refinement/fragments/retracements remain retrospective (`available_at=null`) even when historical pivot time is resolved.
-
-## Execution gate
-
-Implementation is ready only when all specs/schema/design/tasks/QA are synchronized.
-
-Real full-history macro production additionally requires a reviewed frozen aggTrade-refinement artifact and explicit user authorization after bounded smoke.
+## Availability and gate
+Macro entities remain retrospective (`available_at=null`). Implementation/smoke requires synchronized formula/source/bounded-I/O QA. Real full-history macro production additionally requires a reviewed frozen aggTrade-refinement artifact and explicit user authorization after bounded smoke.
