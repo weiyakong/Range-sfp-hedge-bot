@@ -2,162 +2,77 @@
 
 ## Purpose
 
-Preserve volume and volatility information across approved resolutions while making source availability, formulas, missingness, and provenance explicit.
+Preserve source-accurate volume, volatility and provenance across fixed/rolling observations and exact/fallback macro boundaries.
 
-## ADDED Requirements
+## Canonical volume
 
-### Requirement: Raw volume and valid native additive fields are preserved
+Complete derived candle volume is the sum of complete same-segment 1m constituents. Additional native additive fields are retained/summed only when their source semantics support it.
 
-For each valid canonical candle resolution, preserve raw volume. Additional native fields such as quote volume, trade count, or taker-side volume MAY be preserved only under source-accurate names when actually supplied/validated.
+Incomplete/boundary target intervals have null complete volume; observed-only diagnostics must be explicitly named.
 
-Unavailable fields SHALL NOT be fabricated.
+## Directional volume
 
-### Requirement: Derived target volume is additive only across complete same-segment constituents
+Preserve two independent mechanical conventions:
 
-For complete derived target candle:
+- body direction: close vs open;
+- close-step direction: close vs valid adjacent previous close.
 
-`volume = sum(constituent_volume)`.
+Use explicit names `volume_body_*` and `volume_close_step_*`; no ambiguous generic up/down volume.
 
-Additional source-native additive fields MAY be summed only when semantics support addition.
+## Rolling comparisons
 
-Incomplete/boundary target intervals have null complete volume. `observed_only_*` diagnostics may be stored explicitly.
+For current and preceding equal non-overlapping rolling windows:
+- `volume_sum_change_vs_prev`
+- `volume_sum_ratio_vs_prev` when previous > 0.
 
-### Requirement: Volume direction has two independent mechanical conventions
+## TR/ATR
 
-Body direction:
+TR requires valid same-resolution same-segment previous close.
 
-- up when `close>open`;
-- down when `close<open`;
-- flat when equal.
+ATR14 SMA/Wilder initialize from 14 consecutive valid TRs; gaps/boundaries reset state.
 
-Close-step direction requires valid adjacent previous close in same canonical segment:
+## RV
 
-- up when `close_t>close_(t-1)`;
-- down when lower;
-- flat when equal.
+Fixed/rolling RV uses the same Q sequence as their close path.
 
-Observation summaries preserve:
+Macro RV remains deferred and SHALL NOT be created by silently combining trade-fragment returns with candle returns.
 
-- `volume_body_up`, `volume_body_down`, `volume_body_flat` and shares;
-- `volume_close_step_up`, `volume_close_step_down`, `volume_close_step_flat` and shares.
+## Exact macro volume/activity
 
-Shares use `volume_sum` denominator when >0; else null.
+When both macro boundaries are exact, resolution-dependent macro volume/activity uses the non-overlapping union:
 
-No ambiguous generic `up_volume/down_volume` names.
+start RIGHT boundary fragment
++ complete interior canonical intervals
++ end LEFT boundary fragment.
 
-### Requirement: Rolling volume comparison uses canonical names and adjacent equal windows
+The pivot source record's volume/count is counted once in LEFT; RIGHT does not count it again.
 
-For current complete rolling `[t-W,t)` and immediately previous complete `[t-2W,t-W)`:
+A full canonical boundary candle SHALL NOT be included together with a fragment from that same interval.
 
-- `volume_sum_change_vs_prev = V_cur - V_prev`
-- `volume_sum_ratio_vs_prev = V_cur/V_prev` when `V_prev>0`, else null.
+Higher-resolution fragments may be composed from the trade-resolved 5m piece plus complete canonical 5m intervals.
 
-Current window also preserves `volume_sum`, arithmetic `volume_mean`, and `volume_median`.
+## Ambiguous macro fallback
 
-Equivalent mean/median comparisons are optional and must be explicitly named/dictionary-declared.
+If an anchor remains ambiguous, macro volume/TR/activity uses only the fixed-grid constituents wholly inside the fallback unambiguous interval.
 
-### Requirement: Effort-versus-result remains numeric and neutral
+The same grid-based expected/observed membership and coverage used by macro path SHALL be used here.
 
-Approved ratios MAY compare volume with explicitly documented price-result denominators. Zero/undefined denominator -> null. No accumulation/distribution/absorption/exhaustion label.
+No boundary-overlapping candle/pair contributes to fallback macro summaries.
 
-### Requirement: True Range requires valid temporal adjacency
+## Trade/aggTrade provenance
 
-For candle `t` with valid same-resolution adjacent previous close in same segment:
+Raw trades and aggTrades are different source granularities. Preserve exact source kind, native sequence ids, underlying trade-id ranges where available, artifact checksum and coverage.
 
-`TR_t = max(high_t-low_t, abs(high_t-close_(t-1)), abs(low_t-close_(t-1)))`.
+Do not call an aggTrade row an individual trade. Underlying trade count may be calculated only when source-native ids prove it.
 
-At segment start/gap/source boundary TR is null. No previous close may be borrowed across discontinuity.
+## Source timestamp validation
 
-### Requirement: ATR14 SMA and Wilder initialization are exact
+Inventory records source-native timestamp alignment anomalies separately from real missing coverage.
 
-Per calculation resolution and source segment:
+A continuous 60-second off-grid source series (required regression: `+20.799s` December-2017 spot rows) SHALL NOT be counted as a day of missing candles solely because timestamps are not aligned to `:00`.
 
-- `atr14_sma` at first eligible endpoint = mean of first 14 consecutive valid TRs;
-- `atr14_wilder` initializes to the same first-14 mean;
-- next Wilder value = `((13*prev_atr)+TR_t)/14`.
+Canonicalization requires a proven source-specific mapping; original timestamps/provenance remain stored.
 
-Gap/boundary resets Wilder state; 14 new consecutive valid TRs are required.
+## Feature dictionary
 
-### Requirement: Realized volatility uses the same full-interval Q sequence as close path for fixed/rolling observations
-
-For complete fixed/rolling observation at approved calculation resolution:
-
-- `Q0` = observation start price/open first constituent;
-- `Q1...Qn` = chronological constituent closes;
-- `Qn` = observation end price.
-
-For positive Q:
-
-`r_i=ln(Q_i/Q_(i-1))`
-
-- `realized_variance=sum(r_i^2)`
-- `realized_volatility=sqrt(realized_variance)`
-- `realized_volatility_per_sqrt_day=realized_volatility/sqrt(duration_days)` when duration_days>0.
-
-No annualization in this pass.
-
-Any required gap/boundary/nonpositive price -> complete RV null.
-
-Macro RV is not a required first-pass feature because macro source anchors are mixed/resolution-limited and the fixed/rolling boundary sequence cannot be silently reused.
-
-### Requirement: Numeric compression/expansion components use canonical names
-
-For every complete supported fixed/rolling observation/calculation-resolution combination preserve where defined:
-
-- `observation_high_low_width = observation_high-observation_low`
-- `observation_high_low_width_pct_start = 100*width/P0` when `P0>0`
-- `observation_log_high_low_width = ln(observation_high/observation_low)` for positive prices
-- `mean_full_range`, `median_full_range`
-- `mean_log_full_range`, `median_log_full_range`
-- `true_range_mean`, `true_range_median`
-- `normalized_true_range_mean`
-- `atr14_sma_at_end`, `atr14_wilder_at_end` where initialized.
-
-For rolling observations, only dictionary-declared components receive:
-
-- `{component}_change_vs_prev = X_cur-X_prev`
-- `{component}_ratio_vs_prev = X_cur/X_prev` when `X_prev != 0`.
-
-No composite compression/expansion score or threshold label.
-
-### Requirement: Feature calculation matrices are governed by the schema contract
-
-Fixed, rolling, and macro calculation-resolution applicability SHALL follow the exact matrices in `research-table-schema`.
-
-Macro observations may receive complete canonical volume/TR/activity summaries at approved resolutions where coverage permits, but SHALL NOT receive RV by silent reuse of fixed/rolling semantics.
-
-### Requirement: Source inventory validates canonical timestamp alignment and coverage before features
-
-Inventory/canonicalization SHALL record source identity, market type, source type, timeframe, first/last timestamps, row count, duplicates, invalid numerics, alignment anomalies, and detected gaps.
-
-A source row intended for canonical 1m SHALL start exactly on a UTC minute boundary. Non-minute-aligned rows are explicit anomalies and SHALL NOT be silently rounded into valid candles.
-
-Final canonical gap inventory SHALL be recomputed from validated minute-grid coverage.
-
-### Requirement: Missing market data is never synthesized silently
-
-Canonical history SHALL preserve real gaps.
-
-A missing candle MAY become canonical only when approved same-market lower-level official data directly determine the required OHLCV under an approved deterministic rule.
-
-A diagnostic flat/no-trade bucket created from neighboring values rather than observed within-minute price evidence is synthetic and SHALL remain outside strict canonical data unless a later explicit source-contract change approves that semantics.
-
-Spot cannot repair futures and futures cannot repair spot. No interpolation, forward/backward fill, or third-party substitution.
-
-### Requirement: Sequential calculations use canonical source segments
-
-Returns, close-step volume direction, TR/ATR, RV, rolling speed, path, pair geometry, alternation, and adjacent-window comparisons SHALL require canonical source continuity and exact temporal adjacency.
-
-Archive/package/provenance change alone does not reset state. A real gap or market boundary does.
-
-The spot/futures transition price difference is a diagnostic only and SHALL NOT enter ordinary sequential metrics.
-
-### Requirement: Feature dictionary is mandatory
-
-Every materialized metric has feature-dictionary definition with exact name, meaning, formula, units, source/calculation resolution, observation-kind applicability, availability/available-at, null meaning, and provenance.
-
-### Requirement: Causal and retrospective availability remain distinct
-
-Fixed/rolling fields computed only from closed data through observation end are causal from their documented `available_at`.
-
-Macro endpoint/direction/context fields are retrospective and SHALL NOT be exposed as live-known causal features.
+Every materialized volume/volatility/activity metric must have one canonical definition with units, source/resolution, availability, null meaning and provenance.
