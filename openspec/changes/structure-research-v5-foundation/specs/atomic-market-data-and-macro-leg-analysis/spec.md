@@ -126,16 +126,22 @@ The reviewed reference has 128 rows with `leg_id`, direction, start/end event id
 
 A different checksum/source requires explicit provenance review before it may be treated as the same approved anchor input.
 
-### Requirement: Macro-leg anchor market source follows the same approved spot-to-futures regime
+### Requirement: Macro-leg anchor market source follows actual futures candle availability, not archive publication coverage
 
-The approved `macro_legs_log20.csv` anchors SHALL be interpreted under the same market-source regime as the canonical research history:
+The approved `macro_legs_log20.csv` source regime SHALL be aligned to the actual historical BTCUSDT market data used by the macro-structure work, not to the later start date of Binance public archive packages.
 
-- anchors before `2019-12-31T00:00:00Z` belong to the approved Binance BTCUSDT spot source regime;
-- anchors at or after `2019-12-31T00:00:00Z` belong to the approved Binance BTCUSDT USDT-M futures source regime.
+Prior verified project analysis found actual Binance BTCUSDT USDT-M perpetual historical klines beginning at `2019-09-08T00:00:00Z`. Therefore the canonical research source contract SHALL treat:
 
-Within a macro leg whose start/end anchors and required candle path lie entirely inside one valid continuous market/source segment, the source anchor prices are approved for anchor-inclusive path and efficiency calculations under this contract; no separate source-compatibility discovery step is required.
+- times before `2019-09-08T00:00:00Z` as belonging to the approved Binance BTCUSDT spot regime;
+- times at or after `2019-09-08T00:00:00Z` as belonging to the approved Binance BTCUSDT USDT-M futures regime, once the corresponding futures candles have been locally acquired/validated for the required resolution.
 
-A macro leg that crosses the spot-to-futures boundary SHALL preserve its original source anchor movement/duration as a retrospective macro-structure measurement, but complete sequential whole-leg path, ATR/RV-style sequential summaries, overlap sequence, and path efficiency SHALL NOT bridge the spot/futures transition as though it were one continuous traded instrument. Per-segment diagnostics MAY be retained separately.
+The later `2019-12-31T00:00:00Z` start of the currently downloaded official Binance public 1m archive SHALL NOT be interpreted as futures market inception.
+
+Before production, the source contract SHALL verify/acquire the missing futures candle interval `2019-09-08T00:00:00Z` through `2019-12-30T23:59:00Z` rather than filling that interval with spot solely because public 1m archive packages begin later.
+
+Within a macro leg whose start/end anchors and required candle path lie entirely inside one validated continuous market/source segment, source anchor prices are approved for anchor-inclusive path and efficiency calculations; no separate source-compatibility discovery step is required.
+
+A macro leg crossing the actual spot-to-futures boundary SHALL preserve its original macro-structure anchor movement/duration as retrospective source measurement, but complete sequential whole-leg path, ATR/RV-style sequential summaries, overlap sequence, and path efficiency SHALL NOT bridge the spot/futures transition as though it were one continuous traded instrument. Per-segment diagnostics MAY be retained separately.
 
 ### Requirement: Whole macro-leg measurements are first-class retrospective outputs
 
