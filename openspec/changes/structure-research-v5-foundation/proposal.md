@@ -84,18 +84,24 @@ Those later classifications are explicitly outside this first-pass production pi
 - full-history tick-level path reconstruction;
 - order-book, funding, open-interest, liquidation, or other microstructure data not already approved.
 
-## Source contract status
+## Finalized source contract
 
-The source contract is intentionally finalized from evidence rather than market-inception assumptions.
+The source chronology is finalized from direct official-source evidence rather than inferred bucket or archive start dates.
 
-Known accepted source facts at proposal time:
+Accepted facts:
 
-- historical Binance spot 1m contains 6,235 minutes that remained unrecoverable after direct official spot aggTrades recovery attempts; these are real documented source gaps and must remain gaps;
-- Binance public USDT-M futures 1m archive coverage currently begins later than actual futures market availability;
-- project evidence shows futures candle history earlier than the public 1m archive start;
-- a separate early-futures investigation is determining the exact first usable futures timestamp and whether complete 1m futures history can be recovered before the public archive begins.
+- the first actual Binance BTCUSDT USDT-M futures trade is `2019-09-08T17:57:50.575000Z`, established from official Binance USD-M daily-trades data;
+- the first real futures 1m bucket begins at `2019-09-08T17:57:00Z`;
+- `2019-09-08T17:57:00Z` is therefore the canonical candle-based spot-to-futures boundary;
+- the fresh official early-futures 1m block covers `2019-09-08T17:57:00Z` through `2019-12-30T23:59:00Z`;
+- native `fapi/v1/klines` supplied `163082` rows with one missing native bucket at `2019-09-08T19:00:00Z`;
+- that one minute was deterministically resolved from official daily-trades no-trade evidence under the approved recovery rule;
+- the final combined early-futures block contains `163083` rows, zero duplicates, and zero remaining gaps;
+- the early block joins continuously to the public futures archive at `2019-12-31T00:00:00Z`;
+- legacy local futures 1D/4H caches are QA/reference evidence only and do not override the fresh canonical 1m pull because a materially inconsistent area was found near `2019-09-24`;
+- historical Binance spot 1m contains `6,235` minutes that remained unrecoverable after official spot aggTrades recovery attempts (`0/6235` recovered); these remain explicit source gaps.
 
-The exact spot-to-futures source boundary SHALL be supplied by the finalized source contract/configuration and SHALL not be duplicated as an independent hardcoded implementation constant.
+The exact chronology and evidence artifacts are defined once in the dedicated source-contract specification. Feature code and tests SHALL consume that contract/configuration rather than maintain separate market-boundary constants.
 
 ## Storage and data model
 
@@ -149,13 +155,18 @@ Smoke and full-history production are blocked until critical golden tests pass.
 
 ## Success criteria
 
-This change is ready for full implementation when:
+This change is ready for implementation when:
 
-- the exact source contract is finalized from the early-futures investigation;
+- the finalized source contract is present and internally consistent;
 - all specifications are internally consistent;
 - `proposal.md`, `design.md`, and `tasks.md` are complete;
+- golden-test requirements are defined before implementation;
+- no first-pass semantic labels or retrospective leakage are permitted by the contracts.
+
+Implementation is ready for a full-history production decision only after:
+
 - golden tests are implemented and pass;
 - a bounded real-data smoke run passes independent QA;
-- no first-pass semantic labels or retrospective leakage appear in causal research tables.
+- no unresolved critical failures remain.
 
 A full-history run is a separate execution decision after smoke review; completing implementation does not itself authorize an expensive production run.
