@@ -14,9 +14,10 @@ Canonical market layer:
 
 Macro layer:
 - approved 128 `macro_legs_log20` legs
-- approved 138-pivot 5m localization artifact
-- same-market official trade refinement of all candidate 5m intervals before exact macro production
+- reviewed 138-pivot localization artifact
+- same-market official trade refinement of all localization candidate windows before exact macro production
 - exact pivot time + native sequence id only when one exact anchor-price touch exists
+- canonical 5m containment determined from the exact trade pivot
 - LEFT/RIGHT boundary fragments as retrospective macro-analysis entities
 - conservative fallback only when trade evidence remains ambiguous.
 
@@ -25,15 +26,17 @@ Macro layer:
 Macro checksum:
 `c7f7166a72f57ee9af75ddc0d5711d45d8371b546d83c10cdc77bc129523d0d3`
 
-5m localization checksum:
+Localization checksum:
 `77a6fa1339794a96ddff327e038d66b17347914dcfa8fbb0d9a90765fd3900bc`
 
 138 pivots:
-- 131 unique 5m candidate
-- 7 multiple 5m candidates
+- 131 unique localization windows
+- 7 multiple-window pivots
 - 0 incomplete/unresolved.
 
-5m localization is not treated as exact pivot timing.
+145 candidate windows exist in total. 142 are canonical-grid 5m windows. Three spot windows (`E00059`,`E00065`,`E00070`) inherited the proven `+20.799s` source offset and are not canonical 5m candles. They remain valid source-localization search windows, but the trade stage must determine the exact pivot and therefore its true canonical 5m containment.
+
+Localization is not treated as exact pivot timing.
 
 ## Exact macro measurement principle
 
@@ -74,7 +77,7 @@ In scope:
 - full approved history
 - canonical candles and objective fixed/rolling features
 - macro source/provenance
-- 5m localization ingestion
+- localization ingestion
 - trade-refinement ingestion
 - macro boundary fragments
 - exact/fallback macro metrics
