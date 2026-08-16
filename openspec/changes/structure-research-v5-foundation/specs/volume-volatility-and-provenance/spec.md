@@ -16,19 +16,17 @@ The system SHALL NOT fabricate unavailable volume fields.
 
 ### Requirement: Derived candle volume is additive only across complete same-source constituents
 
-For a derived candle built from canonical finer candles, base volume SHALL be:
+For a derived candle built from canonical finer candles:
 
 `derived_volume = sum(constituent_volume)`
 
 only when all required constituent candles are present, belong to the same approved source segment, and the source-native volume field is additive.
 
-Any additional additive native fields such as quote volume, trade count, or taker-side volume MAY be summed under their source-accurate names when their source semantics support addition.
+Additional additive native fields such as quote volume, trade count, or taker-side volume MAY be summed under source-accurate names when source semantics support addition.
 
-A derived candle SHALL NOT silently sum volume across a spot/futures source boundary or across an incomplete constituent set. Incomplete-window diagnostics MAY preserve observed-only sums under explicitly `observed_only_*` names, but those values SHALL NOT be exposed as complete derived volume.
+A derived candle SHALL NOT sum volume across a source boundary or incomplete constituent set. Observed-only diagnostics MAY use explicit `observed_only_*` names but SHALL NOT be exposed as complete volume.
 
 ### Requirement: Volume direction is preserved under two distinct mechanical conventions
-
-When volume is grouped by finer-bar direction, the research output SHALL preserve two separately named conventions because they answer different questions and SHALL NOT be conflated.
 
 Body-direction convention:
 
@@ -36,104 +34,139 @@ Body-direction convention:
 - `body_direction = down` when `close < open`;
 - `body_direction = flat` when `close == open`.
 
-Close-step-direction convention, when a valid previous close exists in the same continuous source segment:
+Close-step-direction convention, when a valid temporally adjacent previous close exists in the same continuous source segment:
 
 - `close_step_direction = up` when `close_t > close_(t-1)`;
 - `close_step_direction = down` when `close_t < close_(t-1)`;
-- `close_step_direction = flat` when `close_t == close_(t-1)`.
+- `close_step_direction = flat` when equal.
 
-Observation/window summaries SHALL be able to preserve separately named volume totals/shares for body-up/body-down/body-flat and close-step-up/close-step-down/close-step-flat constituent bars where source volume is valid.
+Observation/window summaries SHALL preserve separately named volume totals for body-up/body-down/body-flat and close-step-up/close-step-down/close-step-flat constituent bars where volume is valid.
 
-No implementation SHALL use an ambiguous generic `up_volume` or `down_volume` name without identifying which convention was used.
+When total observation volume is positive, corresponding shares SHALL equal each grouped volume total divided by total observation volume. With zero/undefined total volume, shares SHALL be null.
 
-### Requirement: Rolling volume behavior is measurable
+No ambiguous generic `up_volume` or `down_volume` name is permitted without the convention in the field name/dictionary.
 
-For approved rolling durations supported by the calculation resolution and coverage, the system SHALL support numeric summaries including volume sum, mean, median, change versus the previous equal-duration window, and ratio versus the previous equal-duration window where the denominator is non-zero.
+### Requirement: Rolling volume behavior uses explicit adjacent-window comparison
 
-The system SHALL also preserve the approved body-direction and close-step-direction volume groupings without assigning accumulation, distribution, absorption, or exhaustion labels.
+For complete rolling window `[t-W,t)` preserve at minimum constituent volume sum, arithmetic mean, and median.
+
+Let `V_cur` be current-window volume sum and `V_prev` the immediately preceding equal complete window `[t-2W,t-W)`:
+
+- `volume_sum_change_vs_prev = V_cur - V_prev`
+- `volume_sum_ratio_vs_prev = V_cur / V_prev` when `V_prev > 0`, otherwise null.
+
+Equivalent explicitly named comparisons MAY be retained for mean/median, but SHALL not substitute for the required sum comparison.
+
+The approved body-direction and close-step-direction volume groupings SHALL remain separately inspectable without semantic labels such as accumulation, distribution, absorption, or exhaustion.
 
 ### Requirement: Effort-versus-result measurements remain numeric
 
 Where defined, the system MAY calculate volume relative to absolute net displacement and other explicitly documented price-result denominators.
 
-Zero or undefined price-result denominators SHALL produce null ratios rather than infinities or silently substituted zeros.
+Zero or undefined price-result denominators SHALL produce null ratios rather than infinities or substituted zeros. Such fields SHALL remain numeric and semantically neutral.
 
-Such fields SHALL be described as numeric effort-versus-result measurements and SHALL NOT be labeled as absorption, exhaustion, or another market-state conclusion.
+### Requirement: True Range requires a valid temporally adjacent previous close
 
-### Requirement: True Range uses the explicit standard formula
-
-For candle `t` with previous close available within the same continuous source segment:
+For candle `t` whose previous candle is temporally adjacent, same-resolution, and in the same continuous source segment:
 
 `TR_t = max(high_t - low_t, abs(high_t - close_(t-1)), abs(low_t - close_(t-1)))`.
 
-The first eligible candle of a source segment, or a candle following a real data gap, SHALL follow an explicitly documented null/initialization convention in the feature dictionary. A previous close from another market type/source segment SHALL NOT be used.
+If no such previous candle exists because of segment start, source boundary, or real gap, `TR_t` SHALL be null. The system SHALL NOT borrow a previous close across that discontinuity.
 
-### Requirement: ATR14 SMA and Wilder ATR are both preserved
+### Requirement: ATR14 SMA and Wilder ATR have exact initialization
 
-The system SHALL calculate and store both `atr14_sma` and `atr14_wilder` when at least 14 required observations are available continuously under the approved source-resolution contract.
+ATR calculations SHALL operate separately per calculation resolution and continuous source segment using valid consecutive non-null TR values.
 
-`atr14_sma` SHALL use the arithmetic mean of the applicable True Range values.
+For `atr14_sma`, once 14 consecutive valid TR values `TR_(t-13)...TR_t` exist:
 
-After its documented initialization, Wilder ATR SHALL update as:
+`atr14_sma_t = mean(TR_(t-13)...TR_t)`.
 
-`ATR_t = ((13 * ATR_(t-1)) + TR_t) / 14`.
+For Wilder ATR, the first value SHALL be initialized at the same first eligible endpoint as the arithmetic mean of the first 14 consecutive valid TR values:
 
-Values before sufficient initialization, after a source-boundary reset, or across a data gap SHALL be null until the required continuous initialization history is available rather than silently backfilled with another formula.
+`atr14_wilder_init = mean(first 14 consecutive valid TR values)`.
 
-### Requirement: Realized volatility uses an explicit non-annualized log-return contract
+Each subsequent temporally adjacent valid candle updates:
 
-For an approved observation containing consecutive closed prices `P_0 ... P_n` from one continuous source segment, strictly positive prices SHALL define log returns:
+`atr14_wilder_t = ((13 * atr14_wilder_(t-1)) + TR_t) / 14`.
 
-`r_i = ln(P_i / P_(i-1))`.
+A gap/source-boundary discontinuity SHALL reset Wilder state; values remain null until 14 new consecutive valid TR observations reinitialize it.
 
-When at least two constituent candles provide at least one valid consecutive log return, the system SHALL calculate:
+### Requirement: Realized volatility uses the full observation interval and exact price sequence
+
+For a complete fixed/rolling observation built from complete calculation candles, use the same boundary-aware sequence concept as path:
+
+- `Q0 = observation start price`, equal to the open of the first constituent calculation candle;
+- `Q1...Qn = chronological closes of all constituent calculation candles`;
+- `Qn = observation end price`.
+
+For strictly positive `Q` values:
+
+`r_i = ln(Q_i / Q_(i-1))`, for `i=1...n`.
+
+Then:
 
 - `realized_variance = sum(r_i^2)`
-- `realized_volatility = sqrt(sum(r_i^2))`
+- `realized_volatility = sqrt(realized_variance)`.
 
 The system SHALL NOT annualize realized volatility in this research pass.
 
-For cross-duration comparison, when the observation duration is positive in days, the system SHALL additionally support:
+When observation duration in days is positive:
 
 `realized_volatility_per_sqrt_day = realized_volatility / sqrt(duration_days)`.
 
-Every realized-volatility field SHALL identify the observation duration and calculation resolution.
+Every RV field SHALL identify observation duration and calculation resolution.
 
-If an observation contains a required candle gap, crosses a source boundary, contains a non-positive required price, or otherwise lacks the complete constituent sequence, the complete realized-volatility value SHALL be null. A separately named observed-only diagnostic MAY be retained but SHALL be marked incomplete and SHALL NOT bridge the missing/source-transition interval.
+A complete RV metric SHALL be null if any required constituent candle is missing, the observation crosses a source segment, a required price is non-positive, or the complete sequence is otherwise unavailable. Observed-only diagnostics MAY be retained under explicitly incomplete names but SHALL NOT bridge the discontinuity.
 
-### Requirement: Compression and expansion remain numeric
+### Requirement: Numeric compression/expansion components are mandatory and unlabeled
 
-The system MAY preserve rolling high-low width, True Range/ATR evolution, candle-range evolution, and current-versus-previous equal-window ratios/deltas as objective numeric measurements.
+For each complete approved observation/calculation-resolution combination, the first pass SHALL preserve objective components sufficient to study volatility contraction/expansion without assigning a state label.
 
-The first pass SHALL NOT convert those values into threshold-based `compression` or `expansion` market-state labels.
+At minimum preserve:
+
+- `observation_high_low_width = observation_high - observation_low`;
+- `observation_high_low_width_pct_start = 100 * observation_high_low_width / P0` when `P0 > 0`;
+- `observation_log_high_low_width = ln(observation_high / observation_low)` when prices are positive;
+- arithmetic mean and median of constituent `full_range`;
+- arithmetic mean and median of constituent `log_full_range` where defined;
+- arithmetic mean and median of constituent valid True Range;
+- arithmetic mean of constituent valid `normalized_true_range` where defined;
+- endpoint `atr14_sma` and `atr14_wilder` when initialized.
+
+For rolling observations, let any current numeric component `X_cur` be compared with the same component on the immediately preceding equal complete window `X_prev`:
+
+- `X_delta_vs_prev = X_cur - X_prev`;
+- `X_ratio_vs_prev = X_cur / X_prev` when `X_prev != 0`, otherwise null.
+
+Only components explicitly enumerated in the feature dictionary SHALL receive such delta/ratio fields; the implementation SHALL NOT invent a composite compression/expansion score or threshold label.
 
 ### Requirement: Source inventory precedes assumptions about coverage
 
-Before full implementation, the pipeline SHALL inventory the actual local candle sources for `1D`, `4H`, `1H`, `15m`, and `5m`, and any available finer source such as `1m` used for canonical construction, validation, or later focused research.
+Before full implementation, the pipeline SHALL inventory actual local/approved candle sources for target resolutions and any finer source such as `1m` used for canonical construction, validation, or later research.
 
-The inventory SHALL record instrument/venue identity, source type, timeframe, first timestamp, last timestamp, row count, and detected gaps where feasible.
+The inventory SHALL record instrument/venue identity, market type, source type, timeframe, first timestamp, last timestamp, row count, and detected gaps where feasible.
 
-The system SHALL NOT infer from a derived-feature manifest alone that all higher timeframes were built from a particular finer source.
+The system SHALL NOT infer source construction from a derived-feature manifest alone.
 
 ### Requirement: Missing data is not synthesized silently
 
 The research pipeline SHALL preserve actual source gaps and coverage limitations. It SHALL NOT synthesize missing market history or download additional data without explicit approval.
 
-If an approved source-repair pass is performed, missing candles MAY be reconstructed only from lower-level official data for the same venue, instrument, and market type and only under a documented deterministic aggregation rule. For example, missing Binance spot `1m` candles MAY be reconstructed from official Binance spot trades or aggTrades covering the same interval when those records are available and complete enough to determine OHLCV.
+If an approved source-repair pass is performed, missing candles MAY be reconstructed only from lower-level official data for the same venue, instrument, and market type under a deterministic documented aggregation rule.
 
-A reconstructed candle SHALL preserve distinct provenance such as `reconstructed_from_spot_trades` or `reconstructed_from_spot_aggtrades`, the contributing source interval/count, and validation status. It SHALL NOT be relabeled as an original archived kline.
+A reconstructed candle SHALL preserve distinct reconstruction provenance, contributing source interval/count, and validation status. It SHALL NOT be relabeled as an original archived kline.
 
-Futures data SHALL NOT be used to reconstruct missing spot candles, and spot data SHALL NOT be used to reconstruct missing futures candles.
+Futures data SHALL NOT reconstruct spot candles and spot data SHALL NOT reconstruct futures candles.
 
-If the same-market lower-level official data is also incomplete or unavailable, the gap SHALL remain a real documented gap. Interpolation, forward fill, backward fill, synthetic candles, or cross-market substitution are prohibited.
+If same-market lower-level official data is incomplete/unavailable, the gap SHALL remain documented. Interpolation, forward/backward fill, synthetic candles, and cross-market substitution are prohibited.
 
-### Requirement: Sequential calculations do not cross source boundaries
+### Requirement: Sequential calculations do not cross source boundaries or real gaps
 
-Every canonical candle SHALL belong to an explicit continuous `source_segment_id` that identifies at minimum venue, market type, source identity, and a continuous coverage segment.
+Every canonical candle SHALL belong to an explicit continuous `source_segment_id` identifying at minimum venue, market type, source identity, and continuous coverage segment.
 
-Sequential calculations including close-to-close returns, log returns, True Range, ATR, realized volatility, rolling speed, path, overlap pairs, alternation, and previous-window comparisons SHALL NOT treat candles from different `source_segment_id` values as one continuous sequence.
+Sequential calculations including close-step returns, log returns, True Range, ATR, realized volatility, rolling speed, path, overlap pairs, alternation, and previous-window comparisons SHALL NOT treat different source segments or non-adjacent timestamps as one continuous sequence.
 
-The spot-to-futures transition MAY be stored as a separate source-transition diagnostic, but the price difference between the last spot candle and first futures candle SHALL NOT enter ordinary market-path, volatility, overlap, ATR, or rolling-feature calculations.
+The spot-to-futures transition MAY be stored as a separate source-transition diagnostic, but its price difference SHALL NOT enter ordinary path, volatility, overlap, ATR, volume-window comparison, or rolling-feature calculations.
 
 ### Requirement: Feature dictionary is mandatory
 
@@ -153,8 +186,6 @@ Every exported research feature SHALL have a dictionary entry containing at mini
 
 ### Requirement: Causal and retrospective fields remain distinguishable
 
-Fields available using only data closed/known at the observation time SHALL be identified as causal.
+Fields available using only data closed/known at observation time SHALL be identified as causal.
 
-Fields requiring a known future endpoint, future price path, or completed macro leg SHALL be identified as retrospective.
-
-Retrospective fields SHALL NOT be exposed or named as though they were available to a live strategy at the historical observation time.
+Fields requiring a known future endpoint, future path, or completed macro leg SHALL be identified as retrospective and SHALL NOT be exposed/named as live-available historical features.
