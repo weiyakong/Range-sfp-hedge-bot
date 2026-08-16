@@ -6,84 +6,79 @@ Define the objective measurement families to collect in the first research pass.
 
 ## ADDED Requirements
 
-### Requirement: Existing macro legs are directional research containers
+### Requirement: Existing macro legs are source research containers, not validated hierarchy
 
-For each approved existing macro leg, the system SHALL preserve its source identity and provenance and SHALL record at minimum `start_time`, `end_time`, `start_price`, `end_price`, source `direction` when present, duration, signed price change, absolute price change, signed percentage change, and absolute percentage change.
+For each approved macro leg preserve source identity/provenance, anchors, source direction where present, duration, signed/absolute price change and percentage change.
 
-The first-pass dataset SHALL NOT assign the macro leg a new semantic type such as `impulse` or `correction`.
+Calculate price-derived direction as `up/down/flat` and compare to source direction as QA. Do not infer impulse/correction.
 
-#### Scenario: A macro leg is processed
+Historical macro provenance, including mixed daily/refinement source, SHALL remain distinct from current canonical market assignment.
 
-* **GIVEN** an approved source macro leg has start and end anchors
-* **WHEN** the research pipeline processes the leg
-* **THEN** it SHALL calculate the price-derived direction from `end_price - start_price`
-* **AND** SHALL store that derived direction as `up`, `down`, or `flat`
-* **AND** SHALL compare it with any source direction field as a QA check
-* **AND** SHALL NOT infer `impulse` or `correction` from the source role or event label.
+### Requirement: Movement geometry and timing are objective
 
-### Requirement: Movement geometry and timing
+For each complete approved observation preserve start/end anchors, signed/absolute displacement, signed/absolute percentage change, log movement, and duration according to approved formula contracts.
 
-For each approved observation interval, the system SHALL preserve its start and end anchors and measure signed displacement, absolute displacement, signed percentage change, absolute percentage change, and duration using the approved measurement contracts.
+### Requirement: Retracements use only explicitly approved A-B-C relationships
 
-### Requirement: Retracements use only pre-approved anchors
+Direct retracement measurement is permitted only when:
 
-When a retracement can be measured from already-approved anchors without inventing a new internal-leg algorithm, the system SHALL store the direct retracement percentage and neutral supporting measurements rather than converting the result to Fibonacci ratios or labels.
+1. A, B, and C each come from approved anchor sources; and
+2. the relationship tuple `A -> B -> C` itself is explicitly configured/approved.
 
-Approved anchors in this pass SHALL be limited to anchors provided by explicitly configured approved inputs such as the reviewed `macro_legs_log20.csv`, deterministic fixed/rolling observation boundaries, or another source explicitly approved by the user.
+The pipeline SHALL NOT generate arbitrary triples from every fixed/rolling/macro anchor merely because each anchor is individually approved.
 
-The implementation SHALL NOT discover, create, optimize, or infer new swing/retracement anchor pairs from candle history for this pass. A similarly named swing, parent, event, or feature file SHALL NOT become an approved anchor source merely because it is present in the repository.
+Approved tuples are stored in `retracement_measurements` using direct percentage formulas. No Fibonacci conversion/label.
 
-### Requirement: Speed and speed change are numeric measurements
+If no production tuple list is approved, zero production retracement rows is valid.
 
-The system SHALL collect signed and direction-aware speed measurements, rolling recent-speed measurements, and numeric speed-change/acceleration measurements defined by the approved formula contract.
+### Requirement: Speed and speed change remain numeric
 
-The first-pass dataset SHALL NOT create threshold-based labels such as `accelerating`, `decelerating`, or `exhausted`.
+Collect signed, local-direction, rolling recent-speed, speed-change and acceleration fields under the canonical names/formulas. Do not create accelerating/decelerating/exhausted labels.
 
-### Requirement: Path and directional efficiency
+### Requirement: Path and directional efficiency remain objective
 
-The system SHALL measure net displacement, close-to-close path at approved finer resolutions, path efficiency, direction-aware path components, and supporting candle activity measurements without inventing an intra-candle event order that is not present in the source data.
+Measure net displacement, close path at approved calculation resolutions, path efficiency, directional components and activity without inventing intra-candle event order.
 
-### Requirement: Candle geometry and overlap
+Macro source movement, internal canonical path, and anchor-inclusive canonical path are distinct; anchor-inclusive metrics require compatible source and sufficient anchor-time precision.
 
-The system SHALL collect body, wick, full-range, pairwise overlap, overlap position, body overlap, wick penetration, body penetration, close penetration, and directional extension measurements sufficient to distinguish materially different overlap geometries.
+### Requirement: Atomic target candle geometry is retained separately from observation aggregates
 
-### Requirement: Volatility and volume
+For every complete target candle `5m/15m/1H/4H/1D`, materialize its body, wicks, full range, normalized shares and approved log geometry in `candle_geometry`.
 
-The system SHALL preserve raw volume where present and SHALL collect approved volume-derived, True Range, ATR, realized-volatility, and compression/expansion measurements without threshold-based market-state labels.
+Observation-level sums/means of geometry do not replace the atomic candle geometry layer.
+
+### Requirement: Pairwise overlap/penetration/extension remains atomic and inspectable
+
+Collect pairwise range overlap, overlap position, body overlap, neutral upper/lower extension and mirrored extreme/body/close/wick-only penetration sufficient to distinguish materially different geometries.
+
+### Requirement: Volatility and volume remain numeric
+
+Preserve raw/additive volume where valid and collect approved volume groupings, TR/ATR, fixed/rolling realized volatility, and numeric contraction/expansion components without semantic market-state labels.
+
+Macro RV is not required in this pass unless separately specified.
 
 ### Requirement: Extremum information remains objective
 
-The system MAY collect objective high/low values, first/last occurrence timestamps, occurrence counts at the stated calculation resolution, elapsed time since approved extrema, and high/low update behavior where these can be derived without introducing a new swing or internal-leg classifier.
+The system MAY collect high/low values, repeated first/last/count at stated calculation resolution, elapsed time since approved extrema, and update behavior where no new swing classifier is introduced.
 
-Repeated equal candle highs/lows SHALL follow the explicit extrema tie contract rather than silently selecting one occurrence.
+Repeated equal extrema follow the explicit tie contract.
 
 ### Requirement: Cross-scale relationships are descriptive
 
-The system SHALL preserve and measure temporal, price, and path relationships between observations at approved resolutions, including calendar containment, partial containment by macro legs, and relative movement characteristics where observable.
-
-#### Scenario: A finer bar lies inside a larger calendar bar
-
-* **GIVEN** two approved candle resolutions
-* **WHEN** a finer closed bar lies within a larger fixed calendar interval
-* **THEN** the system SHALL record the deterministic containment relationship
-* **AND** SHALL NOT infer from that containment that either object is a validated structural parent impulse.
+Preserve deterministic calendar containment, macro temporal intersection and objective relative measurements. Containment does not imply validated parent impulse.
 
 ### Requirement: Fixed and rolling measurements remain distinguishable
 
-Fixed calendar-bar measurements and truly rolling measurements SHALL be stored and named distinctly so that a fixed 4H candle can never be confused with the most recent rolling four hours ending at the current eligible timestamp.
+A fixed 4H calendar candle and a rolling 4h window ending at an arbitrary eligible endpoint SHALL never share semantics/identity.
 
 ### Requirement: Feature evolution is stored across the full path
 
-Approved dynamic features SHALL be computed at every eligible closed observation point across the available movement, not only at the start, midpoint, or end of a macro leg.
+Approved dynamic fixed/rolling observations are computed at every eligible closed point across available history, preserving acceleration, slowdown, overlap/path-efficiency evolution and renewed continuation without semantic labels.
 
-This SHALL preserve periods of acceleration, slowdown, overlap growth, path-efficiency change, renewed continuation, and other observable transitions without assigning them semantic labels.
+### Requirement: Deferred structural interpretation is outside first pass
 
-### Requirement: Deferred structural interpretation is not required in the first pass
-
-The first-pass pipeline SHALL NOT be required to construct a new internal-leg/swing algorithm, final range boundaries, breakout classifications, future breakout horizons, or a composite choppiness score.
-
-The source OHLCV, candle geometry, overlap, path, timing, volume, volatility, and cross-timeframe data required to research those definitions later SHALL be preserved.
+Do not construct new internal swing/leg hierarchy, parent impulse, final range boundaries, breakout labels/outcomes, composite choppiness score, Fib price/FibTime, or Elliott labels.
 
 ### Requirement: Feature families remain separately inspectable
 
-The feature families defined by this specification SHALL remain separately inspectable in final research outputs according to the research-output persistence specification so that each family can be independently reviewed and extracted for later analysis.
+Source candles, candle geometry, price/speed, path/activity, atomic pairs, overlap summaries, volume/volatility, retracement relationships, cross-timeframe mappings and retrospective macro context SHALL remain separately queryable under the canonical schema.
