@@ -2,112 +2,73 @@
 
 ## Purpose
 
-Define the objective measurement families to collect in the first research pass. This pass records how price behaved through time and across resolutions; it does not classify movements as impulse, correction, range, breakout, or chop.
+Define objective measurement families for Structure Research v5 without classifying impulse/correction/range/chop/Elliott/Fibonacci states.
 
-## ADDED Requirements
+## Macro source as retrospective container
 
-### Requirement: Existing macro legs are source research containers, not validated hierarchy
+Approved `macro_legs_log20` boundaries/direction/prices remain source research containers, not validated hierarchy.
 
-For each approved macro leg preserve source identity/provenance, source anchors, source direction where present, duration, signed/absolute price change and percentage change.
+Historical macro provenance remains separate from current canonical market assignment.
 
-Calculate price-derived direction as `up/down/flat` and compare to source direction as QA. Do not infer impulse/correction.
+## Macro boundary refinement
 
-Historical macro provenance, including mixed daily/refinement source, SHALL remain distinct from current canonical market assignment.
+The approved 5m localization artifact covers all 138 macro pivots (131 unique 5m, 7 multiple 5m). Before exact macro metrics are assigned, all candidate 5m intervals are refined with same-market official trade evidence.
 
-### Requirement: Macro source anchors are refined before canonical leg-membership metrics are assigned
+A 5m match is not treated as an exact pivot. Exact pivot requires one exact anchor-price touch with deterministic native sequence identity.
 
-A coarse macro anchor SHALL first be checked against compatible complete canonical 1m data inside its source bucket.
+Multiple touches remain explicit ambiguity.
 
-Preserve whether the result is a unique 1m match, multiple matches, no match, incomplete search coverage, or source incompatibility.
+## Exact vs fallback macro measurement
 
-A unique 1m match narrows the possible extreme time to that minute but does not establish intra-minute order. The matching minute remains a boundary uncertainty interval shared by adjacent legs.
+For a trade-resolved leg:
+- exact endpoints/timing/duration/speed use trade pivots;
+- macro TF close-path uses exact pivot price plus canonical close sequence at each calculation resolution;
+- LEFT/RIGHT boundary fragment microstructure is stored separately;
+- exact macro volume/activity uses boundary fragments plus complete interior intervals without double counting.
 
-### Requirement: Ambiguous macro boundary data remain data, not discarded observations
+For ambiguous leg boundaries:
+- exact duration/speed/boundary-inclusive metrics remain null;
+- only fallback unambiguous constituents are aggregated.
 
-Canonical candles that overlap a macro-anchor uncertainty interval remain fully stored/queryable.
+## Speed
 
-They SHALL NOT be assigned wholesale to either adjacent leg's unambiguous interior when the exact pivot time inside those candles is unknown.
+Collect signed/log/local-direction speed and rolling speed-change/acceleration numerically.
 
-Multiple possible 1m matches SHALL NOT be resolved by arbitrarily picking first, last or nearest.
+Whole-leg macro speed is one endpoint-to-endpoint value when exact. TF-specific measurements describe internal evolution.
 
-### Requirement: Movement geometry and timing are objective
+## Path/activity
 
-For complete fixed/rolling observations preserve start/end anchors, signed/absolute displacement, signed/absolute percentage change, log movement and duration according to approved formulas.
+Preserve:
+- net displacement
+- close/log path
+- efficiency
+- directional path components
+- alternation
+- extrema
+- candle activity.
 
-For macro observations preserve source displacement/duration separately from refined anchor uncertainty and safe canonical interior timing.
+Trade-level boundary path is separate `trade_*` microstructure and never added to TF close-path.
 
-### Requirement: Retracements use only explicitly approved A-B-C relationships
+## Candle and pair geometry
 
-Direct retracement measurement is permitted only when A/B/C each come from approved anchor sources and the tuple itself is explicitly configured/approved.
+Materialize complete candle range/body/wicks/log geometry and neutral pair overlap/penetration/extension. Boundary fragment pair relationships remain explicitly typed.
 
-The pipeline SHALL NOT generate arbitrary triples merely because individual anchors exist.
+## Retracement
 
-Approved tuples are stored in `retracement_measurements` using direct percentage formulas. No Fibonacci conversion/label. Zero production rows is valid if no tuple list is approved.
+First-pass retracement means the following opposite-direction macro leg relative to the immediately preceding macro leg when they share one pivot.
 
-### Requirement: Speed and speed change remain numeric
+The approved source yields 118 such adjacent relationships.
 
-Collect signed, local-direction, rolling recent-speed, speed-change and acceleration fields under canonical names/formulas. Do not create accelerating/decelerating/exhausted labels.
+Store direct percentage retracement only; no Fibonacci conversion.
 
-Macro source-coordinate speed may be retained as retrospective source measurement, but bucket-limited source duration SHALL NOT be represented as exact canonical event timing.
+## Volume/volatility
 
-### Requirement: Path and directional efficiency remain objective
+Preserve source-accurate volume, directional volume systems, TR/ATR, fixed/rolling RV and numeric range/compression components.
 
-Fixed/rolling observations measure net displacement, close path, path efficiency, directional components and activity without inventing intra-candle order.
+Exact macro volume/activity may include boundary fragments; macro RV remains deferred.
 
-For macro observations distinguish explicitly:
+## Scope guard
 
-1. source whole-leg displacement between approved source anchor prices;
-2. `safe_*` canonical interior measurements using only candles guaranteed to lie after the start-anchor uncertainty and before the end-anchor uncertainty;
-3. complete `anchor_inclusive_*` whole-leg path only when full boundary ordering/path is actually established.
+Do not construct a new internal swing hierarchy, parent impulse, impulse/correction labels, range/breakout/chop labels, Fib/FibTime, or Elliott labels in this pass.
 
-A coarse/unique-minute anchor does not by itself authorize complete whole-leg path because within-boundary path remains unknown.
-
-### Requirement: Safe macro interior preserves only unambiguous leg membership
-
-For start-anchor possible interval `[S0,S1)` and end-anchor possible interval `[E0,E1)`, the safe interior is `[S1,E0)`.
-
-Only complete calculation candles fully contained in that interval may contribute to macro safe-interior path/activity/overlap/volume metrics.
-
-Boundary-overlapping candles remain queryable separately.
-
-### Requirement: Atomic target candle geometry is retained separately from observation aggregates
-
-For every complete target candle `5m/15m/1H/4H/1D`, materialize body, wicks, full range, normalized shares and approved log geometry in `candle_geometry`.
-
-Observation aggregates do not replace atomic geometry.
-
-### Requirement: Pairwise overlap/penetration/extension remains atomic and inspectable
-
-Collect pairwise range overlap, overlap position, body overlap, neutral upper/lower extension and mirrored extreme/body/close/wick-only penetration sufficient to distinguish materially different geometries.
-
-### Requirement: Volatility and volume remain numeric
-
-Preserve raw/additive volume where valid and collect approved volume groupings, TR/ATR, fixed/rolling realized volatility and numeric contraction/expansion components without semantic market-state labels.
-
-Macro RV is not required in this pass. Macro volume/activity summaries use safe-interior membership when macro boundaries remain uncertain.
-
-### Requirement: Extremum information remains objective
-
-The system MAY collect high/low values, repeated first/last/count at stated calculation resolution, elapsed time since approved extrema, anchor-refinement candidates and update behavior where no new swing classifier is introduced.
-
-Repeated equal extrema follow the explicit tie contract.
-
-### Requirement: Cross-scale relationships are descriptive
-
-Preserve deterministic calendar containment, macro temporal intersection, anchor uncertainty and objective relative measurements. Containment does not imply validated parent impulse.
-
-### Requirement: Fixed and rolling measurements remain distinguishable
-
-A fixed 4H calendar candle and a rolling 4h window ending at an arbitrary eligible endpoint SHALL never share semantics/identity.
-
-### Requirement: Feature evolution is stored across the full path
-
-Approved dynamic fixed/rolling observations are computed at every eligible closed point across available history, preserving acceleration, slowdown, overlap/path-efficiency evolution and renewed continuation without semantic labels.
-
-### Requirement: Deferred structural interpretation is outside first pass
-
-Do not construct new internal swing/leg hierarchy, parent impulse, final range boundaries, breakout labels/outcomes, composite choppiness score, Fib price/FibTime, or Elliott labels.
-
-### Requirement: Feature families remain separately inspectable
-
-Source candles, candle geometry, price/speed, path/activity, atomic pairs, overlap summaries, volume/volatility, macro anchors/refinement, safe-interior macro measurements, retracement relationships, cross-timeframe mappings and retrospective macro context SHALL remain separately queryable under the canonical schema.
+Later internal-leg/correction candidates may use the same trade-boundary refinement method after the first macro analysis identifies which boundaries merit tick/trade refinement.
