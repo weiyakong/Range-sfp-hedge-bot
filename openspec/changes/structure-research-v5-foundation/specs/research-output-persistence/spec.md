@@ -4,46 +4,38 @@
 
 Define how long-running Structure Research v5 calculations preserve recoverable progress, retain canonical analytical data efficiently, and produce human-reviewable extracts.
 
-## ADDED Requirements
+## Recoverable progress within 20 minutes
 
-### Requirement: Recoverable progress within 20 minutes
+The system SHALL persist recoverable validated progress so that no more than 20 minutes of completed work is at risk between successful persistence points. A completed validated stage/unit SHALL be persisted immediately even when less than 20 minutes have elapsed.
 
-The system SHALL persist recoverable progress during long-running calculations so that no more than 20 minutes of completed work is at risk between successful persistence points.
+Progress persistence does not excuse inefficient source access: a unit that repeatedly reparses oversized source archives instead of using bounded reads violates the source-access contract even if checkpoints are written on time.
 
-A completed validated stage SHALL be persisted immediately even when less than 20 minutes have elapsed since the previous persistence point.
+## Bounded processing state
 
-### Requirement: Canonical analytical storage is Parquet
+Checkpoint/resume units SHALL align with deterministic bounded work units where practical: source partition, candidate window, canonical bucket, anchor group, calculation partition or equivalent.
 
-Full-resolution canonical market data, atomic pair records, large feature tables, cross-timeframe mappings, whole-leg analytical tables, and other large canonical research datasets SHALL be retained as Parquet.
+A resume implementation SHALL NOT require rereading/reparsing an entire day/month aggTrade archive merely to reconstruct one already-known candidate window or 5m fragment. Parsed bounded source results MAY be cached as restart-safe intermediate artifacts when this reduces repeated I/O, provided source checksum and requested interval are part of cache identity.
 
-This includes the retained canonical `1m` OHLCV/provenance layer and the complete target-resolution candle/feature tables.
+For long-running source collection/derivation, collected or derived data SHALL be written no later than every 20 minutes.
 
-Canonical Parquet storage SHALL preserve schema/version, stable join keys, provenance, temporal coverage, and partition metadata needed for deterministic reconstruction.
+## Canonical analytical storage is Parquet
 
-A different canonical analytical format SHALL NOT be substituted without explicit user approval and an OpenSpec update.
+Full-resolution canonical market data, atomic pairs, large feature tables, cross-timeframe mappings and other large analytical datasets SHALL be retained as Parquet/Zstandard with schema/version, stable join keys, provenance, temporal coverage and partition metadata.
 
-### Requirement: Human-review outputs are targeted CSV extracts rather than full-dataset duplication
+A different canonical analytical format SHALL NOT be substituted without explicit user approval and OpenSpec update.
 
-The system SHALL NOT duplicate every large canonical Parquet analytical table as a complete CSV solely for compliance.
+## Human-review outputs
 
-CSV SHALL be used for human-reviewable summaries and targeted extraction outputs intended for upload, manual inspection, or compact downstream exchange.
+Do not wholesale-duplicate every large Parquet table as CSV. CSV is for targeted review/exchange extracts.
 
-A deterministic extraction utility SHALL read the canonical Parquet store directly and export selected rows/columns/time ranges/feature families to CSV.
+A deterministic extraction utility reads canonical Parquet directly and exports selected rows/columns/time ranges/feature families.
 
-### Requirement: Keep small review tables as one CSV
+Keep a complete human-review logical table as one CSV when approximately 10 MB or smaller. If materially larger, split into ordered identical-schema CSV parts with manifest.
 
-A human-review logical table or extraction SHALL remain a single CSV file when its complete export is approximately 10 MB or smaller.
+## Reconstructability
 
-### Requirement: Partition oversized review CSV outputs
+For partitioned Parquet or review CSV outputs, manifests identify logical table, part paths, row counts, temporal coverage, schema/version, source segment where applicable, and sufficient metadata for deterministic reconstruction.
 
-When a requested human-review CSV logical table materially exceeds approximately 10 MB, the system SHALL export multiple ordered CSV parts with identical schema and a manifest rather than one oversized file.
+## Resume state does not redefine canonical output
 
-### Requirement: Partitioned analytical tables remain reconstructable
-
-For partitioned canonical Parquet or review CSV tables, manifests SHALL identify logical table name, part filenames/paths, row counts, temporal coverage, schema/version, source segment where applicable, and sufficient metadata to reconstruct the logical table deterministically.
-
-### Requirement: Resume state does not redefine canonical output
-
-Checkpoint, cache, and resume artifacts MAY use Parquet or another repository-approved internal format but SHALL remain distinguishable from validated canonical Parquet analytical outputs.
-
-A resumed run SHALL validate input/configuration identity and SHALL NOT duplicate already finalized canonical rows.
+Checkpoint/cache artifacts remain distinguishable from validated canonical outputs. Resume validates input/config/schema/refinement/source checksums and SHALL NOT duplicate finalized canonical rows.
