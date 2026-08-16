@@ -2,532 +2,312 @@
 
 ## Purpose
 
-Make Structure Research v5 fail loudly and reproducibly when formulas, time boundaries, source continuity, causality, schema, resume behavior, or extraction semantics are wrong. A successful process exit is not evidence of a valid research dataset; success SHALL be derived from explicit assertions against deterministic fixtures and production invariants.
+Make Structure Research v5 fail loudly and reproducibly when formulas, source chronology, time boundaries, continuity, causality, schema, resume behavior, or extraction semantics are wrong. Process completion is not evidence of valid data.
 
 ## ADDED Requirements
 
-### Requirement: Golden tests are a hard gate before smoke or full-history production
+### Requirement: Golden tests are a hard gate
 
-The implementation SHALL provide automated golden tests covering the contracts below.
+No smoke or full-history run is approved until all applicable critical tests pass.
 
-- No smoke run SHALL be treated as approved until all critical golden tests pass.
-- No full-history production run SHALL begin until golden tests and the separately reviewed smoke gate pass.
-- A failed critical assertion SHALL make the test stage fail and SHALL NOT be overwritten by a later unconditional success status.
-- `COMPLETE`, `PASS`, or equivalent success SHALL be derived from assertion results, not assigned unconditionally.
+Emit at minimum:
 
-The implementation SHALL emit at minimum:
+- `golden_test_report.json`
+- `failure_report.json`
+- `qa_summary.md`.
 
-- `golden_test_report.json` with every test id, expected result, observed result, and pass/fail status;
-- `failure_report.json` containing every failed critical assertion and relevant evidence;
-- `qa_summary.md` summarizing total/pass/fail counts and whether downstream smoke/full-run gates are open.
+`PASS/COMPLETE` SHALL be mechanically derived from assertions. A later step may not overwrite a critical failure with a success-like status.
 
-A zero-row or not-executed test SHALL NOT count as passed unless that test explicitly defines a valid not-applicable state.
+### Requirement: Numeric tolerance is explicit
 
-### Requirement: Golden numeric tolerance is explicit
+Exact integers/enums/timestamps/ids/normalized decimal OHLCV compare exactly. Floating/log formulas use at most relative tolerance `1e-10` and absolute `1e-12` unless a test-specific justification is recorded.
 
-Synthetic fixture tests SHALL compare integers, booleans, enums, timestamps, identifiers, counts, and exact decimal OHLCV values exactly after canonical normalization.
+## Golden fixtures
 
-For formulas involving logarithms or other floating operations, expected and observed values SHALL satisfy both the documented finite/null semantics and numerical closeness using at most:
+### G01 — Complete 1m -> 5m OHLCV
 
-- relative tolerance `1e-10`;
-- absolute tolerance `1e-12`.
-
-A looser tolerance requires an explicit test-specific justification in the report.
-
-Real source-vs-source OHLCV QA SHALL compare normalized source precision exactly where feasible; otherwise tolerance SHALL NOT exceed one unit of the documented source precision/tick/quantity step without explicit review.
-
-### Requirement: Golden fixture G01 validates deterministic 1m-to-5m OHLCV aggregation
-
-Use five complete consecutive same-segment 1m candles:
+Five 1m rows:
 
 | minute | open | high | low | close | volume |
 |---|---:|---:|---:|---:|---:|
-| 00:00 | 100 | 102 | 99 | 101 | 1 |
-| 00:01 | 101 | 104 | 100 | 103 | 2 |
-| 00:02 | 103 | 105 | 102 | 104 | 3 |
-| 00:03 | 104 | 106 | 101 | 102 | 4 |
-| 00:04 | 102 | 103 | 98 | 99 | 5 |
+|00:00|100|102|99|101|1|
+|00:01|101|104|100|103|2|
+|00:02|103|105|102|104|3|
+|00:03|104|106|101|102|4|
+|00:04|102|103|98|99|5|
 
-The canonical `00:00-00:05` 5m candle SHALL be:
+Expected 5m: O=100,H=106,L=98,C=99,V=15,count=5/5,coverage=1,complete.
 
-- `open = 100`
-- `high = 106`
-- `low = 98`
-- `close = 99`
-- `volume = 15`
-- `expected_constituent_count = 5`
-- `observed_constituent_count = 5`
-- `coverage_ratio = 1`
-- `completeness_status = complete`.
+### G02 — Gap propagation
 
-### Requirement: Golden fixture G02 validates gap propagation and observed-only diagnostics
+Remove 00:02 from G01.
 
-Remove the `00:02` candle from G01 while leaving the other four unchanged.
+Expected 5m: count 4/5, coverage .8, `incomplete_gap`, complete OHLCV null. If observed-only emitted: O=100,H=106,L=98,C=99,V=12. Containing larger intervals requiring the missing minute are incomplete.
 
-The canonical 5m row SHALL:
+### G03 — Spot/futures sequential isolation
 
-- have `expected_constituent_count = 5`;
-- have `observed_constituent_count = 4`;
-- have `coverage_ratio = 0.8`;
-- be `incomplete_gap`;
-- have complete canonical `open/high/low/close/volume = null`.
+Timestamp-adjacent spot and futures candles still form different source segments. Cross-boundary pair ineligible; no return/TR/ATR/RV/path/alternation/overlap/adjacent-window comparison bridges them.
 
-If observed-only diagnostics are emitted, they SHALL equal:
+### G04 — Archive/provenance change is not a source boundary
 
-- `observed_only_open = 100`
-- `observed_only_high = 106`
-- `observed_only_low = 98`
-- `observed_only_close = 99`
-- `observed_only_volume = 12`.
+Same-market exact-adjacent candles from different archive files remain same segment. A truly observed/approved same-market repaired row may preserve continuity; provenance remains distinct.
 
-Every containing 15m/1H/4H/1D interval whose canonical construction requires that missing 1m candle SHALL also be incomplete rather than silently complete.
+### G05 — Fixed vs rolling
 
-The missing minute SHALL be represented in source-gap/coverage evidence and SHALL NOT be replaced by a synthetic flat or zero-volume candle.
+At 20:25, rolling 4h = `[16:25,20:25)`, fixed 4H remains `[16:00,20:00)`; distinct identities.
 
-### Requirement: Golden fixture G03 validates source-boundary isolation
+### G06 — Cross-timeframe ordinal
 
-Construct two timestamp-adjacent candles where the first belongs to `spot` segment A and the second to `usdt_m_futures` segment B.
+5m 00:15 inside 1H 00:00 has zero-based ordinal 3; 00:55 ordinal 11; expected children 12.
 
-Even when `curr.start_time == prev.end_time`:
+### G07 — Rolling speed/change/acceleration
 
-- the cross-boundary pair SHALL be `pair_eligible = false`;
-- no close-step return/log-return SHALL bridge the pair;
-- True Range on the first futures candle SHALL be null because the spot close is not a valid previous close;
-- ATR/Wilder state SHALL not continue across the boundary;
-- rolling observations crossing the boundary SHALL be incomplete/null for complete metrics;
-- path, RV, alternation, overlap, penetration, and previous-window comparison SHALL not bridge the boundary;
-- any source-transition price difference SHALL remain a separate diagnostic only.
-
-### Requirement: Golden fixture G04 validates archive/provenance changes do not create false source boundaries
-
-Construct timestamp-adjacent same-market candles with identical venue/instrument/market type but different `raw_artifact_id` or monthly/daily archive provenance.
-
-When no real gap exists:
-
-- both SHALL remain in the same `source_segment_id`;
-- the pair SHALL remain eligible;
-- sequential TR/return/path logic SHALL continue normally.
-
-A same-market candle reconstructed from approved lower-level official data SHALL likewise remain in the continuous segment when it completely repairs the missing interval; its row-level reconstruction provenance SHALL remain distinct.
-
-### Requirement: Golden fixture G05 validates fixed versus rolling time semantics
-
-At endpoint `20:25:00Z`:
-
-- a rolling 4h observation SHALL represent `[16:25:00Z,20:25:00Z)`;
-- the fixed 4H candle relevant to that area SHALL remain calendar aligned, e.g. `[16:00:00Z,20:00:00Z)`;
-- the rolling and fixed observations SHALL have different observation identities and SHALL never be substituted for one another.
-
-### Requirement: Cross-timeframe child ordinal is zero-based
-
-`child_ordinal_in_parent` SHALL be zero-based in chronological order.
-
-For a 5m child candle beginning `00:15:00Z` inside a fixed 1H parent `[00:00,01:00)`, the ordinal SHALL be `3`. A 5m candle beginning `00:55:00Z` SHALL have ordinal `11`.
-
-G06 SHALL assert the correct parent ids, expected child count `12`, and these ordinals.
-
-### Requirement: Golden fixture G07 validates rolling endpoint, adjacent-window speed change, and no historical recomputation semantics
-
-Use 12 consecutive complete 5m candles covering `[00:00,01:00)` with continuous opens/closes such that:
-
-- first 30m window `[00:00,00:30)` starts at `100` and ends at `110`;
-- second 30m window `[00:30,01:00)` starts at `110` and ends at `115.5`.
-
-At `01:00` the current 30m observation SHALL use `P0=110`, `P1=115.5`, so:
-
-- `signed_return_pct = 5`;
-- `raw_signed_speed_pct_per_hour = 10`.
-
-The immediately preceding 30m observation SHALL have:
-
-- `signed_return_pct = 10`;
-- `raw_signed_speed_pct_per_hour = 20`.
-
-Therefore:
-
-- `speed_change_30m = -10` percentage-points-per-hour;
-- `acceleration_30m = -20` percentage-points-per-hour-squared.
-
-The implementation SHALL be able to produce the `01:00` row by advancing rolling state without mutating already-finalized earlier rolling rows.
-
-### Requirement: Golden fixture G08 validates zero-net movement still preserves path and realized volatility
-
-Use a complete 10m observation calculated from two 5m candles with price sequence:
-
-`Q = [100, 200, 100]`
-
-where `Q0` is the first candle open and subsequent values are constituent closes.
+Previous 30m: 100 -> 110 => return 10%, speed 20 percentage-points/hour.
+Current 30m: 110 -> 115.5 => return 5%, speed 10.
 
 Expected:
 
-- net signed price change `0`;
-- local direction `flat`;
-- `close_path = 200`;
-- `path_efficiency = 0`;
-- `upward_close_path = 100`;
-- `downward_close_path = 100`;
-- local with/against-direction path fields = null because observation direction is flat;
-- non-zero step signs are `+,-`;
-- `sign_change_count = 1`;
-- `alternation_rate = 1`;
-- `log_close_path = 2 * ln(2) = 1.3862943611198906`;
-- `realized_variance = 2 * ln(2)^2 = 0.9609060278364028`;
-- `realized_volatility = sqrt(2) * ln(2) = 0.9802581434685472`.
+- `speed_change_pct_per_hour=-10`
+- `acceleration_pct_per_hour2=-20`.
 
-A zero net close-to-close displacement SHALL NOT zero out path, volatility, excursions, or activity.
+### G08 — Zero-net still has path and RV
 
-### Requirement: Golden fixture G09 validates zero-step alternation convention
+For Q=`[100,200,100]`:
 
-Use path step signs corresponding to `+, 0, -`.
+- net=0, direction=flat
+- close_path=200
+- efficiency=0
+- upward=100, downward=100
+- local with/against null
+- sign changes=1, alternation=1
+- log path=`2*ln(2)=1.3862943611198906`
+- RV=`2*ln(2)^2=0.9609060278364028`
+- realized volatility=`0.9802581434685472`.
 
-Expected:
+### G09 — Zero-step alternation
 
-- `zero_step_count = 1`;
-- `nonzero_step_count = 2`;
-- non-zero sign sequence = `+,-`;
-- `sign_change_count = 1`;
-- `alternation_rate = 1`.
+Signs `+,0,-`: zero_count=1, nonzero_count=2, sign_change_count=1, alternation=1.
 
-The zero step SHALL not be reclassified as up or down.
+### G10 — Repeated extrema
 
-### Requirement: Golden fixture G10 validates repeated extrema and excursion semantics
+P0=100, highs `[110,110,105,110]`, lows `[95,96,95,97]` at t0..t3.
 
-For one observation with start price `P0=100` and four constituent candles whose highs are `[110,110,105,110]` and lows are `[95,96,95,97]` at consecutive constituent start times `t0,t1,t2,t3`:
+Expected high=110 first=t0 last=t3 count=3; low=95 first=t0 last=t2 count=2; excursions +10/-5 abs and 10%/5%.
+
+### G11 — Pair overlap/body/penetration
+
+Previous O100 H110 L90 C108; current O107 H112 L94 C96.
 
 Expected:
 
-- `observation_high = 110`;
-- `high_first_time = t0`;
-- `high_last_time = t3`;
-- `high_occurrence_count = 3`;
-- `observation_low = 95`;
-- `low_first_time = t0`;
-- `low_last_time = t2`;
-- `low_occurrence_count = 2`;
-- `upward_excursion_abs = 10`;
-- `downward_excursion_abs = 5`;
-- `upward_excursion_pct = 10`;
-- `downward_excursion_pct = 5`.
+- range overlap [94,110], abs16, prev .8, curr 8/9, Jaccard 8/11;
+- prev positions low .2, high1, mid .6;
+- curr positions low0, high8/9, mid4/9;
+- body overlap [100,107], abs7, prev7/8,curr7/11,Jaccard7/12;
+- upper extension2/share.1; lower0;
+- penetration from top extreme16/.8, body14/.7, close14/.7, wick-only2/.1;
+- from bottom extreme20/1, body17/.85, close6/.3, wick-only3/.15.
 
-Occurrence timestamps/counts SHALL remain explicitly limited to the stated candle calculation resolution.
+Up observation selects top as against-move; down selects bottom; flat relative fields null.
 
-### Requirement: Golden fixture G11 validates range overlap, body overlap, position, extensions, and mirrored penetration
+### G12 — Two volume-direction systems
 
-Use eligible pair:
+Prev close100; current O105 C102 V7.
 
-Previous candle:
+Body direction=down; close-step direction=up. Volume 7 contributes independently to body-down and close-step-up.
 
-- `open=100`
-- `high=110`
-- `low=90`
-- `close=108`
-- body `[100,108]`
-- range `20`.
+### G13 — TR/ATR initialization/reset
 
-Current candle:
+First candle without valid previous close: TR null. Then 14 consecutive TR=2 => SMA14=2,Wilder=2. Next TR=4 => both fixture values `15/7`. Gap resets; first following TR null and Wilder waits for 14 new valid TRs.
 
-- `open=107`
-- `high=112`
-- `low=94`
-- `close=96`
-- body `[96,107]`
-- range `18`.
+### G14 — Direct retracement formula and tuple authorization
 
-Expected range overlap:
+A=100,B=120:
 
-- interval `[94,110]`
-- `range_overlap_abs = 16`
-- `overlap_share_prev = 0.8`
-- `overlap_share_curr = 8/9`
-- `overlap_jaccard = 8/11`
-- previous-range overlap positions: low `0.2`, high `1`, midpoint `0.6`
-- current-range overlap positions: low `0`, high `8/9`, midpoint `4/9`.
+- C110 => candidate/reference50, retracement50
+- C90 => 150/150
+- C130 => 50/0.
 
-Expected body overlap:
+Also assert production engine does NOT materialize the tuple merely because A/B/C are individually available; relationship must be explicitly configured.
 
-- interval `[100,107]`
-- `body_overlap_abs = 7`
-- `body_overlap_share_prev = 7/8`
-- `body_overlap_share_curr = 7/11`
-- `body_overlap_jaccard = 7/12`.
+### G15 — Macro anchor-inclusive formula for exact compatible synthetic fixture
 
-Expected neutral extensions:
+For exact compatible anchors P0=100,P1=112 and internal closes `[105,103,110]`:
 
-- `upper_extension_abs = 2`
-- `lower_extension_abs = 0`
-- `upper_extension_share_prev = 0.1`
-- `lower_extension_share_prev = 0`.
+- internal path=9
+- anchor-inclusive path=16
+- displacement=12
+- anchor-inclusive efficiency=.75.
 
-Expected penetration from top, using previous full range:
+This tests formula only; production macro source must separately satisfy source/time-precision gate.
 
-- extreme `16`, share `0.8`
-- body `14`, share `0.7`
-- close `14`, share `0.7`
-- wick-only `2`, share `0.1`.
+### G16 — Rolling calculation matrix
 
-Expected penetration from bottom:
+Exactly:
 
-- extreme `20`, share `1`
-- body `17`, share `0.85`
-- close `6`, share `0.3`
-- wick-only `3`, share `0.15`.
+- 30m: 5m,15m
+- 1h: 5m,15m
+- 4h: 5m,15m,1H
+- 12h: 5m,15m,1H,4H
+- 24h: 5m,15m,1H,4H
+- 3d: 5m,15m,1H,4H,1D.
 
-For an `up` observation, against-move penetration SHALL select the from-top values. For a `down` observation it SHALL select from-bottom values. For a flat observation, direction-relative fields SHALL be null while neutral mirrored fields remain unchanged.
+### G17 — Stable UUID examples
 
-### Requirement: Golden fixture G12 validates the two volume-direction conventions independently
+Namespace `87411ce4-8483-55b7-a348-700b7ad4b9ab`:
 
-Let the valid temporally adjacent previous candle close at `100`.
+- segment `segment|binance|BTCUSDT|spot|2018-01-01T00:00:00Z` = `adeeb6f8-cff1-5738-a02b-a75bd176b546`
+- 5m candle = `cdf2383a-744c-5140-a130-cac2de6044be`
+- fixed observation = `251296be-22d3-5ba5-9745-bead7257333f`
+- rolling 30m ending 00:30 = `c5aab5b5-f528-5c9f-a7b4-81345bfb3270`
+- next 5m candle = `e5f9c683-3ad6-5235-be04-a7fe331ee0d1`
+- pair = `e3ce7198-17dd-5e2e-b03a-09636992e345`.
 
-For current candle:
+Run/path/provenance changes do not change these ids.
 
-- `open=105`
-- `close=102`
-- `volume=7`.
+### G18 — Causality/future-data invariance
 
-The candle SHALL be:
+Causal fields ending t have `available_at=t`; excluded before t. Appending/changing data strictly after t cannot alter already causal rows through t. Macro context excluded from causal-only extraction.
 
-- `body_direction = down` because `102 < 105`;
-- `close_step_direction = up` because `102 > 100`.
+### G19 — Forbidden semantic labels
 
-Therefore, for a one-bar grouping where the prior close is valid:
+Fail on newly generated first-pass fields such as `is_impulse`, `is_correction`, `impulse_label`, `correction_label`, `choppiness_score`, `range_state`, `breakout_label`, `parent_impulse_id`, `fib_*`, `fibtime_*` unless explicitly source-provenance-only and not treated as research truth.
 
-- body-direction volume contributes `7` to body-down;
-- close-step-direction volume contributes `7` to close-step-up.
+### G20 — Feature dictionary consistency
 
-The implementation SHALL NOT force the two conventions to agree.
+Every materialized metric has exactly one compatible dictionary definition; no orphan metric, conflicting duplicate, availability mismatch, or undeclared schema feature.
 
-### Requirement: Golden fixture G13 validates True Range, ATR14 initialization, update, and reset
+### G21 — Schema/referential integrity
 
-Construct one continuous resolution/segment where the first candle has no valid prior close and therefore `TR=null`.
+Primary/natural keys unique; observation/candle/macro/segment foreign keys resolve; no overlapping duplicate canonical rows across parts.
 
-Then provide 14 consecutive candles each with valid `TR=2`.
+### G22 — Parquet manifests
 
-At the 14th valid TR endpoint:
+Manifest row counts/parts/schema/time/partition values reconcile with physical data; all listed parts reconstruct one logical table without duplicate keys.
 
-- `atr14_sma = 2`;
-- `atr14_wilder = 2`.
+### G23 — Extraction
 
-For the next adjacent candle with `TR=4`:
+Small fixture must prove time/market/resolution/feature pruning, macro id extraction, causal exclusion, CSV equality with canonical Parquet, deterministic ordering and no hidden canonical-feature recomputation.
 
-- `atr14_wilder = ((13*2)+4)/14 = 15/7 = 2.142857142857143`;
-- `atr14_sma` over the latest 14 valid TR values also equals `15/7` in this fixture.
+### G24 — Resume equivalence
 
-After an unresolved gap/source-boundary reset:
+Clean run vs interrupted+resumed run have identical canonical keys/values/statuses. Changed input checksum/schema/config rejects stale checkpoint.
 
-- the first following candle SHALL have `TR=null` if no valid adjacent previous close exists;
-- Wilder ATR SHALL be null until 14 new consecutive valid TR observations reinitialize it.
+### G25 — Native higher-timeframe QA source classification
 
-### Requirement: Golden fixture G14 validates direct retracement without Fibonacci semantics
+A QA reference must be classified as either:
 
-For approved anchors `A=100`, `B=120`:
+- `critical_validated_reference`; or
+- `diagnostic_reference`.
 
-- if `C=110`, `candidate_vs_reference_pct=50` and `retracement_pct=50`;
-- if `C=90`, `candidate_vs_reference_pct=150` and `retracement_pct=150`;
-- if `C=130`, `candidate_vs_reference_pct=50` but `retracement_pct=0` because the move continues in the reference direction.
+Known legacy `cache_futures_1d/4h` with material inconsistency near 2019-09-24 SHALL NOT be used as critical ground truth there. A diagnostic mismatch is reported, not used to overwrite canonical values.
 
-No Fib ratio/label SHALL be emitted.
+### G26 — Boundary-crossing fixed interval representation
 
-### Requirement: Golden fixture G15 validates macro-leg anchor-inclusive path separately from internal path
+With canonical boundary `2019-09-08T17:57:00Z`, fixed 5m `[17:55,18:00)`, 15m `[17:45,18:00)`, 1H `[17:00,18:00)`, 4H `[16:00,20:00)`, and 1D containing the boundary SHALL:
 
-For an approved macro leg with `P0=100`, `P1=112` and eligible internal chronological finer closes `[105,103,110]` inside one complete continuous source segment:
+- exist as interval rows;
+- have `market_type=cross_market`;
+- `source_segment_id=null`;
+- `completeness_status=incomplete_boundary`;
+- complete OHLCV null;
+- produce no valid complete fixed observation speed/path/RV.
 
-- `internal_close_path = abs(105-103) + abs(103-110) = 9`;
-- `anchor_inclusive_close_path = abs(105-100) + 9 + abs(112-110) = 16`;
-- absolute macro-leg displacement = `12`;
-- anchor-inclusive path efficiency = `12/16 = 0.75`.
+### G27 — Synthetic no-trade futures bucket is excluded from strict canonical 1m
 
-Internal path SHALL not silently include source anchors; anchor-inclusive path SHALL not silently omit them.
+For `2019-09-08T19:00:00Z` audit facts:
 
-If the same macro leg fixture is modified so the path crosses a source boundary or unresolved required gap, the complete whole-leg sequential path and efficiency SHALL become null while the source macro anchor movement/duration remains preserved as retrospective source information.
+- no native kline;
+- zero official trades in the minute;
+- diagnostic synthetic row OHLC=10000, volume/trades=0.
 
-### Requirement: Golden fixture G16 validates rolling calculation-resolution eligibility matrix
+Strict canonical output SHALL NOT contain that synthetic row. `source_gaps` SHALL contain one futures gap `[19:00,19:01)` with appropriate reason; source segments split around it; complete higher intervals/windows requiring it become incomplete.
 
-The implementation SHALL reproduce exactly this first-pass matrix:
+### G28 — Historical macro provenance remains mixed
 
-- `30m`: `5m`, `15m`
-- `1h`: `5m`, `15m`
-- `4h`: `5m`, `15m`, `1H`
-- `12h`: `5m`, `15m`, `1H`, `4H`
-- `24h`: `5m`, `15m`, `1H`, `4H`
-- `3d`: `5m`, `15m`, `1H`, `4H`, `1D`.
+For audited late-2019 macro anchors, assert parent daily regime remains old spot while refinement source may be futures 4H. `leg_source_classification=mixed` where audit says mixed. Current canonical boundary SHALL NOT overwrite historical macro provenance.
 
-No ineligible combination SHALL be materialized as a valid complete feature row.
+### G29 — Resolution-limited macro anchor blocks anchor-inclusive path
 
-### Requirement: Golden fixture G17 validates deterministic stable identifiers
+Fixture: macro anchor price is H/L of a 4H candle but timestamp is only that 4H bucket start and no exact extreme time is known.
 
-Using UUIDv5 namespace `87411ce4-8483-55b7-a348-700b7ad4b9ab`, the implementation SHALL reproduce these exact examples:
+Expected:
 
-- `uuid5(namespace, "segment|binance|BTCUSDT|spot|2018-01-01T00:00:00Z") = adeeb6f8-cff1-5738-a02b-a75bd176b546`
-- `uuid5(namespace, "candle|binance|BTCUSDT|spot|5m|2018-01-01T00:00:00Z") = cdf2383a-744c-5140-a130-cac2de6044be`
-- fixed observation for that candle = `251296be-22d3-5ba5-9745-bead7257333f`
-- rolling `30m` observation ending `2018-01-01T00:30:00Z` = `c5aab5b5-f528-5c9f-a7b4-81345bfb3270`
-- next 5m candle at `00:05` = `e5f9c683-3ad6-5235-be04-a7fe331ee0d1`
-- pair of the two listed 5m candles = `e3ce7198-17dd-5e2e-b03a-09636992e345`.
+- source macro displacement remains preserved;
+- internal canonical path may be calculated if coverage allows;
+- anchor-inclusive path/efficiency null;
+- `anchor_inclusive_status=anchor_time_precision_insufficient`.
 
-Changing `run_id`, raw local path, or archive filename without changing canonical entity identity SHALL reproduce the same entity ids.
+### G30 — Canonical spot-gap grid alignment
 
-### Requirement: Golden fixture G18 validates causal availability and future-data invariance
+Source audit evidence reports raw spot missing 6235, canonical-relevant 5972, 16 intervals before cutoff. Production SHALL recompute gaps from strict minute-grid canonical rows.
 
-For a complete fixed/rolling observation ending at time `t`:
+Audit interval strings containing non-minute seconds/milliseconds SHALL NOT be copied directly into `source_gaps`.
 
-- its causal close-known fields SHALL have `available_at=t`;
-- a causal extraction with `as_of < t` SHALL exclude them;
-- a causal extraction with `as_of >= t` MAY include them.
+QA asserts:
 
-After causal rows through time `t` are finalized, append or modify only market data strictly after `t` and recompute from a clean state.
+- every canonical gap boundary is minute-aligned;
+- no post-boundary raw spot gap enters canonical chronology;
+- final canonical missing-minute total/interval count are compared against 5972/16 audit evidence;
+- any difference requires explicit source-alignment explanation and review rather than silent acceptance.
 
-Every causal feature whose contract uses only data available at or before `t` SHALL reproduce the same value/id/status as before. A future-data-induced change to such a row is a critical leakage failure.
+### G31 — Atomic candle geometry materialization
 
-Macro-leg endpoint-dependent context SHALL remain retrospective and SHALL be excluded from causal-only extraction.
+For complete candle O100,H110,L90,C105:
 
-### Requirement: Golden fixture G19 validates no forbidden first-pass semantic labels leak into canonical research features
+- full_range20
+- body_size5
+- body_high105
+- body_low100
+- upper_wick5
+- lower_wick10
+- body_share.25
+- upper_wick_share.25
+- lower_wick_share.5
+- body_direction=up
+- log fields match exact formulas.
 
-Generated feature/schema names SHALL be scanned for newly created first-pass semantic classifications.
+A complete target candle must resolve to exactly one `candle_geometry` row; incomplete boundary/gap candle must not masquerade as valid geometry.
 
-The pipeline SHALL fail if it creates unapproved generated fields such as:
+### G32 — Fixed calculation matrix
 
-- `is_impulse`
-- `is_correction`
-- `impulse_label`
-- `correction_label`
-- `choppiness_score`
-- `range_state`
-- `breakout_label`
-- `parent_impulse_id`
-- `fib_*`
-- `fibtime_*`
+Exactly:
 
-Source-provenance fields retained verbatim from approved inputs are allowed only when clearly identified as source provenance and not treated as validated research truth.
+- 15m via5m
+- 1H via5m,15m
+- 4H via5m,15m,1H
+- 1D via5m,15m,1H,4H.
 
-### Requirement: Golden fixture G20 validates feature-dictionary completeness and consistency
+No lower-resolution path row for fixed 5m in first pass.
 
-Every materialized research metric column SHALL have exactly one applicable feature-dictionary definition containing formula/derivation, units, calculation-resolution semantics, availability class, available-at rule, null meaning, and provenance.
+### G33 — Macro calculation matrix and RV exclusion
 
-Identity, partition-pruning, run, schema, and pure provenance metadata fields MAY use a documented metadata whitelist rather than feature entries.
+When enough canonical constituents exist, macro internal path/activity/overlap/volume may materialize at 5m,15m,1H,4H,1D. Macro RV fields SHALL remain null/not materialized as valid first-pass metrics unless a later approved macro RV contract exists.
 
-The QA stage SHALL fail on:
+### G34 — Canonical field-name regression
 
-- a metric column without dictionary definition;
-- incompatible duplicate definitions for the same logical table/feature;
-- a dictionary feature not present in the declared schema unless explicitly marked planned/non-materialized;
-- mismatch between dictionary availability class and physical table/extraction behavior.
+Fail if deprecated conflicting names are generated instead of canonical names, including:
 
-### Requirement: Golden fixture G21 validates canonical schema keys and referential integrity
+- `local_direction_normalized_speed_pct_per_hour` instead of `local_direction_speed_pct_per_hour`;
+- `volume_delta` instead of `volume_sum_change_vs_prev`;
+- `volume_ratio` instead of `volume_sum_ratio_vs_prev`;
+- `rolling_high_low_width` instead of `observation_high_low_width`;
+- `mean_candle_range` instead of `mean_full_range`.
 
-For every canonical logical table:
+## Production invariants
 
-- declared primary/natural keys SHALL be unique;
-- `observation_id` foreign keys SHALL resolve to `observation_index`;
-- candle ids SHALL resolve to the appropriate candle table;
-- eligible pair ids SHALL reference valid candle ids at the declared calculation resolution;
-- macro context SHALL resolve both observation and macro-leg ids;
-- source-segment ids SHALL resolve when non-null;
-- manifests SHALL not contain overlapping duplicate canonical rows across parts.
+### Requirement: Approved source gaps are visible, never hidden
 
-Any orphaned required foreign key or duplicate canonical primary key is a critical failure.
+Every canonical unresolved gap appears in `source_gaps`; no strict canonical row fills it with unobserved synthetic OHLC; no complete sequential feature bridges it.
 
-### Requirement: Golden fixture G22 validates Parquet manifests and partition reconstruction
+### Requirement: Source boundary is read from one finalized contract
 
-For each logical table manifest:
+Tests/features SHALL consume configured canonical boundary, not duplicate a separate conflicting constant.
 
-- manifest part row counts SHALL sum to the logical-table row count;
-- listed parts SHALL exist and match schema/version;
-- min/max temporal coverage SHALL agree with actual part data;
-- declared partition values SHALL agree with row pruning columns;
-- checksums/integrity evidence SHALL validate where required;
-- reading all listed parts SHALL reconstruct the logical table without duplicate canonical keys.
+### Requirement: QA status is mechanically derived
 
-The extraction utility SHALL use the deterministic catalog/manifest rather than guessing unlisted files from a directory.
+Severities: `critical`, `warning`, `info`.
 
-### Requirement: Golden fixture G23 validates extraction from Parquet without hidden recomputation
+G01-G34 and schema/source/referential invariants are critical unless explicitly documented not-applicable by contract.
 
-Build a small canonical fixture containing at least:
-
-- multiple market types or source segments;
-- multiple target/calculation resolutions;
-- one macro leg;
-- causal and retrospective fields.
-
-An extraction request filtering by time range/market type, selected observation ids or macro-leg id, calculation resolution, selected feature families, and `availability_class=causal` SHALL return exactly the matching stored canonical rows/columns.
-
-The test SHALL assert:
-
-- unrelated partitions/rows are excluded;
-- retrospective macro context is excluded from causal-only output;
-- requested CSV contents equal the selected canonical Parquet values;
-- extraction does not recalculate a canonical metric into a different value;
-- CSV partitioning, if triggered, preserves identical schema and deterministic row order/manifest reconstruction.
-
-### Requirement: Golden fixture G24 validates resume equivalence and incompatible-checkpoint rejection
-
-Run a deterministic synthetic dataset once from clean start to completion and record canonical key sets/content hashes.
-
-Run the same dataset/configuration again but interrupt after at least one persisted checkpoint and resume.
-
-The resumed result SHALL have:
-
-- identical canonical primary-key sets;
-- identical metric values/statuses;
-- no duplicate canonical rows;
-- no missing finalized rows;
-- equivalent logical-table manifests apart from explicitly run-specific metadata.
-
-Then attempt resume with a deliberately changed input checksum, schema version, or calculation configuration. The stale/incompatible checkpoint SHALL be rejected explicitly rather than silently reused.
-
-### Requirement: Golden fixture G25 validates native higher-timeframe QA against canonical 1m-derived candles
-
-Where an approved native Binance higher-timeframe QA reference exists for the same venue/instrument/market type and a complete canonical interval:
-
-- canonical 1m-derived OHLCV SHALL be compared with the native QA candle;
-- interval alignment/timestamp semantics SHALL be normalized first;
-- mismatches SHALL be reported with candle id/timeframe/time, derived value, native value, and source provenance.
-
-A material unexplained OHLCV mismatch SHALL be a critical QA failure for that source/interval rather than being silently resolved by replacing the canonical derived candle with the native value.
-
-Known documented source limitations MAY be marked explicitly not-applicable only with evidence in the QA report.
-
-### Requirement: Production QA validates irrecoverable gaps rather than hiding them
-
-The final source contract SHALL provide the approved unresolved-gap inventory.
-
-Production QA SHALL assert that:
-
-- every approved irrecoverable gap is represented in `source_gaps`;
-- no canonical 1m candle exists for a minute documented as irrecoverably missing unless a later explicitly approved repair changes the source contract;
-- no path/rolling/RV/ATR/pair calculation bridges such a gap as complete;
-- segment boundaries around the gap are consistent with the source-segment contract.
-
-The already investigated Binance spot gaps that remain unrecoverable after official aggTrades recovery attempts SHALL be treated under this rule once their final artifact paths/counts are inserted into the source contract.
-
-### Requirement: QA tests actual source-boundary timestamp from final source contract
-
-The spot-to-futures boundary SHALL NOT be hardcoded independently inside test code.
-
-After the early-futures source investigation is finalized, the approved exact boundary timestamp and evidence SHALL be represented once in the source contract/configuration. QA SHALL read that approved value and assert:
-
-- candles before/after the boundary use the correct market type;
-- no source segment crosses the boundary;
-- no complete sequential feature bridges it;
-- macro-leg handling follows the approved cross-boundary rule.
-
-A test suite with a separately hardcoded conflicting boundary SHALL fail configuration validation.
-
-### Requirement: QA final status is mechanically derived
-
-Define three test severities:
-
-- `critical`: failure closes the smoke/full-run gate;
-- `warning`: dataset MAY remain usable but evidence requires review;
-- `info`: diagnostic only.
-
-All G01-G25 requirements and source/schema/referential integrity checks described above are `critical` unless a requirement explicitly permits documented not-applicability.
-
-`qa_status = PASS` only when:
-
-- every applicable critical test passed;
-- no critical test was skipped without an approved not-applicable reason;
-- `failure_report.json` contains zero unresolved critical failures.
-
-If any critical assertion fails, `qa_status = FAIL`.
-
-No post-processing step SHALL overwrite `FAIL` with a success-like status because the pipeline completed or because failures are considered "known coverage limits". Known approved coverage gaps are represented as expected source conditions and tested accordingly; unexpected contract violations remain failures.
+`qa_status=PASS` only when all applicable critical tests pass and `failure_report.json` has zero unresolved critical failures. Otherwise `FAIL`.
