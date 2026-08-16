@@ -2,192 +2,181 @@
 
 ## Execution policy
 
-Implement in the order below. Do not launch full-history production as part of implementation completion. A task that writes files but fails semantic validation is incomplete.
+Implement in order. Do not launch full-history production without explicit approval. A file-writing step is not complete until semantic validation passes.
 
-## Phase 0 — Contract freeze and scaffolding
+## Phase 0 — Freeze contracts
 
-### T00. Freeze final source contract
-Record canonical boundary, raw/canonical spot-gap evidence, futures 19:00 gap/synthetic exclusion, approved source artifacts/checksums, and macro forensic provenance.
+### T00 Source/config truth
+Freeze canonical boundary/gap evidence, macro checksum, 5m localization checksum, price-unit rule, calculation matrices, output/checkpoint roots and code/config hash.
 
-Acceptance: one source/config truth; no conflicting hardcoded boundary; synthetic rows cannot satisfy completeness.
+### T01 Typed schemas
+Implement all logical tables including macro anchors, trade touches, boundary fragments and 118 macro retracement relationships.
 
-### T01. Define typed runtime schemas
-Implement typed contracts for all logical tables including `macro_anchors`, `candle_geometry`, `retracement_measurements`, canonical `market_type`, historical macro provenance, anchor precision/refinement status and safe-interior fields.
-
-### T02. Implement deterministic ids
-Implement UUIDv5 identities including macro anchor and retracement ids.
+### T02 Stable ids
+Implement UUIDv5 identities including macro anchors/retracements and exact golden fixtures.
 
 ## Phase 1 — Canonical source spine
 
-### T10. Inventory approved sources
-Validate provenance, market, timeframe, coverage, duplicates, alignment, gaps, OHLC/numeric integrity, checksums. Report non-minute anomalies rather than rounding.
+### T10 Inventory
+Validate source provenance/market/timeframe/coverage/duplicates/OHLC/numerics/checksums and source-native timestamp alignment.
 
-### T11. Build strict canonical 1m
-Observed approved OHLCV only; exclude post-boundary spot and synthetic futures19:00; minute-aligned ids; partitioned Parquet.
+Distinguish real missing coverage from a continuous 60-second off-grid series. Required fixture: December-2017 `+20.799s` source rows must not become 1440 missing minutes.
 
-### T12. Build source gaps and segments
-Real gaps/market transition split continuity; archive changes do not. Recompute minute-grid spot gaps and compare to 5972/16 audit evidence.
+### T11 Canonical 1m
+Observed approved data only. Preserve raw timestamp provenance; canonicalize off-grid sources only under a proven source-specific rule. Exclude post-boundary spot and synthetic futures 19:00.
 
-### T13. Build fixed UTC target grid
-5m/15m/1H/4H/1D directly from canonical1m; boundary-crossing rows `cross_market/incomplete_boundary`; gap rows incomplete.
+### T12 Gaps/segments
+Recompute strict canonical gaps/segments. Real gaps/market transition split continuity; archive changes do not.
 
-### T14. Build atomic target candle geometry
-One geometry row per complete target candle; G31.
+### T13 Fixed UTC grid
+Build 5m/15m/1H/4H/1D from canonical 1m with explicit incomplete boundary/gap rows.
 
-### T15. Build cross-timeframe containment
-Target-to-target mappings, zero-based ordinals; G06.
+### T14 Geometry
+Complete target candle geometry.
 
-## Phase 2 — Macro source and anchor refinement MUST precede macro feature calculation
+### T15 Cross-TF map
+Deterministic containment/ordinal mappings.
 
-### T20. Load/validate approved macro source
-Verify exact `macro_legs_log20.csv` checksum and source event ids. Preserve source leg fields unchanged.
+## Phase 2 — Macro refinement artifacts MUST precede real macro metrics
 
-### T21. Build shared `macro_anchors`
-Create one anchor record per source pivot/event so the end of one leg and start of the next reference the same boundary object.
+### T20 Macro source
+Verify exact `macro_legs_log20.csv` checksum and 128 legs.
 
-Preserve source anchor time/price/extreme type, parent/refinement provenance, source time precision and initial possible-time interval.
+### T21 5m localization artifact
+Verify checksum `77a6fa1339794a96ddff327e038d66b17347914dcfa8fbb0d9a90765fd3900bc`, 138 unique pivots, 131 unique-5m, 7 multiple-5m, zero unresolved.
 
-### T22. Refine coarse anchors against compatible canonical 1m
-For every non-exact compatible anchor:
+Use this artifact for anchor-level source precision/market/refinement fields. Do not derive anchor precision from per-leg `duration_precision`.
 
-- derive search bucket from source precision;
-- require complete canonical 1m coverage before uniqueness claim;
-- match low anchor to exact canonical 1m low or high anchor to exact canonical 1m high after deterministic decimal normalization;
-- classify `unique_1m_match`, `multiple_1m_matches`, `no_1m_match`, `incomplete_search_coverage`, or `source_incompatible`;
-- preserve candidate count/first/last candidate minute;
-- never pick first/last/nearest arbitrarily.
+### T22 Trade-refinement artifact
+Before real macro production, load/freeze separately reviewed trade-refinement output generated under `macro-trade-boundary-refinement`.
 
-Acceptance: G35/G36/G37.
+Verify official same-market provenance, checksums, source granularity, all candidate 5m intervals, exact price_units, every touch and native sequence ordering.
 
-### T23. Derive macro uncertainty boundaries and safe interiors
-For each refined anchor possible interval `[U0,U1)`, preserve it as shared ambiguous boundary.
+### T23 Shared macro anchors
+Create one `macro_anchor_id` per source event. Store separate source window, 5m localization, trade status/exact time, and fallback uncertainty fields.
 
-For leg start `[S0,S1)` and end `[E0,E1)`, derive safe interior `[S1,E0)`.
+### T24 Boundary fragments
+For unique exact pivots create LEFT/RIGHT fragments at 5m and compose higher-TF fragments from 5m + complete canonical 5m intervals.
 
-Unique 1m pivot minute remains ambiguous and is excluded wholesale from both adjacent safe interiors.
+Pivot source record count/volume belongs to LEFT once. Canonical candles unchanged.
 
-Acceptance: G35/G40.
+### T25 Ambiguity fallback
+Multiple/no/unavailable trade touch never gets an arbitrary exact pivot. Derive only conservative fallback unambiguous interval.
 
-### T24. Derive canonical macro market scope separately from historical provenance
-Canonical `market_type` = spot/futures/cross_market by current source chronology. Historical `leg_source_classification` remains separate and may be mixed.
-
-Acceptance: October2019 can be canonical futures + historical mixed simultaneously; G38.
+### T26 Market/provenance
+Canonical market scope and historical macro provenance remain separate.
 
 ## Phase 3 — Observation identity and movement
 
-### T30. Build observation index
-Fixed/rolling/macro rows. Macro uses canonical non-null market type, source-coordinate anchor times/prices, `availability_class=retrospective`, `available_at=null`.
+### T30 Observation index
+Macro exact start/end/duration only when both endpoints exact; otherwise source coordinates stay explicitly source-named and exact fields null.
 
-Acceptance: G05/G16/G38/G39.
+### T31 Price/speed
+Fixed/rolling canonical metrics.
 
-### T31. Build price/speed
-Canonical names only. Fixed/rolling complete causal metrics; macro source-coordinate displacement/speed explicitly retrospective/source-derived.
+Macro:
+- source speed preserved under `source_*`;
+- exact endpoint-to-endpoint whole-leg macro speed only when both pivots exact;
+- no separate whole-leg speed definition per TF.
 
-## Phase 4 — Pair/path/activity
+## Phase 4 — Path/activity
 
-### T40. Build atomic pair geometry
-Same segment/resolution/exact adjacency required; G11.
+### T40 Atomic canonical pairs
+Same-segment/resolution/exact adjacency.
 
-### T41. Build fixed/rolling path/activity/extrema
-Use exact fixed/rolling matrices; G08/G09/G10/G16/G32.
+### T41 Fixed/rolling path/activity
+Approved matrices and Q sequence.
 
-### T42. Build macro safe-interior path/activity
-At 5m/15m/1H/4H/1D where at least two complete eligible candles lie wholly in safe interior.
+### T42 Exact macro close path
+For each R in 5m/15m/1H/4H/1D:
+`Q0=start pivot price -> qualifying R closes -> end pivot price if needed`.
 
-Persist only `safe_*` macro path/activity names when boundaries remain uncertain.
+Never add trade fragment path to TF close path.
 
-No candle overlapping anchor uncertainty contributes to safe metrics.
+### T43 Boundary microstructure
+Persist separate `trade_*` LEFT/RIGHT path/activity/volume metrics from ordered trade evidence.
 
-Acceptance: G33/G35/G36/G37/G40.
-
-### T43. Build complete anchor-inclusive macro path only when fully justified
-Complete whole-leg path requires full ordered boundary path, source compatibility and no gap/uncertainty. Coarse or unique1m bucket alone is insufficient.
-
-Acceptance: G15 formula fixture and G29 production gate.
+### T44 Fallback macro path
+Only guaranteed fixed-grid constituents. Sequence starts at open of first eligible candle. Expected count is grid-contained slot count; persist measured start/end.
 
 ## Phase 5 — Overlap
 
-### T50. Build observation overlap summaries
-Fixed/rolling use valid intervals; macro uses safe interior only. Boundary-overlapping pairs excluded from safe macro summaries.
+### T50 Observation overlap
+Fixed/rolling canonical pairs. Exact macro uses typed fragment/interior relationships without double counting. Fallback uses only guaranteed interior pairs.
 
 ## Phase 6 — Volume/volatility
 
-### T60. Build dual volume-direction groupings
-G12; no ambiguous generic up/down names.
+### T60 Directional volume
+Body and close-step conventions.
 
-### T61. Build TR/ATR
-Reset at real gaps/boundaries; G13.
+### T61 TR/ATR
+Continuity-aware reset/init.
 
-### T62. Build fixed/rolling RV and numeric range/TR/ATR components
-Use canonical field names; macro RV not materialized in first pass; G08/G33/G34.
+### T62 Fixed/rolling RV/range
+Macro RV remains deferred.
 
-### T63. Build rolling volume comparisons
-Use `volume_sum_change_vs_prev` / ratio; G34.
+### T63 Rolling volume comparisons
+Canonical names.
 
-### T64. Build macro safe-interior volume/activity summaries
-Use same safe constituent membership as macro path. Do not assign ambiguous boundary candles wholesale to a leg.
+### T64 Macro volume/activity
+Exact: start RIGHT fragment + interior + end LEFT fragment. Fallback: guaranteed interior only. Never full boundary candle + fragment together.
 
-## Phase 7 — Macro context and retracement
+## Phase 7 — Macro context/retracement
 
-### T70. Build retrospective observation-macro context
-Use source-coordinate and safe-interior concepts explicitly; no parent hierarchy; no live leakage.
+### T70 Retrospective macro context
+Exact temporal fractions only with exact pivots; otherwise explicitly source/fallback.
 
-### T71. Implement direct retracement formula
-G14.
+### T71 Retracement formula
+Direct percentage formula, no Fib.
 
-### T72. Materialize only explicitly approved retracement relationships
-No arbitrary A-B-C combinations; zero rows valid if no tuple list.
+### T72 Production retracement set
+Generate exactly the adjacent opposite-direction shared-pivot relationships from approved source. Expected count 118; 9 discontinuous adjacent transitions excluded. A/B/C are macro anchor ids.
 
 ## Phase 8 — Dictionary/manifests/extraction
 
-### T80. Generate canonical feature dictionary
-Define every metric once, including macro anchor/refinement fields, `safe_*` semantics, source-coordinate metrics, geometry and retracements. G20/G34.
+### T80 Feature dictionary
+Define exact/fallback/source/trade feature semantics once.
 
-### T81. Generate deterministic manifests/catalog
-All logical tables including `macro_anchors`; G22.
+### T81 Manifests
+All logical tables including trade touches/fragments.
 
-### T82. Implement deterministic Parquet extraction
-Support time/market/segment/timeframe/rolling/calculation resolution, candle/observation/pair/macro-leg/macro-anchor/retracement ids, feature families, availability/as-of.
-
-Must extract boundary candles and safe-interior rows without hidden recomputation. G23.
+### T82 Extraction
+Support macro source/localization/trade/fallback fields, boundary fragments, retracements and causal exclusion without hidden recomputation.
 
 ## Phase 9 — Checkpoint/resume
 
-### T90. Stage/work-unit checkpoints
-<=20 minutes validated work at risk.
-
-### T91. Resume verification
-G24; reject incompatible/corrupt state; no duplicates.
-
-### T92. Atomic artifact promotion
-Temporary write -> validate -> promote -> manifest.
+### T90/T91/T92
+<=20 min validated work at risk; validate source/config/schema/localization/trade-refinement checksums; atomic promotion; clean vs resumed equivalence.
 
 ## Phase 10 — QA
 
-### T100. Implement golden suite G01-G40
-Every applicable critical golden executes/passes.
+### T100 Golden suite
+Implement/pass G01-G49 (or later synchronized highest number).
 
-### T101. Independent persisted-artifact QA
-Inspect actual Parquet/manifests, not builder flags. Verify source gaps, grid alignment, macro anchor candidates, uncertainty windows, safe-interior membership, market/provenance separation, retrospective availability, referential integrity and causal exclusion.
+### T101 Independent artifact QA
+Inspect persisted Parquet/manifests, not builder flags.
 
-### T102. Forbidden-label/name regression
-G19/G34.
+### T102 Forbidden labels/names
+No impulse/correction/range/chop/Fib/FibTime/Elliott labels.
 
-### T103. Higher-TF reference trust classification
-G25; legacy inconsistent caches remain diagnostic where not validated.
+### T103 Reference trust
+Legacy inconsistent higher-TF caches remain diagnostic unless independently validated.
 
 ## Phase 11 — Bounded smoke only
 
-### T110. Select representative smoke coverage
-Include ordinary continuous data, source gap/boundary behavior, geometry, rolling features, and at least one macro leg with coarse/refined anchor handling. Prefer a case exercising mixed provenance and boundary uncertainty.
+### T110
+Choose representative continuous/gap/boundary/off-grid-source and macro exact/ambiguous fixtures.
 
-### T111. Run smoke pipeline
-Prerequisite G01-G40 PASS. Verify persisted QA/manifests/extraction including macro anchors and boundary candles.
+### T111
+Run bounded smoke after all applicable golden tests pass.
 
-### T112. Stop and report
-Report exact coverage, outputs, QA/golden results, source limitations and measured runtime/storage. STOP.
+### T112
+Report outputs/coverage/QA/runtime/storage and STOP.
 
 ## Phase 12 — Full production deferred
 
-### T120. Full-history run
-Planning only. Execute only after explicit approval following successful implementation/golden/smoke review.
+### T120
+Planning only. Full-history execution requires:
+- reviewed real trade-refinement artifact
+- successful implementation/golden/smoke review
+- explicit user authorization.
