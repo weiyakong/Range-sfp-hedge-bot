@@ -16,146 +16,163 @@ For an observation starting at price `P0` and ending at price `P1`:
 - `absolute_return_pct = abs(signed_return_pct)`
 - `duration_seconds = end_time - start_time`
 
-Undefined divisions SHALL be stored as null with an explicit null meaning, not replaced by zero.
+Undefined divisions SHALL be null with an explicit null meaning, not replaced by zero.
 
-### Requirement: Log-scale movement is preserved alongside ordinary price and percentage movement
+### Requirement: Log-scale movement is preserved alongside ordinary movement
 
-For strictly positive start and end prices, the system SHALL calculate:
+For strictly positive `P0` and `P1`:
 
 - `signed_log_move = ln(P1 / P0)`
-- `absolute_log_move = abs(signed_log_move)`
+- `absolute_log_move = abs(signed_log_move)`.
 
-Ordinary USD change and ordinary percentage return SHALL remain available for human interpretation, but log-scale movement SHALL be preserved for cross-era and up-versus-down comparisons of large market moves.
-
-If a display-scaled log value is exported as `100 * signed_log_move`, its name and feature-dictionary entry SHALL make clear that it is a scaled log return and not an ordinary percentage return.
+Ordinary USD change and ordinary percentage return SHALL remain available separately. A display-scaled value such as `100 * signed_log_move` SHALL be named as a scaled log return, not an ordinary percentage return.
 
 ### Requirement: Global macro-leg comparison includes log-scale movement and speed
 
-For every approved existing macro leg with positive prices and positive duration, the research output SHALL preserve `signed_log_move`, `absolute_log_move`, and time-normalized log-speed measures including:
+For every approved macro leg with positive prices and duration:
 
 - `signed_log_speed_per_day = signed_log_move / duration_days`
-- `absolute_log_speed_per_day = absolute_log_move / duration_days`
+- `absolute_log_speed_per_day = absolute_log_move / duration_days`.
 
-No threshold on log move or log speed SHALL classify a leg as impulse or correction in the first pass.
+No threshold on distance or speed SHALL classify a leg as impulse or correction in this pass.
 
-### Requirement: Local direction is a mechanical sign, not a semantic class
+### Requirement: Local direction is a mechanical sign
 
-For an observation window:
+For an observation:
 
 - `local_price_direction = up` when `P1 > P0`
 - `local_price_direction = down` when `P1 < P0`
-- `local_price_direction = flat` when `P1 == P0`
+- `local_price_direction = flat` when `P1 == P0`.
 
-`local_price_direction` SHALL mean only the sign of start-to-end price displacement. It SHALL NOT mean that the observation is an impulse, trend, correction, or chop.
+This field SHALL mean only the sign of start-to-end displacement. Macro-regime or macro-leg alignment SHALL use separately named fields.
 
-Macro-regime alignment, when an approved macro regime direction is available, SHALL be stored separately from local direction.
+### Requirement: Ordinary and log speed remain distinct
 
-### Requirement: Speed is percentage displacement per unit time
-
-For an observation with non-zero duration in hours:
+For positive duration in hours:
 
 `raw_signed_speed_pct_per_hour = signed_return_pct / duration_hours`.
 
-Where local-direction-normalized speed is required, the system SHALL store it under an explicitly local name and SHALL NOT confuse it with macro-direction alignment.
-
-Where macro-direction-aligned speed is calculated from an approved macro direction, it SHALL be stored under a separate explicitly macro-aligned name.
-
-### Requirement: Log speed is available for multiplicative price comparison
-
-For strictly positive prices and non-zero duration:
+For positive prices and elapsed time:
 
 `signed_log_speed = ln(P1 / P0) / elapsed_time`.
 
-Its absolute version SHALL be available for direction-neutral comparison of movement magnitude per unit time.
+Absolute companions MAY be retained. Ordinary percentage speed and log speed SHALL remain separately named and unit-labelled.
 
-### Requirement: Rolling recent speed is measured over approved durations without historical recomputation
+### Requirement: Rolling observations are incremental and have exact boundary prices
 
-At each eligible newly closed calculation candle with endpoint `t`, a rolling observation of duration `W` SHALL describe the immediately preceding complete interval ending at `t`.
+At each eligible newly closed calculation candle with endpoint `t`, rolling duration `W` SHALL describe `[t-W, t)`.
 
-For a rolling observation constructed from complete constituent calculation candles, `P0` SHALL be the open of the first constituent candle and `P1` SHALL be the close of the last constituent candle.
+For complete constituent calculation candles:
+
+- `P0 = open` of the first constituent candle;
+- `P1 = close` of the last constituent candle.
 
 Approved rolling durations are `30m`, `1h`, `4h`, `12h`, `24h`, and `3d`.
 
-A calculation resolution is eligible for rolling duration `W` only when the resolution divides `W` exactly and the window contains at least two complete constituent candles. The output SHALL identify both rolling duration and calculation resolution.
+A calculation resolution is eligible only when it divides `W` exactly and provides at least two complete constituent candles. The output SHALL identify rolling duration and calculation resolution.
 
-The historical production run SHALL process eligible endpoints incrementally/linearly: closing a new calculation candle creates the new rolling observation(s) ending at that candle. It SHALL NOT require recomputing previously finalized historical rolling rows from scratch at every endpoint.
+Historical production SHALL process endpoints incrementally/linearly. Creating the row ending at a newly closed candle SHALL NOT require recomputing already-finalized historical rows.
 
-A rolling observation crossing a source-segment boundary or required data gap SHALL be incomplete/null under the coverage contract.
+A window crossing a source-segment boundary or real gap SHALL be incomplete/null for complete metrics.
 
-### Requirement: Numeric speed change and acceleration remain unlabeled
+### Requirement: Speed change compares immediately adjacent non-overlapping windows
 
-For two consecutive non-overlapping windows of equal duration `W`:
+For current window `[t-W,t)` and previous equal window `[t-2W,t-W)`:
 
 `speed_change_W = current_speed_W - previous_speed_W`.
 
-When time-normalized acceleration is exported:
+When exported:
 
 `acceleration_W = speed_change_W / W_hours`.
 
-The same change/acceleration logic MAY be applied to log speed under explicitly log-named fields. Ratios with zero or undefined denominators SHALL be null.
+Equivalent log-speed fields SHALL be explicitly log-named. Undefined ratios SHALL be null.
 
-### Requirement: Close-path does not invent intra-candle order
+### Requirement: Close-path has one canonical price sequence
 
-For a larger observation measured through a finer candle resolution, close-path SHALL be calculated from the larger observation start price followed by the chronologically ordered closes of eligible finer bars:
+For a fixed/rolling observation measured through complete finer candles, define:
 
-`close_path = sum(abs(P_i - P_(i-1)))`.
+- `Q0 = observation start price P0`;
+- `Q1 ... Qn = chronological closes of all constituent finer candles`.
 
-The system SHALL NOT assume an unsupported sequence such as `open -> high -> low -> close` inside a candle.
+For fixed/rolling observations `Qn` SHALL equal `P1`.
 
-### Requirement: Log close-path is available for cross-era path comparison
+Then:
 
-For a sequence of strictly positive prices `P_0 ... P_n` at an approved finer resolution:
+`close_path = sum(i=1..n, abs(Q_i - Q_(i-1)))`.
 
-`log_close_path = sum(abs(ln(P_i / P_(i-1))))`.
+For strictly positive sequence values:
+
+`log_close_path = sum(i=1..n, abs(ln(Q_i / Q_(i-1))))`.
+
+The system SHALL NOT invent intra-candle order such as `open -> high -> low -> close`.
+
+Macro-leg anchor-inclusive sequencing is governed by the macro-leg contract.
 
 ### Requirement: Path is measured at multiple approved resolutions
 
-Where source coverage permits, the system SHALL calculate:
+Where complete coverage permits:
 
-- `1D` path via `4H`, `1H`, `15m`, and `5m`;
-- `4H` path via `1H`, `15m`, and `5m`;
-- `1H` path via `15m` and `5m`;
+- `1D` path via `4H`, `1H`, `15m`, `5m`;
+- `4H` path via `1H`, `15m`, `5m`;
+- `1H` path via `15m`, `5m`;
 - `15m` path via `5m`.
 
-Each path metric SHALL identify both observation interval and finer calculation resolution.
+Each metric SHALL identify observation resolution and calculation resolution. Canonical `1m` remains available for targeted drill-down but full-market path features are not required at 1m in this pass.
 
-Canonical `1m` data SHALL remain available for later targeted drill-down, but full-market path feature families are not required to be materialized at 1m resolution in this pass unless separately approved.
+### Requirement: Path efficiency uses the same path sequence
 
-### Requirement: Path efficiency is net displacement divided by close-path
-
-For non-zero `close_path`:
+When `close_path > 0`:
 
 `path_efficiency = abs(P1 - P0) / close_path`.
 
-If `close_path == 0`, efficiency SHALL be null.
-
-### Requirement: Log path efficiency is preserved for multiplicative comparison
-
-For positive prices and non-zero `log_close_path`:
+When `log_close_path > 0` and prices are positive:
 
 `log_path_efficiency = absolute_log_move / log_close_path`.
 
-### Requirement: Local-direction path components are separate from macro-direction path components
+Zero denominators SHALL produce null.
 
-For a non-flat observation, let `d_local = sign(P1 - P0)` and each finer close-to-close step be `delta_i`:
+### Requirement: Directional path components partition the same steps as close-path
+
+For every step in the canonical path sequence:
+
+`delta_i = Q_i - Q_(i-1)`.
+
+Regardless of net direction, preserve:
+
+- `upward_close_path = sum(max(delta_i, 0))`
+- `downward_close_path = sum(max(-delta_i, 0))`.
+
+Thus, apart from exact zero steps:
+
+`upward_close_path + downward_close_path = close_path`.
+
+For non-flat observations with `d_local = sign(P1-P0)`:
 
 - `path_with_local_direction = sum(max(d_local * delta_i, 0))`
 - `path_against_local_direction = sum(max(-d_local * delta_i, 0))`
 - `counter_local_path_share = path_against_local_direction / close_path` when `close_path > 0`.
 
-Equivalent macro-direction metrics SHALL use separate macro-explicit names.
+For flat observations, local-direction with/against fields SHALL be null while upward/downward path remains available.
 
-### Requirement: Alternation is measured from observed finer-step signs
+Equivalent macro-direction fields SHALL use macro-explicit names. For strictly positive prices, equivalent upward/downward and with/against components based on `log_delta_i = ln(Q_i/Q_(i-1))` SHALL be available under explicit `log_*` names for cross-era comparison.
 
-Zero finer-step changes SHALL be treated explicitly according to the feature dictionary and SHALL NOT be silently assigned up or down direction.
+### Requirement: Alternation has an explicit zero-step convention
 
-For the sequence of non-zero finer-step signs:
+For path steps `delta_i`:
+
+- positive steps have sign `+1`;
+- negative steps have sign `-1`;
+- exact zero steps are excluded from the sign-change sequence but SHALL be counted separately as `zero_step_count` and, when total step count is positive, `zero_step_share`.
+
+For the remaining non-zero sign sequence:
 
 `alternation_rate = sign_change_count / (nonzero_step_count - 1)`
 
-when at least two non-zero steps exist.
+when at least two non-zero steps exist; otherwise alternation rate SHALL be null.
 
-### Requirement: Candle geometry is preserved in absolute and price-normalized form
+A sequence `+ , 0 , -` therefore contains one non-zero-sign change.
+
+### Requirement: Candle geometry has exact absolute and log formulas
 
 For every candle:
 
@@ -164,76 +181,164 @@ For every candle:
 - `body_high = max(open, close)`
 - `body_low = min(open, close)`
 - `upper_wick = high - body_high`
-- `lower_wick = body_low - low`
+- `lower_wick = body_low - low`.
 
-When `full_range > 0`, the system SHALL also store `body_share`, `upper_wick_share`, and `lower_wick_share` relative to full range.
+When `full_range > 0`:
 
-For strictly positive prices, the system SHALL preserve `log_full_range = ln(high / low)`, `log_body_size = abs(ln(close / open))`, and explicitly documented price/log-normalized wick magnitudes.
+- `body_share = body_size / full_range`
+- `upper_wick_share = upper_wick / full_range`
+- `lower_wick_share = lower_wick / full_range`.
 
-### Requirement: Candle activity complements close-path
+For strictly positive prices:
 
-For an observation built from finer candles, the system SHALL preserve at minimum sums of finer full ranges, absolute bodies, upper wicks, lower wicks, and True Range where available, plus price/log-normalized counterparts where defined.
+- `log_full_range = ln(high / low)`
+- `log_body_size = abs(ln(close / open))`
+- `log_upper_wick = ln(high / body_high)`
+- `log_lower_wick = ln(body_low / low)`.
 
-### Requirement: Pairwise overlap preserves explicit geometry and normalization
+Undefined logs SHALL be null.
 
-For consecutive candles `prev` and `curr` inside one continuous source segment:
+### Requirement: Candle activity complements close-path under explicit normalization
+
+For an observation built from finer candles, preserve sums of:
+
+- `full_range`;
+- `body_size`;
+- `upper_wick`;
+- `lower_wick`;
+- True Range where available;
+- `log_full_range`;
+- `log_body_size`;
+- `log_upper_wick`;
+- `log_lower_wick`.
+
+Where previous close is positive and True Range is valid, also define:
+
+`normalized_true_range = TR / previous_close`.
+
+Its observation-level sum/mean MAY be retained under explicit normalized names. Activity fields SHALL NOT be described as exact intra-candle path.
+
+### Requirement: Atomic candle pairs require temporal adjacency as well as source continuity
+
+A pair is eligible for sequential overlap/penetration/alternation research only when:
+
+- both candles belong to the same `source_segment_id`;
+- both use the same calculation resolution;
+- `curr.start_time == prev.end_time`.
+
+Rows separated by a real missing interval SHALL NOT be treated as a valid consecutive pair even if they are adjacent rows in a file.
+
+### Requirement: Pairwise range overlap has exact geometry, normalization, and position
+
+For an eligible pair:
 
 - `range_overlap_low = max(prev.low, curr.low)`
 - `range_overlap_high = min(prev.high, curr.high)`
 - `range_overlap_abs = max(0, range_overlap_high - range_overlap_low)`
 - `prev_range = prev.high - prev.low`
 - `curr_range = curr.high - curr.low`
-- `range_union_abs = max(prev.high, curr.high) - min(prev.low, curr.low)`
-- `overlap_share_prev = range_overlap_abs / prev_range` when `prev_range > 0`
-- `overlap_share_curr = range_overlap_abs / curr_range` when `curr_range > 0`
-- `overlap_jaccard = range_overlap_abs / range_union_abs` when `range_union_abs > 0`.
+- `range_union_abs = max(prev.high, curr.high) - min(prev.low, curr.low)`.
 
-Body-to-body overlap SHALL use the same interval-intersection geometry on `[prev.body_low, prev.body_high]` and `[curr.body_low, curr.body_high]`:
+Where denominators are positive:
 
+- `overlap_share_prev = range_overlap_abs / prev_range`
+- `overlap_share_curr = range_overlap_abs / curr_range`
+- `overlap_jaccard = range_overlap_abs / range_union_abs`.
+
+When `range_overlap_abs > 0`, let `overlap_mid = (range_overlap_low + range_overlap_high)/2`. Preserve overlap location in each candle:
+
+- `overlap_low_pos_prev = (range_overlap_low - prev.low) / prev_range`
+- `overlap_high_pos_prev = (range_overlap_high - prev.low) / prev_range`
+- `overlap_mid_pos_prev = (overlap_mid - prev.low) / prev_range`
+- equivalent `*_pos_curr` fields normalized by `curr_range`.
+
+If the relevant range denominator is zero or there is no positive-width overlap, position fields SHALL be null.
+
+### Requirement: Body overlap has exact normalization
+
+Define:
+
+- `prev_body = prev.body_high - prev.body_low`
+- `curr_body = curr.body_high - curr.body_low`
 - `body_overlap_low = max(prev.body_low, curr.body_low)`
 - `body_overlap_high = min(prev.body_high, curr.body_high)`
-- `body_overlap_abs = max(0, body_overlap_high - body_overlap_low)`.
+- `body_overlap_abs = max(0, body_overlap_high - body_overlap_low)`
+- `body_union_abs = max(prev.body_high, curr.body_high) - min(prev.body_low, curr.body_low)`.
 
-Where denominators are positive, the system SHALL preserve body overlap normalized by previous body, current body, and body union under separately named fields.
+Where denominators are positive:
 
-The current candle's neutral extensions beyond the previous candle SHALL include:
+- `body_overlap_share_prev = body_overlap_abs / prev_body`
+- `body_overlap_share_curr = body_overlap_abs / curr_body`
+- `body_overlap_jaccard = body_overlap_abs / body_union_abs`.
+
+Doji/zero-body denominators SHALL produce null rather than zero.
+
+### Requirement: Neutral extensions are explicit
+
+For an eligible pair:
 
 - `upper_extension_abs = max(0, curr.high - prev.high)`
 - `lower_extension_abs = max(0, prev.low - curr.low)`.
 
-### Requirement: Atomic penetration stores both mirrored orientations before observation direction is applied
+When `prev_range > 0`, also preserve:
 
-For each consecutive same-source candle pair, penetration SHALL be stored in neutral mirrored form rather than choosing an up/down market interpretation at pair-construction time.
+- `upper_extension_share_prev = upper_extension_abs / prev_range`
+- `lower_extension_share_prev = lower_extension_abs / prev_range`.
 
-Let the previous candle provide reference range `[prev.low, prev.high]` and body `[prev.body_low, prev.body_high]`. The current candle SHALL preserve at minimum:
+### Requirement: Penetration uses one common previous-range reference and stores both orientations
 
-- `wick_penetration_from_top_abs = max(0, prev.high - max(curr.low, prev.low))`
-- `wick_penetration_from_bottom_abs = max(0, min(curr.high, prev.high) - prev.low)`
-- `body_penetration_from_top_abs = max(0, prev.body_high - max(curr.body_low, prev.body_low))`
-- `body_penetration_from_bottom_abs = max(0, min(curr.body_high, prev.body_high) - prev.body_low)`
-- `close_penetration_from_top_abs = max(0, prev.high - max(curr.close, prev.low))` when `curr.close <= prev.high`, capped to `prev_range`
-- `close_penetration_from_bottom_abs = max(0, min(curr.close, prev.high) - prev.low)` when `curr.close >= prev.low`, capped to `prev_range`.
+For every eligible pair with `prev_range > 0`, all extreme/body/close penetration depths SHALL use the previous candle full range `[prev.low, prev.high]` as the common reference.
 
-Each raw penetration SHALL have a separately named normalization by the applicable previous reference width when that width is positive. Values beyond the opposite boundary SHALL be capped at `1` for the normalized penetration depth; extension beyond the boundary remains represented separately by extension fields rather than penetration > 100%.
+Define `clamp(x,0,R) = min(max(x,0),R)` for `R = prev_range`.
 
-No atomic pair SHALL choose which mirrored orientation means `against_move`.
+From the top:
 
-For a later observation with mechanically known observation direction:
+- `extreme_penetration_from_top_abs = clamp(prev.high - curr.low, 0, prev_range)`
+- `body_penetration_from_top_abs = clamp(prev.high - curr.body_low, 0, prev_range)`
+- `close_penetration_from_top_abs = clamp(prev.high - curr.close, 0, prev_range)`
+- `wick_only_penetration_from_top_abs = max(0, extreme_penetration_from_top_abs - body_penetration_from_top_abs)`.
 
-- if observation direction is `up`, `*_penetration_against_move` SHALL select the corresponding `*_from_top` value;
-- if observation direction is `down`, it SHALL select the corresponding `*_from_bottom` value;
-- if observation direction is `flat`, `*_penetration_against_move` SHALL be null and both neutral mirrored fields remain available.
+From the bottom:
 
-Observation-relative penetration SHALL identify the observation whose direction was used. A completed macro-leg direction is retrospective; a fixed/rolling observation direction becomes known only at that observation's close.
+- `extreme_penetration_from_bottom_abs = clamp(curr.high - prev.low, 0, prev_range)`
+- `body_penetration_from_bottom_abs = clamp(curr.body_high - prev.low, 0, prev_range)`
+- `close_penetration_from_bottom_abs = clamp(curr.close - prev.low, 0, prev_range)`
+- `wick_only_penetration_from_bottom_abs = max(0, extreme_penetration_from_bottom_abs - body_penetration_from_bottom_abs)`.
+
+Every penetration field SHALL also have a `_share_prev` companion equal to its absolute value divided by `prev_range`.
+
+`extreme_penetration` records the farthest current-candle price reach. `wick_only_penetration` records the extra penetration depth reached beyond the current body. Body and close penetration remain separately inspectable.
+
+No atomic pair SHALL choose an `against_move` orientation.
+
+For an observation whose mechanical direction is known:
+
+- observation `up` -> `*_penetration_against_move` selects the corresponding `*_from_top` value;
+- observation `down` -> selects `*_from_bottom`;
+- observation `flat` -> observation-relative penetration is null while both neutral orientations remain stored.
+
+The observation identifier and its direction basis SHALL be retained. Fixed/rolling observation-relative fields become known at observation close; completed macro-leg-relative fields are retrospective.
 
 ### Requirement: Pairwise overlap supports arbitrary later aggregation
 
-Atomic pairwise overlap records SHALL retain both candle identifiers/timestamps and calculation resolution so overlap can later be aggregated over arbitrary periods without rerunning source-data collection.
+Atomic pair records SHALL retain both candle identifiers/timestamps, calculation resolution, source segment, pair eligibility, and coverage state.
 
-For approved rolling windows, the system SHALL export at least mean and median `overlap_share_prev`, `overlap_share_curr`, and `overlap_jaccard`, plus `any_overlap_share`, eligible pair count, and coverage status.
+For complete approved rolling windows, export at least mean and median of:
+
+- `overlap_share_prev`;
+- `overlap_share_curr`;
+- `overlap_jaccard`;
+- body overlap normalizations;
+- approved penetration/extension shares where applicable.
+
+Also preserve:
+
+`any_overlap_share = count(eligible pairs with range_overlap_abs > 0) / eligible_pair_count`
+
+when `eligible_pair_count > 0`, plus eligible pair count and coverage status.
 
 ### Requirement: Choppiness remains decomposed
 
 The first pass SHALL NOT create a composite `choppiness` label or score.
 
-It SHALL preserve the objective components required for later research, including net displacement, close-path, path efficiency, local-direction path components, alternation, pairwise and rolling overlap, candle geometry, penetration, speed evolution, and activity measures.
+It SHALL preserve net displacement, close-path, path efficiency, directional path components, alternation, zero-step behavior, pairwise/rolling overlap, overlap position, candle geometry, penetration, speed evolution, and activity measures as separately inspectable numeric components.
