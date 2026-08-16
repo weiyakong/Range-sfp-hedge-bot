@@ -2,19 +2,15 @@
 
 ## Purpose
 
-Define canonical logical tables, row grain, stable identifiers, joins, availability classes, macro-anchor uncertainty, and physical partitioning for Structure Research v5 so implementation does not invent its own data model.
+Define canonical logical tables, row grain, stable identifiers, joins, availability classes, exact/fallback macro-boundary semantics, and physical partitioning for Structure Research v5.
 
-## ADDED Requirements
+## Stable identifiers
 
-### Requirement: Stable identifiers use one deterministic UUIDv5 namespace
+UUIDv5 namespace:
 
-Namespace:
+`87411ce4-8483-55b7-a348-700b7ad4b9ab`
 
-`87411ce4-8483-55b7-a348-700b7ad4b9ab`.
-
-Canonical identity strings use UTF-8, `|` separators, normalized enum values, and UTC timestamps in `YYYY-MM-DDTHH:MM:SSZ`.
-
-Required identities:
+Canonical identities:
 
 - `source_segment_id = uuid5(namespace, "segment|{venue}|{instrument}|{market_type}|{segment_start_time}")`
 - `gap_id = uuid5(namespace, "gap|{venue}|{instrument}|{market_type}|{gap_start_time}|{gap_end_time}")`
@@ -23,203 +19,107 @@ Required identities:
 - rolling `observation_id = uuid5(namespace, "observation|rolling|{venue}|{instrument}|{market_type}|{rolling_duration}|{end_time}")`
 - macro `observation_id = uuid5(namespace, "observation|macro_leg|{macro_source_checksum}|{macro_leg_id}")`
 - `pair_id = uuid5(namespace, "pair|{prev_candle_id}|{curr_candle_id}")`
+- `macro_anchor_id = uuid5(namespace, "macro_anchor|{macro_source_checksum}|{source_event_id}")`
 - `retracement_id = uuid5(namespace, "retracement|{anchor_a_id}|{anchor_b_id}|{anchor_c_id}|{relationship_source_id}")`
-- `macro_anchor_id = uuid5(namespace, "macro_anchor|{macro_source_checksum}|{source_event_id}")` where a stable source event id exists.
 
-A boundary-crossing fixed interval uses logical `market_type=cross_market` in its candle identity.
+Run id, local path, archive filename and mutable provenance do not redefine stable identity.
 
-Run id, local path, archive filename, and mutable provenance do not redefine stable entity identity.
-
-### Requirement: Canonical enums are explicit
+## Canonical enums
 
 At minimum:
 
-- `venue`: `binance`
-- `instrument`: `BTCUSDT`
-- canonical 1m market type: `spot`, `usdt_m_futures`
-- derived canonical market scope: `spot`, `usdt_m_futures`, `cross_market`
-- `timeframe`: `1m`, `5m`, `15m`, `1H`, `4H`, `1D`
-- `observation_kind`: `fixed`, `rolling`, `macro_leg`
-- `availability_class`: `causal`, `retrospective`
-- `direction`: `up`, `down`, `flat`
-- `completeness_status`: `complete`, `incomplete_gap`, `incomplete_boundary`, `invalid`
-- macro historical provenance: `spot`, `futures`, `mixed`, `unknown`
-- anchor-time precision: `exact`, `1m_bucket`, `5m_bucket`, `15m_bucket`, `1H_bucket`, `4H_bucket`, `1D_bucket`, `unknown`
-- anchor refinement status: `exact_source`, `unique_1m_match`, `multiple_1m_matches`, `no_1m_match`, `incomplete_search_coverage`, `source_incompatible`, `not_attempted`.
+- `venue=binance`
+- `instrument=BTCUSDT`
+- market type: `spot`, `usdt_m_futures`, `cross_market`
+- timeframe: `1m`, `5m`, `15m`, `1H`, `4H`, `1D`
+- observation kind: `fixed`, `rolling`, `macro_leg`
+- availability: `causal`, `retrospective`
+- direction: `up`, `down`, `flat`
+- completeness: `complete`, `incomplete_gap`, `incomplete_boundary`, `invalid`
+- historical macro provenance: `spot`, `futures`, `mixed`, `unknown`
+- source anchor precision: `exact`, `1m_bucket`, `5m_bucket`, `15m_bucket`, `1H_bucket`, `4H_bucket`, `1D_bucket`, `unknown`
+- 5m localization status: `unique_5m_match`, `multiple_5m_matches`, `no_5m_match`, `incomplete_5m_search_coverage`, `unresolved`
+- trade refinement status: `exact_unique_trade_touch`, `multiple_exact_trade_touches`, `no_exact_trade_touch`, `incomplete_trade_coverage`, `source_unavailable`, `not_attempted`.
 
-Unknown future enum values remain explicit and are never silently coerced.
+Unknown future values remain explicit and are never silently coerced.
 
-### Requirement: `source_segments` has one row per continuous canonical 1m segment
+## Core source/candle tables
 
-Primary key: `source_segment_id`.
+### `source_segments`
+One row per continuous canonical 1m same-market segment. Primary key `source_segment_id`. Preserve market/time bounds, first/last candle, row count, start/end reason, status and provenance. Archive changes alone do not split a segment.
 
-Required columns:
+### `source_gaps`
+One row per unresolved canonical gap. Primary key `gap_id`. Preserve market/time bounds, missing count, reason, recovery evidence/status, synthetic diagnostic evidence, adjacent segments and provenance.
 
-- `source_segment_id`
-- `venue`, `instrument`, canonical `market_type`
-- `segment_start_time`, `segment_end_time`
-- `first_candle_id`, `last_candle_id`
-- `row_count`
-- `start_reason`, `end_reason`
-- `segment_status`
-- `source_contract_version`, `schema_version`, `run_id`.
+### `candles_1m`
+Strict observed canonical 1m spine. Primary key `candle_id`; natural uniqueness `(venue,instrument,market_type,timeframe,start_time)`. Preserve exact canonical minute grid, OHLCV/native validated additive fields, source identity, raw artifact, source-native timestamp evidence, canonicalization method/status and provenance. Synthetic no-trade buckets are excluded.
 
-Archive/provenance changes do not create segments. Real gaps and market-type transitions do.
+### `candles_fixed`
+Complete UTC grid for `5m/15m/1H/4H/1D`. Preserve market scope, times, OHLCV only when complete, construction `derived_from_1m`, expected/observed constituent counts, coverage and completeness. Boundary/gap rows remain explicit with complete metrics null.
 
-### Requirement: `source_gaps` has one row per unresolved canonical 1m gap
+### `candle_geometry`
+One row per complete target candle with range/body/wicks/shares/log geometry/body direction and provenance.
 
-Primary key: `gap_id`.
+### `cross_timeframe_map`
+Persist `5m->15m/1H/4H/1D`, `15m->1H/4H/1D`, `1H->4H/1D`, `4H->1D`, including ordinal/coverage/status.
 
-Required columns:
+## Macro anchor tables
 
-- `gap_id`
-- `venue`, `instrument`, `market_type`
-- `gap_start_time`, `gap_end_time`
-- `missing_1m_count`
-- `gap_reason`
-- `recovery_attempted`, `recovery_source`, `recovery_status`
-- `diagnostic_synthetic_row_exists`
-- `evidence_artifact`
-- `left_source_segment_id`, `right_source_segment_id`
-- `schema_version`, `run_id`.
+### `macro_anchors`
 
-Synthetic/no-trade diagnostic buckets do not remove a gap unless approved observed OHLC becomes available and the source contract changes.
+One shared row per approved source pivot/event. Primary key `macro_anchor_id`.
 
-### Requirement: `candles_1m` is the strict observed canonical source spine
+Required fields separate every precision layer instead of overwriting one pair of columns:
 
-Row grain: one observed canonical 1m candle.
-
-Primary key: `candle_id`.
-Natural uniqueness: `(venue,instrument,market_type,timeframe,start_time)`.
-
-Required columns include identity/market fields, `source_segment_id`, `timeframe=1m`, exact minute-grid `start_time/end_time`, OHLCV, validated source-native additive fields where available, `source_id`, `raw_artifact_id`, `provenance_kind`, `is_reconstructed`, validation/completeness status, schema version and run id.
-
-An unobserved synthetic no-trade bucket is not a canonical 1m row.
-
-### Requirement: `candles_fixed` contains the complete UTC target interval grid
-
-Row grain: one fixed UTC interval at `5m`, `15m`, `1H`, `4H`, or `1D`.
-
-Primary key: `candle_id`.
-
-Required columns:
-
-- identity/market fields;
-- canonical `market_type` including `cross_market` when an interval spans a market boundary;
-- `source_segment_id` only when the complete interval belongs to one segment;
-- timeframe/times;
-- complete OHLCV when valid, else null;
-- approved additive native fields when valid;
-- `construction_method=derived_from_1m`;
-- `source_calculation_resolution=1m`;
-- expected/observed constituent count, coverage ratio;
-- completeness status;
-- optional explicitly named `observed_only_*` diagnostics;
+- identity: `macro_anchor_id`, `macro_source_checksum`, `source_event_id`
+- source facts: `source_anchor_time`, `source_anchor_price`, `source_anchor_price_units`, `anchor_extreme_type`
+- anchor-level provenance from approved localization artifact: `source_time_precision`, `source_market`, `source_parent_market`, `source_refinement_market`, `source_refinement_timeframe`, `historical_source_classification`
+- original source uncertainty: `source_possible_time_start`, `source_possible_time_end`
+- approved 5m localization: `localization_5m_status`, `candidate_5m_count`, `candidate_5m_start_times`, nullable `localized_5m_start_time`, `localized_5m_end_time`, localization artifact checksum
+- trade refinement: `trade_refinement_status`, `trade_source_granularity`, `trade_touch_count`, `first_trade_touch_time`, `last_trade_touch_time`
+- exact boundary only when unique: `exact_pivot_time`, `exact_pivot_sequence_id`
+- fallback uncertainty after all available evidence: `refined_possible_time_start`, `refined_possible_time_end`, `boundary_uncertainty_seconds`
+- evidence/provenance/checksums
+- `availability_class=retrospective`, `available_at=null`
 - schema/run provenance.
 
-### Requirement: `candle_geometry` materializes atomic target-candle geometry
+The approved 5m localization artifact, not per-leg `duration_precision`, supplies anchor-level source precision/provenance. The original per-leg `duration_precision` remains a source-leg field only.
 
-Row grain: one complete target candle `5m` and higher.
-Primary key: `candle_id`.
+A shared pivot is referenced by both adjacent legs through the same `macro_anchor_id`.
 
-Required: candle identity/time/source fields, `full_range`, `body_size`, `body_high`, `body_low`, upper/lower wick, shares, log geometry, body direction, metric status, schema/run provenance.
+### `macro_trade_touches`
+One row per exact matching source trade/aggTrade touch considered for an anchor. Primary key may be `(macro_anchor_id,candidate_5m_start_time,event_time,native_sequence_id)`. Preserve price/price_units, source market, granularity, native ids, first/last underlying trade ids where present, artifact/checksum and eligibility.
 
-Incomplete/boundary target intervals do not produce valid complete geometry.
+### `macro_boundary_fragments`
+One row per authoritative exact LEFT/RIGHT boundary fragment and calculation resolution when a unique trade pivot exists.
 
-### Requirement: `cross_timeframe_map` stores target-to-target containment
+Required identity/context:
 
-Primary key: `(child_candle_id,parent_timeframe)`.
+- macro anchor/leg id
+- fragment side `LEFT|RIGHT`
+- calculation resolution `5m|15m|1H|4H|1D`
+- market type
+- enclosing canonical interval id/times
+- exact pivot time/sequence id/price
+- fragment start/end and duration
+- composition method (`trade_only_5m` or `trade_5m_plus_complete_5m`)
+- coverage/status.
 
-Persist:
+Persist fragment OHLCV/geometry/activity as mathematically applicable. Trade-sequence measurements use explicit `trade_*` names. The pivot source record volume/count belongs to LEFT once; RIGHT begins from pivot price state but excludes the pivot record from its trade volume/count.
 
-- `5m -> 15m/1H/4H/1D`
-- `15m -> 1H/4H/1D`
-- `1H -> 4H/1D`
-- `4H -> 1D`.
+Canonical fixed candles remain unchanged.
 
-Required fields include child/parent ids/timeframes, canonical market/source scope, child times, zero-based ordinal, expected/observed counts, coverage, mapping status and provenance.
+## Observation tables
 
-### Requirement: `macro_anchors` stores one shared anchor/refinement record per source pivot
+### `observation_index`
+Primary key `observation_id`. Preserve observation kind, market scope, times, duration, endpoints/direction where valid, source segment, fixed/rolling/macro ids, availability, completeness and provenance.
 
-Row grain: one approved source macro pivot/event.
-Primary key: `macro_anchor_id`.
+For macro:
+- if both pivots are `exact_unique_trade_touch`, `start_time/end_time` are exact pivot times and `duration_seconds` is exact;
+- otherwise exact macro start/end/duration are null and source-coordinate start/end/duration remain in explicitly `source_*` fields;
+- `availability_class=retrospective`, `available_at=null`.
 
-Required columns:
-
-- `macro_anchor_id`, `macro_source_checksum`, `source_event_id`;
-- `source_anchor_time`, `source_anchor_price`, `anchor_extreme_type` (`high`/`low`);
-- `source_parent_market`, `source_refinement_market`, `source_refinement_timeframe`;
-- `historical_source_classification`;
-- `source_time_precision`;
-- initial `possible_time_start`, `possible_time_end`;
-- `refinement_status`;
-- `refinement_market_type`;
-- `search_coverage_complete`;
-- `candidate_1m_count`;
-- `first_candidate_1m_start`, `last_candidate_1m_start`;
-- refined `possible_time_start`, `possible_time_end` after the deterministic 1m audit;
-- `boundary_uncertainty_seconds`;
-- evidence/provenance fields;
-- `availability_class=retrospective`, `available_at=null`;
-- schema/run provenance.
-
-When a pivot is shared between adjacent macro legs, both legs reference the same `macro_anchor_id`.
-
-### Requirement: canonical `market_type` and historical macro provenance are different columns
-
-Canonical `market_type` answers: which market population does this wall-clock interval belong to under the current Structure Research v5 source chronology?
-
-Historical macro provenance answers: from which old source mixture was the macro anchor/leg originally constructed?
-
-They SHALL NOT substitute for each other.
-
-For macro observations:
-
-- if the macro source-time interval lies wholly before the canonical spot/futures boundary, `market_type=spot`;
-- if wholly at/after the boundary, `market_type=usdt_m_futures`;
-- if it spans the boundary, `market_type=cross_market`.
-
-Historical `leg_source_classification=mixed` does NOT make canonical `market_type` null.
-
-A canonical gap inside an otherwise futures/spot macro interval does not change market type; it makes `source_segment_id=null` and affects coverage/status.
-
-### Requirement: `observation_index` unifies fixed, rolling, and macro observations
-
-Primary key: `observation_id`.
-
-Required columns:
-
-- `observation_id`, `observation_kind`;
-- venue/instrument;
-- non-null canonical `market_type` for fixed/rolling/macro (`spot`, `usdt_m_futures`, or `cross_market`);
-- `source_segment_id` only when fully contained in exactly one canonical segment;
-- `start_time`, `end_time`, `observation_end_year`, `duration_seconds`;
-- start/end price only when semantically valid for that observation kind;
-- local mechanical direction where defined;
-- nullable fixed timeframe / rolling duration / macro ids;
-- `availability_class`, `available_at`;
-- expected-base fields and coverage;
-- completeness status;
-- schema/run provenance.
-
-For macro rows specifically:
-
-- `start_time/end_time` are the preserved source-coordinate anchor timestamps and SHALL be documented as source-coordinate times, not exact event times when bucket-limited;
-- `start_price/end_price` are approved source macro anchor prices;
-- `availability_class=retrospective`;
-- `available_at=null`;
-- `source_segment_id` is non-null only if the entire relevant canonical safe interior lies in one segment and no stronger ambiguity applies.
-
-Expected base resolution:
-
-- fixed = `1m`;
-- rolling = `5m`;
-- macro = null unless an explicit safe-interior base count is materialized elsewhere.
-
-Incomplete fixed/rolling ordinary endpoints/net features do not masquerade as complete metrics.
-
-### Requirement: rolling calculation-resolution matrix is exact
-
+### Rolling calculation matrix
 - `30m`: `5m`, `15m`
 - `1h`: `5m`, `15m`
 - `4h`: `5m`, `15m`, `1H`
@@ -227,116 +127,110 @@ Incomplete fixed/rolling ordinary endpoints/net features do not masquerade as co
 - `24h`: `5m`, `15m`, `1H`, `4H`
 - `3d`: `5m`, `15m`, `1H`, `4H`, `1D`.
 
-### Requirement: fixed calculation-resolution matrix is exact
+### Fixed calculation matrix
+- `15m`: via `5m`
+- `1H`: via `5m`, `15m`
+- `4H`: via `5m`, `15m`, `1H`
+- `1D`: via `5m`, `15m`, `1H`, `4H`.
 
-For path/activity/overlap/volume/volatility families:
+### Macro calculation matrix
+Attempt macro path/activity/overlap/volume at `5m/15m/1H/4H/1D`.
 
-- fixed `15m`: via `5m`
-- fixed `1H`: via `5m`, `15m`
-- fixed `4H`: via `5m`, `15m`, `1H`
-- fixed `1D`: via `5m`, `15m`, `1H`, `4H`.
+For exact trade-resolved legs use exact pivots plus exact boundary-fragment composition.
 
-Fixed 5m has atomic geometry but no lower target calculation resolution in this pass.
+For unresolved/ambiguous pivots use fallback unambiguous interior only. At resolution `R`:
 
-### Requirement: macro safe-interior calculation-resolution matrix is exact
+`fallback_expected_constituent_count` = number of canonical fixed-grid `R` intervals whose whole `[start,end)` lies inside the fallback unambiguous interval, regardless of data presence.
 
-For a macro observation, safe-interior path/activity/overlap/volume summaries SHALL be attempted at `5m`, `15m`, `1H`, `4H`, and `1D` when at least two complete eligible constituents fit wholly inside the safe interior and required continuity exists.
+`fallback_observed_constituent_count` = expected slots having valid complete compatible canonical candles.
 
-Macro RV is not required. Complete anchor-inclusive path is separately gated and is not implied by safe-interior availability.
+Coverage = observed/expected. Never use `duration/R` when boundaries are off-grid.
 
-### Requirement: `observation_price_speed` uses canonical speed names
+Macro RV remains deferred.
 
-Primary key: `observation_id`.
+### `observation_price_speed`
+Primary key `observation_id`.
 
-Required fields include ordinary/log displacement, `raw_signed_speed_pct_per_hour`, `signed_log_speed_per_hour`, `absolute_log_speed_per_hour`, `local_direction_speed_pct_per_hour`, `local_direction_log_speed_per_hour`, rolling speed-change/acceleration fields, metric status and pruning/provenance columns.
+Fixed/rolling use canonical ordinary/log speed names.
 
-Macro source-coordinate speed may be retained as retrospective source measurement, clearly named/documented as source-coordinate rather than exact canonical timing.
+Macro separates:
+- original `source_*` displacement/duration/speed from `macro_legs_log20`;
+- exact `macro_*` displacement/duration/speed only when both trade pivots are exact.
 
-### Requirement: `observation_path_activity` separates fixed/rolling complete path from macro safe interior
+Generic exact macro speed SHALL NOT be populated from bucket-limited source timestamps.
 
-Primary key: `(observation_id,calculation_resolution)`.
+There is one exact whole-leg macro speed. Timeframe-specific tables describe internal evolution; they do not redefine the whole-leg speed.
 
-For fixed/rolling required fields include coverage, `close_path`, `log_close_path`, efficiencies, upward/downward and local-direction components, alternation, candle activity, extrema/excursions, status/provenance.
+### `observation_path_activity`
+Primary key `(observation_id,calculation_resolution)`.
 
-For macro rows, use explicit safe-interior names:
+Fixed/rolling: close path/log path/efficiency/directional components/alternation/activity/extrema/coverage.
 
-- `safe_interior_start_time`, `safe_interior_end_time`;
-- `safe_expected_constituent_count`, `safe_observed_constituent_count`, `safe_coverage_ratio`;
-- `safe_internal_close_path`, `safe_internal_log_close_path`;
-- `safe_internal_displacement`, `safe_internal_log_displacement`;
-- `safe_internal_path_efficiency`, `safe_internal_log_path_efficiency`;
-- safe directional/alternation/activity/extrema fields as declared in feature dictionary;
-- `safe_internal_status`;
-- separately nullable `anchor_inclusive_close_path`, `anchor_inclusive_log_close_path`, corresponding efficiency fields and `anchor_inclusive_status`.
+Exact macro close-path sequence at resolution `R`:
+- `Q0 = exact start pivot price`;
+- chronological closes of complete canonical `R` candles satisfying `start_pivot_time < candle.end_time <= end_pivot_time`;
+- append exact end pivot price if not already the final price state.
 
-The old ambiguous interpretation of generic macro `internal_close_path` as whole-leg internal path is prohibited. Macro metrics with uncertain boundaries SHALL use the `safe_*` namespace.
+The same sequence defines macro displacement, close path, log path, efficiency, directional components and alternation. Trade-level boundary path is never added to this close path.
 
-### Requirement: `atomic_candle_pairs` preserves neutral pair geometry
+For ambiguous fallback macro rows, use explicit `fallback_*` names. If fallback constituents `B1...Bn` are used, the measured sequence starts with `Q0=open(B1)` and `Qi=close(Bi)`, so the first eligible candle's open->close movement is not lost. Also persist `fallback_measured_start_time=B1.start_time` and `fallback_measured_end_time=Bn.end_time`.
 
-Primary key: `pair_id`. Required fields include pair/candle ids, resolution, market type, source segments/times, eligibility/reason, approved range/body overlap, position, extension and mirrored penetration fields plus provenance.
+### `atomic_candle_pairs`
+Canonical same-resolution adjacent complete fixed-candle pairs only. Boundary-fragment pairs are a separate relationship type/table or explicitly typed rows and never masquerade as canonical pairs.
 
-### Requirement: `observation_overlap_summary` stores pair evolution
+### `observation_overlap_summary`
+Fixed/rolling aggregate eligible canonical pairs. Exact macro may additionally aggregate explicitly typed boundary-fragment relationships plus complete interior pairs without double counting. Ambiguous macro fallback uses only pairs wholly inside fallback interval.
 
-Primary key: `(observation_id,calculation_resolution)`.
+### `observation_volume_volatility`
+Fixed/rolling preserve volume summaries, directional volume, TR/ATR, RV, width/range summaries and rolling comparisons.
 
-Only eligible pairs fully inside the observation's valid constituent interval contribute. Macro rows use the safe interior only when boundaries are uncertain.
+Exact macro volume/activity uses the non-overlapping union of start RIGHT fragment + full interior canonical intervals + end LEFT fragment at the stated resolution. Never include a full boundary candle together with its fragment. Ambiguous fallback uses only the fallback constituent set. Macro RV remains null/deferred.
 
-### Requirement: `observation_volume_volatility` uses canonical names
+## Retracement
 
-Primary key: `(observation_id,calculation_resolution)`.
+### `retracement_measurements`
 
-Required fields include coverage, volume sum/mean/median, rolling `volume_sum_change_vs_prev` and ratio where defined, body/close-step directional volume groups, TR/ATR, fixed/rolling RV, high-low width, range/log-range summaries, explicitly declared rolling comparison fields and status/provenance.
+First-pass production relationship is specifically consecutive opposite-direction macro legs sharing the same pivot:
 
-Macro rows may contain safe-interior volume/TR/activity summaries under the safe coverage contract but SHALL NOT materialize macro RV in this pass.
+`A -> B` followed immediately by `B -> C`.
 
-### Requirement: `retracement_measurements` stores only explicitly configured approved A-B-C relationships
+A/B/C are therefore `macro_anchor_id` foreign keys; no polymorphic candle/rolling anchor ids are allowed in this pass.
 
-Primary key: `retracement_id`.
+Relationship source id is deterministic, e.g. `macro_adjacent_opposite|{previous_macro_leg_id}|{next_macro_leg_id}`.
 
-Required fields include relationship source, A/B/C anchor ids/times/prices, anchor provenance/precision, direct retracement formula fields, availability, status and run/schema provenance.
+The approved 128-leg source has 127 adjacent leg transitions; 118 share the same boundary pivot and are opposite-direction (59 up->down, 59 down->up). Those 118 relationships are the production retracement set. The 9 non-shared transitions do not receive a retracement row.
 
-Arbitrary combinations are prohibited. Zero rows is valid when no production tuple list is configured.
+Required: previous/next leg ids, A/B/C macro anchor ids/times/prices, direct reference/candidate deltas, `candidate_vs_reference_pct`, `opposing_retracement_abs`, `retracement_pct`, boundary precision/refinement status, retrospective availability and provenance.
 
-### Requirement: `macro_legs` preserves source leg plus refined boundary semantics
+No Fibonacci label/conversion.
 
-Primary key: `macro_leg_id`.
+## `macro_legs`
 
 Preserve all approved source columns plus:
-
-- `macro_source_checksum`, `macro_observation_id`;
-- `start_macro_anchor_id`, `end_macro_anchor_id`;
-- source-vs-derived direction QA;
-- `leg_source_classification` (`spot`, `futures`, `mixed`, `unknown`);
-- canonical `market_type` (`spot`, `usdt_m_futures`, `cross_market`);
-- canonical source compatibility/coverage status;
-- `cross_canonical_boundary`;
-- `safe_interior_start_time`, `safe_interior_end_time`;
-- `safe_interior_duration_seconds` when non-empty;
-- `boundary_uncertainty_status`;
-- source/canonical coverage status;
+- macro source checksum/observation id
+- start/end macro anchor ids
+- source direction QA
+- historical source classification
+- canonical market type
+- exact-boundary status
+- exact start/end pivot times when resolved
+- exact duration when resolved
+- fallback uncertainty interval only when needed
+- canonical coverage/status
 - schema/run provenance.
 
-Historical source provenance SHALL NOT overwrite canonical market assignment.
+Historical provenance never overwrites canonical market scope.
 
-### Requirement: `observation_macro_context` isolates retrospective macro relationships
+## `observation_macro_context`
+Retrospective observation-to-macro relationships. Exact temporal fractions may be exposed only when exact pivot boundaries exist; otherwise source-coordinate/fallback concepts are explicitly named. `availability_class=retrospective`, `available_at=null`.
 
-Primary key: `(observation_id,macro_leg_id)`.
+## Feature dictionary / extraction safety
 
-Required columns include temporal intersection, source-coordinate time fraction where explicitly named, endpoint/source direction, approved macro-aligned numeric fields, `availability_class=retrospective`, `available_at=null`, pruning/status/provenance fields.
+Every materialized feature has exactly one dictionary definition including table, name, formula, units, applicability, calculation resolution, availability, null meaning and provenance.
 
-Source-coordinate progress is not exact event-time progress when anchor timing is bucket-limited.
+Causal extraction excludes macro observations/anchors/touches/fragments/context/retracement and every retrospective feature.
 
-### Requirement: feature dictionary is canonical and complete
-
-One row per materialized metric feature with logical table, feature name, meaning, formula, units, applicability, calculation-resolution semantics, observation-kind semantics, availability, null meaning, provenance and schema version.
-
-Canonical copy is Parquet; emit a small CSV review copy.
-
-### Requirement: causal-only extraction is structurally enforceable
-
-Causal extraction excludes macro observations/context, macro anchor refinement records, retrospective retracement rows, and every retrospective feature. `available_at=null` on retrospective entities SHALL NOT make them causal.
-
-### Requirement: canonical Parquet partitioning is explicit
+## Physical partitioning
 
 Use Zstandard.
 
@@ -351,13 +245,8 @@ Use Zstandard.
 - `observation_overlap_summary`: `calculation_resolution/market_type/observation_end_year`
 - `observation_volume_volatility`: `calculation_resolution/market_type/observation_end_year`
 - `observation_macro_context`: `market_type/observation_end_year`
-- `retracement_measurements`: unpartitioned unless size later requires otherwise
-- `macro_anchors`, `macro_legs`, source/dictionary dimension tables: unpartitioned unless size later justifies otherwise.
+- `macro_trade_touches`, `macro_boundary_fragments`, `retracement_measurements`, `macro_anchors`, `macro_legs`, source/dictionary dimensions: unpartitioned unless size later justifies otherwise.
 
-No null `market_type` partition is permitted merely because macro provenance is mixed.
+No null market partition merely because historical macro provenance is mixed.
 
-### Requirement: manifests and run provenance are auditable
-
-Every logical table carries schema/run provenance. Every logical-table manifest records schema version, partition columns, part paths, row counts, time coverage, market types/resolutions, source-segment coverage where applicable, integrity evidence, producing run id and validation status.
-
-Extraction discovers canonical parts through manifests/catalog, never path guessing.
+Every manifest records schema/version, partitions/parts, row counts, time coverage, market/resolution coverage, source coverage, integrity evidence, producing run id and validation status. Extraction discovers parts through manifests/catalog, never path guessing.
