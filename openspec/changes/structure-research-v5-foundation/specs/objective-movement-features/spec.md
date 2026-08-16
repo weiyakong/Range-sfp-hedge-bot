@@ -25,9 +25,13 @@ The first-pass dataset SHALL NOT assign the macro leg a new semantic type such a
 
 For each approved observation interval, the system SHALL preserve its start and end anchors and measure signed displacement, absolute displacement, signed percentage change, absolute percentage change, and duration using the approved measurement contracts.
 
-### Requirement: Retracements are measured as percentages when an approved anchor pair exists
+### Requirement: Retracements use only pre-approved anchors
 
 When a retracement can be measured from already-approved anchors without inventing a new internal-leg algorithm, the system SHALL store the direct retracement percentage and neutral supporting measurements rather than converting the result to Fibonacci ratios or labels.
+
+Approved anchors in this pass SHALL be limited to anchors provided by explicitly configured approved inputs such as the reviewed `macro_legs_log20.csv`, deterministic fixed/rolling observation boundaries, or another source explicitly approved by the user.
+
+The implementation SHALL NOT discover, create, optimize, or infer new swing/retracement anchor pairs from candle history for this pass. A similarly named swing, parent, event, or feature file SHALL NOT become an approved anchor source merely because it is present in the repository.
 
 ### Requirement: Speed and speed change are numeric measurements
 
@@ -49,7 +53,9 @@ The system SHALL preserve raw volume where present and SHALL collect approved vo
 
 ### Requirement: Extremum information remains objective
 
-The system MAY collect objective high/low timestamps, elapsed time since approved extrema, and high/low update behavior where these can be derived without introducing a new swing or internal-leg classifier.
+The system MAY collect objective high/low values, first/last occurrence timestamps, occurrence counts at the stated calculation resolution, elapsed time since approved extrema, and high/low update behavior where these can be derived without introducing a new swing or internal-leg classifier.
+
+Repeated equal candle highs/lows SHALL follow the explicit extrema tie contract rather than silently selecting one occurrence.
 
 ### Requirement: Cross-scale relationships are descriptive
 
