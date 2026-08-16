@@ -197,10 +197,11 @@ Required columns:
 - `observation_kind`
 - `venue`
 - `instrument`
-- `market_type`
-- `source_segment_id` when the observation is fully contained in one segment, otherwise null
+- `market_type` nullable only for a macro leg spanning more than one market type
+- `source_segment_id` when fully contained in one segment, otherwise null
 - `start_time`
 - `end_time`
+- `observation_end_year`
 - `duration_seconds`
 - `start_price`
 - `end_price`
@@ -225,6 +226,31 @@ Rolling observations SHALL be created on the canonical 5m evaluation grid for ea
 
 Macro-leg observations SHALL preserve the approved source anchors and SHALL be `retrospective`, with `available_at = macro_leg.end_time` for research bookkeeping. This SHALL NOT imply that the leg identity was known live at its end.
 
+### Requirement: Rolling calculation-resolution matrix is explicit
+
+The complete first-pass rolling feature matrix SHALL use every target calculation resolution that divides the rolling duration exactly and contributes at least two complete candles:
+
+- `30m`: `5m`, `15m`
+- `1h`: `5m`, `15m`
+- `4h`: `5m`, `15m`, `1H`
+- `12h`: `5m`, `15m`, `1H`, `4H`
+- `24h`: `5m`, `15m`, `1H`, `4H`
+- `3d`: `5m`, `15m`, `1H`, `4H`, `1D`.
+
+This matrix SHALL apply to calculation-resolution-dependent path/activity, overlap, volume, and realized-volatility families where the metric is meaningful. A calculation resolution SHALL NOT be omitted from this approved matrix merely for convenience or performance without explicit approval.
+
+Rolling observation identity remains based on market interval, not calculation resolution. Multiple calculation-resolution rows SHALL join to the same `observation_id`.
+
+### Requirement: Large feature tables denormalize only pruning dimensions
+
+To make direct Parquet filtering efficient without a mandatory join to `observation_index`, every large observation feature table SHALL repeat these non-authoritative pruning columns:
+
+- `observation_kind`
+- `market_type` nullable only for cross-market retrospective macro observations
+- `observation_end_year`.
+
+These repeated columns SHALL equal the corresponding `observation_index` values and SHALL be validated as such. They are physical/query conveniences and SHALL NOT redefine observation identity or semantics.
+
 ### Requirement: Logical table `observation_price_speed` stores one non-resolution-specific geometry/speed row per observation
 
 Row grain: one `observation_id`.
@@ -234,6 +260,7 @@ Primary key: `observation_id`.
 Required columns:
 
 - `observation_id`
+- pruning columns `observation_kind`, `market_type`, `observation_end_year`
 - `signed_price_change`
 - `absolute_price_change`
 - `signed_return_pct`
@@ -245,10 +272,12 @@ Required columns:
 - `absolute_log_speed_per_hour`
 - `local_direction_normalized_speed_pct_per_hour` where defined
 - `local_direction_normalized_log_speed_per_hour` where defined
-- for rolling observations, approved adjacent-window `speed_change` and `acceleration` fields under duration-explicit names or normalized long-form columns
+- for rolling observations, previous-adjacent-window `speed_change_pct_per_hour` and `acceleration_pct_per_hour2` plus explicitly log-named companions where defined
 - `metric_status`
 - `schema_version`
 - `run_id`.
+
+Because each rolling row already has exactly one `rolling_duration` in `observation_index`, speed-change column names SHALL NOT encode the duration redundantly; the observation join supplies that duration.
 
 Macro-direction-aligned versions for causal fixed/rolling observations SHALL NOT be stored in this causal/local table; they belong to retrospective macro-context data.
 
@@ -261,6 +290,7 @@ Primary key: `(observation_id, calculation_resolution)`.
 Required columns SHALL include:
 
 - `observation_id`
+- pruning columns `observation_kind`, `market_type`, `observation_end_year`
 - `calculation_resolution`
 - `expected_constituent_count`
 - `observed_constituent_count`
@@ -321,6 +351,7 @@ Required columns:
 - `venue`
 - `instrument`
 - `market_type`
+- `observation_end_year` defined as `curr_start_time.year` for physical partitioning
 - `prev_source_segment_id`
 - `curr_source_segment_id`
 - `prev_start_time`
@@ -348,6 +379,7 @@ Primary key: `(observation_id, calculation_resolution)`.
 Required columns SHALL include:
 
 - `observation_id`
+- pruning columns `observation_kind`, `market_type`, `observation_end_year`
 - `calculation_resolution`
 - `eligible_pair_count`
 - `expected_pair_count`
@@ -374,16 +406,18 @@ Primary key: `(observation_id, calculation_resolution)`.
 Required columns SHALL include:
 
 - `observation_id`
+- pruning columns `observation_kind`, `market_type`, `observation_end_year`
 - `calculation_resolution`
-- coverage/count fields
+- expected/observed constituent counts and `coverage_ratio`
 - `volume_sum`
 - `volume_mean`
 - `volume_median`
-- previous-equal-window volume delta and ratio where defined
+- previous-equal-window `volume_delta`
+- previous-equal-window `volume_ratio`
 - `volume_body_up`, `volume_body_down`, `volume_body_flat`
-- body-direction volume shares
+- `volume_body_up_share`, `volume_body_down_share`, `volume_body_flat_share`
 - `volume_close_step_up`, `volume_close_step_down`, `volume_close_step_flat`
-- close-step-direction volume shares
+- `volume_close_step_up_share`, `volume_close_step_down_share`, `volume_close_step_flat_share`
 - approved effort-versus-result numeric fields
 - `true_range_sum`, `true_range_mean` where meaningful for the observation
 - `atr14_sma_at_end`
@@ -410,6 +444,7 @@ Primary key: `(observation_id, macro_leg_id)`.
 Required columns:
 
 - `observation_id`
+- pruning columns `observation_kind`, `market_type`, `observation_end_year`
 - `macro_leg_id`
 - `macro_observation_id`
 - `intersection_start_time`
@@ -440,13 +475,14 @@ Required columns SHALL preserve the approved `macro_legs_log20.csv` fields witho
 - `macro_source_checksum`
 - `macro_observation_id`
 - price-derived direction QA fields
-- source-regime/market-type information at each anchor
-- cross-source-boundary flag
+- `start_anchor_market_type`
+- `end_anchor_market_type`
+- `cross_source_boundary`
 - coverage status by canonical research source where needed
 - `schema_version`
 - `run_id`.
 
-The original source columns SHALL remain distinguishable from recomputed research fields.
+The original source columns SHALL remain distinguishable from recomputed research fields. For a macro leg spanning spot and futures, its `observation_index.market_type` and `source_segment_id` SHALL be null while start/end anchor market types remain explicit here.
 
 ### Requirement: Feature dictionary is a canonical table with a human CSV copy
 
@@ -486,16 +522,16 @@ Canonical Parquet SHALL use Zstandard compression.
 
 Physical partitioning SHALL be:
 
-- `candles_1m`: `market_type / year / month`;
-- `candles_fixed`: `timeframe / market_type / year`;
-- `cross_timeframe_map`: `child_timeframe / market_type / year`;
-- `observation_index`: `observation_kind / market_type / year`;
-- `observation_price_speed`: `observation_kind / market_type / year` through join-compatible partition metadata;
-- `observation_path_activity`: `calculation_resolution / market_type / year`;
-- `atomic_candle_pairs`: `calculation_resolution / market_type / year`;
-- `observation_overlap_summary`: `calculation_resolution / market_type / year`;
-- `observation_volume_volatility`: `calculation_resolution / market_type / year`;
-- `observation_macro_context`: `market_type / year`.
+- `candles_1m`: `market_type / year / month` derived from `start_time`;
+- `candles_fixed`: `timeframe / market_type / year` derived from `start_time`;
+- `cross_timeframe_map`: `child_timeframe / market_type / year` derived from child start time;
+- `observation_index`: `observation_kind / market_type / observation_end_year`, with cross-market macro observations stored under explicit physical partition value `cross_market` while logical `market_type` remains null;
+- `observation_price_speed`: `observation_kind / market_type / observation_end_year`;
+- `observation_path_activity`: `calculation_resolution / market_type / observation_end_year`;
+- `atomic_candle_pairs`: `calculation_resolution / market_type / observation_end_year`;
+- `observation_overlap_summary`: `calculation_resolution / market_type / observation_end_year`;
+- `observation_volume_volatility`: `calculation_resolution / market_type / observation_end_year`;
+- `observation_macro_context`: `market_type / observation_end_year`.
 
 Small dimension tables such as `source_segments`, `source_gaps`, `macro_legs`, and `feature_dictionary` SHALL remain unpartitioned unless size later justifies partitioning.
 
