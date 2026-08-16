@@ -2,140 +2,115 @@
 
 ## Purpose
 
-Define the unambiguous UTC time grid, fixed-versus-rolling semantics, cross-timeframe containment, incomplete-window handling, and partial overlap between existing macro legs and calendar candles.
+Define the unambiguous UTC time grid, fixed-versus-rolling semantics, cross-timeframe containment, incomplete-window handling, and macro/calendar intersection behavior.
 
 ## ADDED Requirements
 
-### Requirement: UTC is the canonical time basis
+### Requirement: UTC is canonical
 
-All candle boundaries, fixed intervals, rolling-window endpoints, containment relationships, coverage calculations, and exported timestamps SHALL use UTC.
+All candle boundaries, rolling endpoints, containment, coverage and exported timestamps use UTC. Local time/DST never changes interval boundaries.
 
-Local time zones and daylight-saving transitions SHALL NOT change research interval boundaries.
+### Requirement: Canonical intervals are half-open
 
-### Requirement: Canonical interval end is exclusive and distinct from source-reported close time
+Canonical candle interval is `[start_time,end_time)`.
 
-Canonical candle intervals SHALL use half-open UTC semantics `[start_time, end_time)`.
+Source-native inclusive close timestamps such as `...59.999` may be retained as provenance but do not define canonical interval end.
 
-When Binance or another source reports a final inclusive close timestamp such as `23:59:59.999`, that source-native value MAY be retained separately as provenance but SHALL NOT be used as the canonical interval boundary.
+### Requirement: Canonical 1m starts are exactly minute-grid aligned
 
-For example, a canonical `1D` candle beginning `2026-08-15T00:00:00Z` SHALL have canonical `end_time = 2026-08-16T00:00:00Z`, even if the source-reported close timestamp is `2026-08-15T23:59:59.999Z`.
+A canonical 1m candle start must be `HH:MM:00.000000Z` and end exactly one minute later.
 
-The implementation SHALL NOT create interval boundaries by adding arbitrary milliseconds to source timestamps. Canonical start/end SHALL be derived from the documented timeframe grid and verified against source timestamp semantics.
+Non-minute-aligned source timestamps are anomalies requiring explicit source validation. They SHALL NOT be silently rounded into canonical rows or gap boundaries.
 
-### Requirement: Fixed candle intervals are calendar aligned
+### Requirement: Fixed target intervals are calendar aligned
 
-Fixed intervals SHALL use the exchange/source UTC calendar grid and SHALL NOT be shifted to arbitrary observation times.
+- `1D`: UTC 00:00 -> next 00:00
+- `4H`: 00-04,04-08,08-12,12-16,16-20,20-24
+- `1H`: HH:00 -> next hour
+- `15m`: :00/:15/:30/:45
+- `5m`: minute divisible by 5.
 
-For the approved target resolutions:
+The fixed interval grid remains calendar aligned even where the market source changes inside an interval.
 
-- `1D`: `00:00:00` to next-day `00:00:00` UTC.
-- `4H`: `00:00-04:00`, `04:00-08:00`, `08:00-12:00`, `12:00-16:00`, `16:00-20:00`, `20:00-24:00` UTC.
-- `1H`: each `HH:00` to the next `HH:00` UTC.
-- `15m`: `:00-:15`, `:15-:30`, `:30-:45`, `:45-:00`.
-- `5m`: source-aligned five-minute intervals beginning at minute values divisible by five.
+### Requirement: A fixed interval crossing market-source boundary remains a grid row, not a complete candle
 
-Intervals SHALL be treated as half-open `[start_time, end_time)` intervals for containment logic.
+If the canonical spot/futures boundary falls inside a fixed target interval, retain that interval row as:
 
-#### Scenario: A four-hour fixed observation is built from 5m bars
+- logical `market_type=cross_market`;
+- `source_segment_id=null`;
+- `completeness_status=incomplete_boundary`;
+- complete OHLCV and complete feature metrics null.
 
-* **GIVEN** the fixed interval `12:00-16:00` UTC
-* **WHEN** the system selects 5m bars for that observation
-* **THEN** it SHALL select only bars whose intervals belong to `12:00-16:00` UTC
-* **AND** SHALL NOT create an alternative four-hour block such as `12:25-16:25` and call it a fixed 4H candle.
+Observed-only diagnostics may remain explicitly named.
 
-### Requirement: Fixed and rolling windows are separate concepts
+Example for boundary `2019-09-08T17:57:00Z`:
 
-A fixed calendar interval and a rolling lookback of the same nominal duration SHALL be stored and named separately.
+- 5m `[17:55,18:00)` is incomplete_boundary;
+- 15m `[17:45,18:00)` is incomplete_boundary;
+- 1H `[17:00,18:00)` is incomplete_boundary;
+- 4H `[16:00,20:00)` is incomplete_boundary;
+- 1D `[00:00,next 00:00)` is incomplete_boundary.
 
-A rolling lookback ending at eligible time `t` SHALL describe the immediately preceding duration ending at `t`; it SHALL NOT be snapped to the fixed calendar grid.
+The grid SHALL NOT be shifted to make the boundary align.
 
-#### Scenario: Rolling four-hour observation
+### Requirement: Fixed and rolling are separate concepts
 
-* **GIVEN** an eligible closed observation time of `20:25` UTC
-* **WHEN** a rolling four-hour metric is calculated
-* **THEN** its conceptual interval SHALL be the immediately preceding four hours ending at `20:25` UTC
-* **AND** it SHALL NOT be labeled as the fixed `16:00-20:00` 4H candle.
+A rolling lookback ending at `t` is `[t-W,t)` and is not snapped to calendar grid.
+
+Example: rolling 4h ending `20:25` = `[16:25,20:25)`, distinct from fixed 4H `[16:00,20:00)`.
 
 ### Requirement: Approved rolling durations
 
-The first-pass research SHALL support rolling durations of `30m`, `1h`, `4h`, `12h`, `24h`, and `3d` where the source resolution provides enough closed observations to calculate the metric without interpolation.
+`30m`,`1h`,`4h`,`12h`,`24h`,`3d`, according to exact calculation-resolution matrix in schema.
 
-A rolling metric SHALL record the source/calculation resolution used to derive it.
+### Requirement: Target feature-producing resolutions
 
-### Requirement: Target candle resolutions
-
-The target first-pass feature-producing candle resolutions are `1D`, `4H`, `1H`, `15m`, and `5m`, subject to source inventory and approved coverage.
-
-Canonical `1m` candles are retained as the finest source/drill-down layer under the atomic-market-data contract but are not required to carry the complete heavy feature family.
-
-Missing target data SHALL NOT be silently synthesized or downloaded without explicit approval.
+`5m`,`15m`,`1H`,`4H`,`1D`. Canonical `1m` remains source/drill-down layer.
 
 ### Requirement: Cross-timeframe containment is deterministic
 
-For every eligible finer candle, the system SHALL record the identifiers of containing larger fixed calendar candles where available and SHALL record the finer candle's ordinal position within each containing interval.
+For target-to-target mappings preserve parent ids, zero-based child ordinal, expected/observed counts and coverage.
 
-Expected and observed finer-bar counts SHALL be preserved so that gaps are visible.
+A child or parent may be incomplete; mapping status must preserve that fact.
 
-### Requirement: Incomplete fixed and rolling observations are explicit
+### Requirement: Incomplete observations are explicit
 
-For every metric requiring constituent bars, the system SHALL record enough coverage information to distinguish complete from incomplete observations, including expected constituent count, observed constituent count, coverage ratio, and gap status where applicable.
+Every metric requiring constituents records expected count, observed valid count, coverage ratio and completeness/gap/boundary status.
 
-Missing constituent data SHALL NOT be silently treated as complete coverage.
+Missing/boundary constituents SHALL NOT be treated as complete.
 
-### Requirement: Macro-leg boundaries do not shift the candle grid
+For incomplete fixed/rolling intervals, ordinary complete `start_price/end_price`, displacement, direction and speed SHALL not be inferred from partial observed-only constituents. Diagnostic observed-only endpoints may be stored under explicit names.
 
-When an existing macro leg starts or ends inside a fixed candle, the fixed candle SHALL retain its normal UTC calendar boundaries.
+### Requirement: Macro-leg boundaries do not shift candle grid
 
-The system SHALL separately record the exact temporal intersection between the macro leg and the candle, including intersection start, intersection end, and the fraction of the candle interval covered by the macro leg.
+A macro leg beginning/ending inside a fixed candle does not alter the fixed candle boundaries. Store exact temporal intersection separately.
 
-#### Scenario: Macro leg starts inside a 4H candle
+### Requirement: Macro anchor timestamps retain their true time precision
 
-* **GIVEN** a fixed 4H candle `12:00-16:00` UTC
-* **AND** an existing macro leg starts at `13:35` UTC
-* **WHEN** their relationship is stored
-* **THEN** the 4H candle SHALL remain `12:00-16:00`
-* **AND** the intersection SHALL begin at `13:35`
-* **AND** the system SHALL record the partial temporal coverage rather than shifting the 4H candle to `13:35`.
+A macro anchor timestamp representing the start of a 4H bucket whose price is that bucket high/low is a resolution-limited bucket timestamp, not exact extreme touch time.
 
-### Requirement: Repeated extrema preserve first, last, and count at the available resolution
+Such a timestamp SHALL NOT be used to assert finer temporal ordering for anchor-inclusive path unless additional exact timing evidence exists.
 
-For an observation constructed from an approved finer calculation resolution, the system SHALL preserve the observation high and low and SHALL make repeated equal extrema unambiguous.
+### Requirement: Repeated extrema preserve first, last and count at calculation resolution
 
-For the maximum observed high it SHALL preserve at minimum:
+For observation maximum/minimum preserve:
 
-- `high_first_time`: start time of the first constituent candle at the calculation resolution whose `high` equals the observation high;
-- `high_last_time`: start time of the last constituent candle at the calculation resolution whose `high` equals the observation high;
-- `high_occurrence_count`: number of constituent candles at that resolution whose `high` equals the observation high.
+- first constituent start time at that resolution;
+- last constituent start time;
+- occurrence count.
 
-Equivalent `low_first_time`, `low_last_time`, and `low_occurrence_count` SHALL be preserved for the minimum observed low.
+These are candle-resolution observations, not tick touch times.
 
-These timestamps/counts are resolution-limited candle observations and SHALL NOT be described as exact tick-level touch times/counts unless tick data was actually used.
+### Requirement: Excursions from observation start have exact formulas
 
-### Requirement: Upward and downward excursion from observation start use explicit formulas
+For valid complete observation start `P0`, maximum `H`, minimum `L`:
 
-For an observation start price `P0`, observed maximum `H`, and observed minimum `L`:
-
-- `upward_excursion_abs = max(0, H - P0)`
-- `downward_excursion_abs = max(0, P0 - L)`.
-
-When `P0 > 0`, percentage counterparts SHALL be:
-
-- `upward_excursion_pct = 100 * (H / P0 - 1)` when `H` is valid;
-- `downward_excursion_pct = 100 * (1 - L / P0)` when `L` is valid.
-
-For strictly positive prices, log counterparts MAY be preserved as:
-
-- `upward_excursion_log = max(0, ln(H / P0))`;
-- `downward_excursion_log = max(0, ln(P0 / L))`.
+- `upward_excursion_abs=max(0,H-P0)`
+- `downward_excursion_abs=max(0,P0-L)`
+- `upward_excursion_pct=100*(H/P0-1)` when `P0>0`
+- `downward_excursion_pct=100*(1-L/P0)` when `P0>0`
+- log counterparts may be retained for positive prices.
 
 ### Requirement: Zero net displacement does not imply zero activity
 
-For every fixed or rolling observation, the system SHALL preserve net displacement separately from intraperiod high/low range, repeated-extremum timing/count information where available, upward and downward excursion from the observation start, close-path, and approved range/body/wick activity measurements.
-
-#### Scenario: Price leaves and returns to its starting level
-
-* **GIVEN** an observation whose start and end prices are equal
-* **AND** price moved materially above or below the start during the interval
-* **WHEN** the observation is exported
-* **THEN** net displacement MAY equal zero
-* **BUT** the intraperiod range, excursions, path, extrema, and activity fields SHALL preserve the observed movement.
+Start=end may coexist with nonzero path, range, excursions, overlap/activity and volatility. These measurements remain separate.
