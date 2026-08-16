@@ -7,10 +7,10 @@ Implement in order. Do not launch full-history production without explicit appro
 ## Phase 0 — Freeze contracts
 
 ### T00 Source/config truth
-Freeze canonical boundary/gap evidence, macro checksum, localization checksum, price-unit rule, calculation matrices, output/checkpoint roots and code/config hash.
+Freeze canonical boundary/gap evidence, macro checksum, localization checksum, approved aggTrade source rule, price-unit rule, calculation matrices, output/checkpoint roots and code/config hash.
 
 ### T01 Typed schemas
-Implement all logical tables including macro anchors, trade touches, boundary fragments and 118 macro retracement relationships.
+Implement all logical tables including macro anchors, aggTrade touches, boundary fragments and 118 macro retracement relationships.
 
 ### T02 Stable ids
 Implement UUIDv5 identities including macro anchors/retracements and exact golden fixtures.
@@ -51,23 +51,35 @@ Verify 145 distinct candidate windows total:
 
 Use this artifact for anchor-level source precision/market/refinement fields. Do not derive anchor precision from per-leg `duration_precision`.
 
-### T22 Trade-refinement artifact
-Before real macro production, load/freeze separately reviewed trade-refinement output generated under `macro-trade-boundary-refinement`.
+### T22 Approved aggTrade-refinement artifact
+Before real macro production, load/freeze separately reviewed refinement output generated under `macro-trade-boundary-refinement`.
 
-Verify official same-market provenance, checksums, source granularity, all 145 candidate windows, exact price_units, every touch and native sequence ordering.
+The approved source is already downloaded official Binance BTCUSDT `aggTrades` for the corresponding spot/futures market.
 
-For E00059/E00065/E00070, official trade evidence must locate the exact pivot and actual canonical 5m candle containing it; the off-grid source window start must never become canonical candle identity.
+Verify:
+- official same-market aggTrade provenance/checksums;
+- source granularity explicitly equals `agg_trade`;
+- all 145 candidate windows are examined;
+- exact `price_units` matching;
+- every matching `agg_trade_id` touch is preserved and ordered by `(event_time,agg_trade_id)`;
+- first/last underlying trade ids retained where supplied.
+
+Raw individual trade files are outside the approved calculation path. If they exist on disk from the earlier unapproved download, do not read/use them for pivot selection, fragments, feature calculation or QA truth. Any future use requires a separate explicit user decision.
+
+If approved aggTrades are insufficient/missing for a case, report that case rather than switching source type automatically.
+
+For E00059/E00065/E00070, official aggTrade evidence must locate the resolved pivot event and actual canonical 5m candle containing it; the off-grid source window start must never become canonical candle identity.
 
 ### T23 Shared macro anchors
-Create one `macro_anchor_id` per source event. Store separate source window, localization windows/kinds, trade status/exact time, canonical pivot 5m containment and fallback uncertainty.
+Create one `macro_anchor_id` per source event. Store separate source window, localization windows/kinds, aggTrade refinement status/time/id, canonical pivot 5m containment and fallback uncertainty.
 
 ### T24 Boundary fragments
-For unique exact pivots create LEFT/RIGHT fragments inside canonical 5m containment and compose higher-TF fragments from canonical 5m + complete canonical 5m intervals.
+For one unique matching aggTrade pivot create LEFT/RIGHT fragments inside canonical 5m containment and compose higher-TF fragments from canonical 5m + complete canonical 5m intervals.
 
-Pivot source record count/volume belongs to LEFT once. Canonical candles unchanged.
+The pivot aggTrade row belongs to LEFT once as an indivisible approved source record. RIGHT begins from pivot price state and excludes that row. If the pivot aggTrade contains multiple underlying trades, do not split its internal quantity/count; mark aggregate boundary precision explicitly. Canonical candles remain unchanged.
 
 ### T25 Ambiguity fallback
-Multiple/no/unavailable trade touch never gets an arbitrary exact pivot. Derive only conservative fallback unambiguous interval.
+Multiple/no/unavailable aggTrade touch never gets an arbitrary exact pivot. Derive only conservative fallback unambiguous interval.
 
 ### T26 Market/provenance
 Canonical market scope and historical macro provenance remain separate.
@@ -75,14 +87,14 @@ Canonical market scope and historical macro provenance remain separate.
 ## Phase 3 — Observation identity and movement
 
 ### T30 Observation index
-Macro exact start/end/duration only when both endpoints exact; otherwise source coordinates stay explicitly source-named and exact fields null.
+Macro exact start/end/duration only when both endpoints have one unique approved aggTrade touch; otherwise source coordinates stay explicitly source-named and exact fields null.
 
 ### T31 Price/speed
 Fixed/rolling canonical metrics.
 
 Macro:
 - source speed preserved under `source_*`;
-- exact endpoint-to-endpoint whole-leg macro speed only when both pivots exact;
+- endpoint-to-endpoint whole-leg macro speed only when both pivots are uniquely aggTrade-resolved;
 - no separate whole-leg speed definition per TF.
 
 ## Phase 4 — Path/activity
@@ -97,10 +109,10 @@ Approved matrices and Q sequence.
 For each R in 5m/15m/1H/4H/1D:
 `Q0=start pivot price -> qualifying R closes -> end pivot price if needed`.
 
-Never add trade fragment path to TF close path.
+Never add aggTrade boundary path to TF close path.
 
 ### T43 Boundary microstructure
-Persist separate `trade_*` LEFT/RIGHT path/activity/volume metrics from ordered trade evidence.
+Persist separate aggregate-trade LEFT/RIGHT path/activity/volume metrics from ordered aggTrade evidence. Do not label them raw-trade metrics.
 
 ### T44 Fallback macro path
 Only guaranteed fixed-grid constituents. Sequence starts at open of first eligible candle. Expected count is grid-contained slot count; persist measured start/end.
@@ -125,12 +137,12 @@ Macro RV remains deferred.
 Canonical names.
 
 ### T64 Macro volume/activity
-Exact: start RIGHT fragment + interior + end LEFT fragment. Fallback: guaranteed interior only. Never full boundary candle + fragment together.
+Exact: start RIGHT fragment + interior + end LEFT fragment. Fallback: guaranteed interior only. Never full boundary candle + fragment together. Multi-underlying pivot aggTrade stays indivisible and carries an explicit aggregate-boundary volume precision flag.
 
 ## Phase 7 — Macro context/retracement
 
 ### T70 Retrospective macro context
-Exact temporal fractions only with exact pivots; otherwise explicitly source/fallback.
+Exact temporal fractions only with exact approved aggTrade pivots; otherwise explicitly source/fallback.
 
 ### T71 Retracement formula
 Direct percentage formula, no Fib.
@@ -141,23 +153,23 @@ Generate exactly the adjacent opposite-direction shared-pivot relationships from
 ## Phase 8 — Dictionary/manifests/extraction
 
 ### T80 Feature dictionary
-Define exact/fallback/source/trade feature semantics once.
+Define exact/fallback/source/aggTrade feature semantics once.
 
 ### T81 Manifests
-All logical tables including trade touches/fragments.
+All logical tables including aggTrade touches/fragments.
 
 ### T82 Extraction
-Support macro source/localization/trade/fallback fields, boundary fragments, retracements and causal exclusion without hidden recomputation.
+Support macro source/localization/aggTrade/fallback fields, boundary fragments, retracements and causal exclusion without hidden recomputation or hidden raw-trade substitution.
 
 ## Phase 9 — Checkpoint/resume
 
 ### T90/T91/T92
-<=20 min validated work at risk; validate source/config/schema/localization/trade-refinement checksums; atomic promotion; clean vs resumed equivalence.
+<=20 min validated work at risk; validate source/config/schema/localization/aggTrade-refinement checksums; atomic promotion; clean vs resumed equivalence.
 
 ## Phase 10 — QA
 
 ### T100 Golden suite
-Implement/pass G01-G49 (or later synchronized highest number).
+Implement/pass G01-G50 (or later synchronized highest number).
 
 ### T101 Independent artifact QA
 Inspect persisted Parquet/manifests, not builder flags.
@@ -183,6 +195,6 @@ Report outputs/coverage/QA/runtime/storage and STOP.
 
 ### T120
 Planning only. Full-history execution requires:
-- reviewed real trade-refinement artifact
+- reviewed real approved aggTrade-refinement artifact
 - successful implementation/golden/smoke review
 - explicit user authorization.
