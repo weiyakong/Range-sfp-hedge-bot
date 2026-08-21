@@ -66,3 +66,18 @@ Canonical analytical storage is Parquet/Zstandard. Persist validated work no lat
 
 ## 11. Execution gate
 Implementation/golden tests and bounded smoke may proceed only after all applicable formula/source/bounded-I/O gates pass. Full-history real macro production additionally requires reviewed frozen aggTrade-refinement artifact and explicit user authorization after smoke review.
+
+## 12. Deferred operator-facing application and chart interface
+This is a future product requirement and SHALL NOT expand the scope of the current descriptive research pipeline.
+
+When the project transitions from research/strategy validation to building the runnable user-facing system, this requirement SHALL be explicitly surfaced and reviewed with the user before the application architecture is finalized. It must not be silently omitted because it was deferred during research.
+
+The preferred product direction SHOULD support either a dedicated application or an HTML/web-based interface; no implementation form is fixed at this stage.
+
+The future operator interface SHOULD provide a chart-centric view comparable in practical use to an exchange/trading interface, including:
+- a market price chart for the instrument being operated;
+- switching between the strategy-supported timeframes, with the exact timeframe set to be confirmed at implementation time;
+- visible strategy/system position information, including entries, exits and current/open position state on or alongside the chart;
+- inspection of the same market/strategy context across timeframes without requiring separate disconnected views.
+
+This preference does not require cloning an exchange UI pixel-for-pixel and does not yet imply manual order-entry controls or any other trading controls that have not been separately specified and approved.
