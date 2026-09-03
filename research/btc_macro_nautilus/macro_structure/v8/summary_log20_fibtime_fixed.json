@@ -1,0 +1,84 @@
+{
+  "params": {
+    "log_factor": 1.2,
+    "log_threshold": 0.1823215567939546,
+    "fib_ratio": 0.382,
+    "min_fib_days": 10.0,
+    "bear_candidate_drawdown_pct": 0.4,
+    "bear_candidate_rebound_pct": 0.18,
+    "bull_candidate_rebound_pct": 0.25,
+    "high_correction_drawdown_pct": 0.18,
+    "deep_correction_drawdown_pct": 0.3,
+    "break_extension_pct": 0.02,
+    "speed_filter_enabled": false,
+    "v_rejection_enabled": false
+  },
+  "data_range": {
+    "daily_first": "2017-08-17T00:00:00+00:00",
+    "daily_last": "2026-07-07T00:00:00+00:00",
+    "h4_first": "2019-09-08T16:00:00+00:00",
+    "h4_last": "2026-07-07T12:00:00+00:00",
+    "daily_source": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/continuous_spot_to_futures_regime_v6_20260717/BTCUSDT_SPOT_TO_FUTURES_1D_MERGED.parquet",
+    "h4_source": "/Users/yeshevika/Documents/Codex/2026-05-30/sfp-vah-val-poc-cvd-one/Новое начало/cache_futures_btcusdt/BTCUSDT_UMFUT_4H.parquet"
+  },
+  "gap_count_1d": 0,
+  "gap_count_4h": 0,
+  "macro_summary": {
+    "log_factor": 1.2,
+    "log_threshold": 0.1823215567939546,
+    "strict_log20_only": true,
+    "ath_update_count": 108,
+    "confirmed_macro_high_count": 83,
+    "confirmed_macro_low_count": 82,
+    "raw_leg_count": 128,
+    "chronology_dropped": 13,
+    "same_side_replaced": 8,
+    "below_threshold_after_filter": 10
+  },
+  "structural_summary": {
+    "raw_leg_count": 128,
+    "subday_leg_count": 0,
+    "structural_impulse_count": 102,
+    "confirmed_impulse_count": 102,
+    "accepted_correction_count": 102,
+    "rejected_correction_count": 16,
+    "pending_correction_count": 0,
+    "fib_ratio": 0.382,
+    "min_fib_days": 10.0
+  },
+  "market_summary": {
+    "market_cycle_high_count": 3,
+    "market_cycle_low_count": 3,
+    "deep_correction_low_count": 6,
+    "high_correction_low_count": 6,
+    "current_bear_low_count": 1,
+    "active_ath_count": 1,
+    "bull_market_segment_count": 4,
+    "bear_market_segment_count": 4,
+    "bear_candidate_count": 5,
+    "bull_candidate_count": 7,
+    "thresholds": {
+      "bear_candidate_drawdown_pct": 0.4,
+      "bear_candidate_rebound_pct": 0.18,
+      "bull_candidate_rebound_pct": 0.25,
+      "high_correction_drawdown_pct": 0.18,
+      "deep_correction_drawdown_pct": 0.3,
+      "break_extension_pct": 0.02
+    }
+  },
+  "outputs": {
+    "macro_events": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v8_20260718/macro_events_log20.csv",
+    "macro_legs": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v8_20260718/macro_legs_log20.csv",
+    "raw_html": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v8_20260718/macro_structure_review_log20.html",
+    "structural_impulses": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v8_20260718/structural_impulses_log20_fibtime.csv",
+    "corrections": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v8_20260718/corrections_log20_fibtime.csv",
+    "movement_segments": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v8_20260718/movement_segments_log20_fibtime.csv",
+    "fibtime_events": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v8_20260718/fibtime_events_log20.csv",
+    "structural_regime_segments": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v8_20260718/structural_regime_segments_log20_fibtime.csv",
+    "market_events": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v8_20260718/market_state_log20_fibtime_events.csv",
+    "market_segments": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v8_20260718/market_state_log20_fibtime_segments.csv",
+    "market_daily": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v8_20260718/market_state_log20_fibtime_daily.csv",
+    "market_candidate_diagnostics": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v8_20260718/market_state_candidate_diagnostics_log20_fibtime.csv",
+    "regime_html": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v8_20260718/macro_structure_with_market_regime_log20_fibtime_fixed.html"
+  }
+}

@@ -1,0 +1,148 @@
+{
+  "params": {
+    "log_factor": 1.2,
+    "log_threshold": 0.1823215567939546,
+    "fib_ratio": 0.382,
+    "min_fib_days": 10.0,
+    "speed_filter_enabled": false,
+    "v_rejection_enabled": false
+  },
+  "data_range": {
+    "daily_first": "2017-08-17T00:00:00+00:00",
+    "daily_last": "2026-07-07T00:00:00+00:00",
+    "h4_first": "2019-09-08T16:00:00+00:00",
+    "h4_last": "2026-07-07T12:00:00+00:00"
+  },
+  "gap_count_1d": 0,
+  "gap_count_4h": 0,
+  "macro_summary": {
+    "log_factor": 1.2,
+    "log_threshold": 0.1823215567939546,
+    "strict_log20_only": true,
+    "ath_update_count": 108,
+    "confirmed_macro_high_count": 83,
+    "confirmed_macro_low_count": 82,
+    "raw_leg_count": 128,
+    "chronology_dropped": 13,
+    "same_side_replaced": 8,
+    "below_threshold_after_filter": 10
+  },
+  "structural_summary": {
+    "raw_leg_count": 128,
+    "subday_leg_count": 0,
+    "structural_impulse_count": 102,
+    "confirmed_impulse_count": 102,
+    "accepted_correction_count": 102,
+    "rejected_correction_count": 16,
+    "pending_correction_count": 0,
+    "fib_ratio": 0.382,
+    "min_fib_days": 10.0
+  },
+  "regime_summary": {
+    "confirmed_regimes": [
+      {
+        "event_time": "2017-12-30T00:00:00+00:00",
+        "regime_before": "bull",
+        "regime_after": "bear",
+        "reason": "regime_anchor_high -> structural_impulse_low_A -> accepted_rebound_high_B -> break_below_low_A"
+      },
+      {
+        "event_time": "2018-03-21T00:00:00+00:00",
+        "regime_before": "bear",
+        "regime_after": "bull",
+        "reason": "regime_anchor_low -> structural_impulse_high_A -> accepted_pullback_low_B -> break_above_high_A"
+      },
+      {
+        "event_time": "2018-04-01T00:00:00+00:00",
+        "regime_before": "bull",
+        "regime_after": "bear",
+        "reason": "regime_anchor_high -> structural_impulse_low_A -> accepted_rebound_high_B -> break_below_low_A"
+      },
+      {
+        "event_time": "2018-09-04T00:00:00+00:00",
+        "regime_before": "bear",
+        "regime_after": "bull",
+        "reason": "regime_anchor_low -> structural_impulse_high_A -> accepted_pullback_low_B -> break_above_high_A"
+      },
+      {
+        "event_time": "2018-09-19T00:00:00+00:00",
+        "regime_before": "bull",
+        "regime_after": "bear",
+        "reason": "regime_anchor_high -> structural_impulse_low_A -> accepted_rebound_high_B -> break_below_low_A"
+      },
+      {
+        "event_time": "2018-12-24T00:00:00+00:00",
+        "regime_before": "bear",
+        "regime_after": "bull",
+        "reason": "regime_anchor_low -> structural_impulse_high_A -> accepted_pullback_low_B -> break_above_high_A"
+      },
+      {
+        "event_time": "2019-07-02T00:00:00+00:00",
+        "regime_before": "bull",
+        "regime_after": "bear",
+        "reason": "regime_anchor_high -> structural_impulse_low_A -> accepted_rebound_high_B -> break_below_low_A"
+      },
+      {
+        "event_time": "2020-05-07T20:00:00+00:00",
+        "regime_before": "bear",
+        "regime_after": "bull",
+        "reason": "regime_anchor_low -> structural_impulse_high_A -> accepted_pullback_low_B -> break_above_high_A"
+      },
+      {
+        "event_time": "2021-04-25T20:00:00+00:00",
+        "regime_before": "bull",
+        "regime_after": "bear",
+        "reason": "regime_anchor_high -> structural_impulse_low_A -> accepted_rebound_high_B -> break_below_low_A"
+      },
+      {
+        "event_time": "2021-06-29T16:00:00+00:00",
+        "regime_before": "bear",
+        "regime_after": "bull",
+        "reason": "regime_anchor_low -> structural_impulse_high_A -> accepted_pullback_low_B -> break_above_high_A"
+      },
+      {
+        "event_time": "2022-03-13T20:00:00+00:00",
+        "regime_before": "bull",
+        "regime_after": "bear",
+        "reason": "regime_anchor_high -> structural_impulse_low_A -> accepted_rebound_high_B -> break_below_low_A"
+      },
+      {
+        "event_time": "2022-09-13T12:00:00+00:00",
+        "regime_before": "bear",
+        "regime_after": "bull",
+        "reason": "regime_anchor_low -> structural_impulse_high_A -> accepted_pullback_low_B -> break_above_high_A"
+      },
+      {
+        "event_time": "2024-05-01T08:00:00+00:00",
+        "regime_before": "bull",
+        "regime_after": "bear",
+        "reason": "regime_anchor_high -> structural_impulse_low_A -> accepted_rebound_high_B -> break_below_low_A"
+      },
+      {
+        "event_time": "2024-08-25T20:00:00+00:00",
+        "regime_before": "bear",
+        "regime_after": "bull",
+        "reason": "regime_anchor_low -> structural_impulse_high_A -> accepted_pullback_low_B -> break_above_high_A"
+      },
+      {
+        "event_time": "2025-11-21T12:00:00+00:00",
+        "regime_before": "bull",
+        "regime_after": "bear",
+        "reason": "regime_anchor_high -> structural_impulse_low_A -> accepted_rebound_high_B -> break_below_low_A"
+      }
+    ]
+  },
+  "outputs": {
+    "macro_events": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v2_20260718/macro_events_log20.csv",
+    "macro_legs": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v2_20260718/macro_legs_log20.csv",
+    "raw_html": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v2_20260718/macro_structure_review_log20.html",
+    "structural_impulses": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v2_20260718/structural_impulses_log20_fibtime.csv",
+    "corrections": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v2_20260718/corrections_log20_fibtime.csv",
+    "movement_segments": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v2_20260718/movement_segments_log20_fibtime.csv",
+    "fibtime_events": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v2_20260718/fibtime_events_log20.csv",
+    "regime_events": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v2_20260718/market_regime_log20_fibtime_events.csv",
+    "regime_segments": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v2_20260718/market_regime_log20_fibtime_segments.csv",
+    "regime_daily": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v2_20260718/market_regime_log20_fibtime_daily.csv",
+    "regime_html": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v2_20260718/macro_structure_with_market_regime_log20_fibtime_fixed.html"
+  }
+}
