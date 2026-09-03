@@ -1,0 +1,60 @@
+{
+  "params": {
+    "log_factor": 1.2,
+    "log_threshold": 0.1823215567939546,
+    "fib_ratio": 0.382,
+    "min_fib_days": 10.0,
+    "speed_filter_enabled": false,
+    "v_rejection_enabled": false
+  },
+  "data_range": {
+    "daily_first": "2017-08-17T00:00:00+00:00",
+    "daily_last": "2026-07-07T00:00:00+00:00",
+    "h4_first": "2019-09-08T16:00:00+00:00",
+    "h4_last": "2026-07-07T12:00:00+00:00"
+  },
+  "gap_count_1d": 0,
+  "gap_count_4h": 0,
+  "macro_summary": {
+    "log_factor": 1.2,
+    "log_threshold": 0.1823215567939546,
+    "ath_update_count": 108,
+    "confirmed_macro_high_count": 110,
+    "confirmed_macro_low_count": 109,
+    "raw_leg_count": 218
+  },
+  "structural_summary": {
+    "raw_leg_count": 218,
+    "subday_leg_count": 47,
+    "structural_impulse_count": 69,
+    "confirmed_impulse_count": 69,
+    "confirmed_correction_count": 69,
+    "rejected_correction_count": 17,
+    "pending_correction_count": 0,
+    "fib_ratio": 0.382,
+    "min_fib_days": 10.0
+  },
+  "regime_summary": {
+    "confirmed_regimes": [
+      {
+        "event_time": "2017-12-22T00:00:00+00:00",
+        "regime_before": "bull",
+        "regime_after": "bear",
+        "reason": "regime_anchor_high -> structural_impulse_low_A -> accepted_rebound_high_B -> break_below_low_A"
+      }
+    ]
+  },
+  "outputs": {
+    "macro_events": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v1_20260718/macro_events_log20.csv",
+    "macro_legs": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v1_20260718/macro_legs_log20.csv",
+    "raw_html": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v1_20260718/macro_structure_review_log20.html",
+    "structural_impulses": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v1_20260718/structural_impulses_log20_fibtime.csv",
+    "corrections": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v1_20260718/corrections_log20_fibtime.csv",
+    "movement_segments": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v1_20260718/movement_segments_log20_fibtime.csv",
+    "fibtime_events": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v1_20260718/fibtime_events_log20.csv",
+    "regime_events": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v1_20260718/market_regime_log20_fibtime_events.csv",
+    "regime_segments": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v1_20260718/market_regime_log20_fibtime_segments.csv",
+    "regime_daily": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v1_20260718/market_regime_log20_fibtime_daily.csv",
+    "regime_html": "/Users/yeshevika/Documents/Codex/2026-07-17/new-chat/outputs/macro_structure_review_log20_fibtime_fixed_v1_20260718/macro_structure_with_market_regime_log20_fibtime_fixed.html"
+  }
+}
