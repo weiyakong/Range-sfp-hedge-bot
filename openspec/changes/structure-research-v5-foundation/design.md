@@ -4,7 +4,9 @@
 Structure Research v5 is a staged descriptive research-data pipeline, not a trading-decision engine. Priorities are source fidelity, deterministic construction, stable identity, exact price handling, bounded/resumable processing and independent QA.
 
 ## 2. Canonical market source
-Strict canonical 1m uses spot before `2019-09-08T17:57:00Z` and USDT-M futures from that boundary. Documented gaps remain real, including futures 19:00. Post-boundary spot and the synthetic 19:00 diagnostic are excluded. Canonical 5m/15m/1H/4H/1D derive from strict canonical 1m. Proven continuous off-grid source series require source-specific mapping and retained raw timestamp provenance.
+Strict canonical 1m uses spot before `2019-09-08T17:57:00Z` and USDT-M futures from that boundary. Documented gaps remain real, including futures 19:00. Post-boundary spot and the synthetic 19:00 diagnostic are excluded. Canonical 5m/15m/1H/4H/12H/1D derive from strict canonical 1m. Proven continuous off-grid source series require source-specific mapping and retained raw timestamp provenance.
+
+Primary first-pass macro-signature research compares each approved historical macro segment on `1D`, `12H`, and `4H` in parallel. No one of these resolutions is assumed to be the true structural timeframe in advance. `1W` is deferred to optional coarse-context/robustness research for sufficiently long segments.
 
 ## 3. Macro prerequisites
 Approved macro source is `macro_legs_log20.csv`, SHA-256 `c7f7166a72f57ee9af75ddc0d5711d45d8371b546d83c10cdc77bc129523d0d3`.
