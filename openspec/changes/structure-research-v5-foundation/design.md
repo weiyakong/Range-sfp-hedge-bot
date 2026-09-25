@@ -16,15 +16,19 @@ Every candidate is scanned as half-open `[candidate_start,candidate_start+5m)` u
 ## 4. Macro boundary model
 Every anchor preserves its original source coordinate separately from refined realized coordinate.
 
-Refinement is deterministic:
+Refinement is deterministic without inventing a unique timestamp when the source evidence supports a repeated-touch episode:
 - preserve all exact source-anchor-price aggTrade touches;
-- if one or more exact touches exist with complete approved coverage, select the earliest by `(event_time,agg_trade_id)`;
+- if exactly one exact touch exists with complete approved coverage, its `(event_time,agg_trade_id)` resolves the pivot;
+- if two or more exact touches exist, refined realized price is resolved but authoritative time/id remain unresolved; preserve the ordered evidence plus `first_touch`, `last_touch`, `touch_count`, and `touch_span` under status `repeated_exact_trade_touch`;
+- do not silently choose first, midpoint/average, or last touch as the authoritative boundary;
 - if no exact touch exists, a high pivot selects the maximum realized aggTrade price and a low pivot selects the minimum realized aggTrade price across all approved candidate windows;
 - preserve every row attaining that selected extremum;
 - if the selected extremum occurs once, its time/id resolves the pivot;
-- if the selected extremum repeats, realized pivot price is known but authoritative time/id remain unresolved pending the separately deferred tie-break decision. No implementation may invent that rule.
+- if the selected extremum repeats, realized pivot price is known but authoritative time/id remain unresolved pending any separately approved later rule.
 
-A resolved timestamp is exact only at aggTrade source granularity. For one authoritative pivot aggTrade key, create LEFT/RIGHT boundary fragments without changing canonical candles. Pivot aggregate belongs LEFT once; RIGHT begins from pivot price state and excludes that aggregate row. Multi-underlying aggregate is indivisible.
+Repeated-touch properties are descriptive research features and MAY later be tested for predictive value. They do not automatically define live trading entry/exit semantics.
+
+A resolved timestamp is exact only at aggTrade source granularity. For one authoritative pivot aggTrade key, create LEFT/RIGHT boundary fragments without changing canonical candles. Pivot aggregate belongs LEFT once; RIGHT begins from pivot price state and excludes that aggregate row. Multi-underlying aggregate is indivisible. Repeated-touch/repeated-extreme cases have no authoritative key and therefore no exact LEFT/RIGHT split.
 
 ## 5. Bounded aggTrade access
 Candidate and fragment calculations are small logical requests and SHALL NOT cause repeated whole-day/month source parsing.
@@ -44,7 +48,7 @@ Exact macro close-path at resolution R is `refined start price -> chronological 
 
 Exact macro volume/activity uses start RIGHT fragment + complete interior intervals + end LEFT fragment, without full boundary candle duplication.
 
-If boundary time remains unresolved, exact boundary metrics are null and fallback uses only fixed-grid intervals guaranteed inside all possible boundary occurrences. If no guaranteed interior slot exists, counts are zero and boundary-dependent metrics are null with explicit status.
+If boundary time remains unresolved, including repeated-touch episodes, exact boundary metrics are null and fallback uses only fixed-grid intervals guaranteed inside all possible boundary occurrences. If no guaranteed interior slot exists, counts are zero and boundary-dependent metrics are null with explicit status.
 
 Macro RV remains deferred.
 
@@ -57,7 +61,7 @@ Fixed/rolling closed-data features are causal. Macro legs/anchors/aggTrade evide
 ## 9. Pipeline stages
 S00 contract/config; S01 inventory; S02 canonical1m; S03 gaps/segments; S04 fixed candles; S05 geometry; S06 cross-TF; S07 macro sources/refinement; S08 observations; S09 speed; S10 pairs; S11 path/activity; S12 overlap; S13 volume/volatility; S14 macro context; S15 retracement; S16 dictionary/manifests; S17 independent QA; S18 bounded extraction smoke.
 
-S07 validates checksums/counts, all 145 windows, aggTrade-only source rule, bounded archive access, exact Decimal identity, earliest-exact-touch rule, no-exact directional-extremum rule, all supporting evidence, canonical containment when time resolves, and uncertainty when it does not.
+S07 validates checksums/counts, all 145 windows, aggTrade-only source rule, bounded archive access, exact Decimal identity, unique exact-touch resolution, repeated exact-touch preservation without arbitrary timestamp selection, no-exact directional-extremum rule, all supporting evidence, canonical containment when time resolves, and uncertainty when it does not.
 
 S13 materializes both `atr14_sma` and `atr14_wilder`. TR requires valid adjacent previous close inside the same source segment/resolution. A continuity break resets state; first following TR is null and both ATRs require 14 new consecutive valid TRs.
 
