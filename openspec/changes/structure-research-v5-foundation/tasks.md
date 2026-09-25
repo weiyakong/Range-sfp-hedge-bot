@@ -7,7 +7,7 @@ Implement in order. Do not launch full-history production without explicit appro
 ### T00 Source/config truth
 Freeze canonical boundary/gap evidence, macro checksum, localization checksum, approved aggTrade source rule, price-unit rule, calculation matrices, output/checkpoint roots and code/config hash.
 ### T01 Typed schemas
-Implement all logical tables including macro anchors, aggTrade evidence, boundary fragments and 118 macro retracement relationships.
+Implement all logical tables including macro anchors, aggTrade evidence, boundary fragments and 118 macro retracement relationships. Macro-anchor schema must explicitly support repeated exact-touch episodes with unresolved authoritative time/id plus first/last touch, touch count and touch span.
 ### T02 Stable ids
 Implement UUIDv5 identities including macro anchors/retracements/fragments and exact golden fixtures.
 
@@ -37,16 +37,18 @@ Use already downloaded official same-market Binance BTCUSDT `aggTrades`; raw ind
 For every anchor:
 - scan all approved candidate windows;
 - preserve every exact source-anchor-price aggTrade touch ordered by `(event_time,agg_trade_id)`;
-- if exact touches exist, select earliest exact touch;
+- if exactly one exact touch exists with complete coverage, resolve price/time/id to that row;
+- if two or more exact touches exist, classify `repeated_exact_trade_touch`: resolve price only, preserve all rows, `first_touch_time/id`, `last_touch_time/id`, `touch_count`, and `touch_span`, and leave authoritative time/id unresolved;
+- do not silently choose first, midpoint/average, or last touch as authoritative boundary;
 - otherwise high pivot selects maximum realized aggTrade price and low pivot selects minimum realized aggTrade price;
 - preserve every occurrence of selected extremum;
 - unique selected extremum resolves price/time/id;
-- repeated selected extremum preserves price but leaves time/id unresolved pending separate explicit tie-break;
+- repeated selected extremum preserves price but leaves time/id unresolved pending any separately approved later rule;
 - preserve source anchor coordinate separately;
 - use exact Decimal/fixed-point identity;
 - preserve `buyer_is_maker`.
 
-Missing/incomplete aggTrades are reported; never switch automatically to raw trades.
+Missing/incomplete aggTrades are reported; never switch automatically to raw trades. Repeated-touch properties remain descriptive features available for later research and do not by themselves define live trading semantics.
 
 ### T22A Bounded aggTrade source reader
 Implement one bounded official-aggTrade access layer used by candidate refinement and fragment construction.
@@ -63,17 +65,19 @@ Mandatory:
 - instrument counters for archive opens, bytes/rows scanned, requested interval, returned rows, cache hits/misses and peak buffered rows/bytes.
 
 ### T23 Shared macro anchors
-Create one `macro_anchor_id` per source event. Store source coordinate, localization, refinement method/status, refined realized price, resolved time/id when deterministic, evidence and uncertainty.
+Create one `macro_anchor_id` per source event. Store source coordinate, localization, refinement method/status, refined realized price, resolved time/id only when deterministic, all repeated-touch evidence and uncertainty.
 
 ### T24 Boundary fragments
 For one authoritative pivot aggTrade key create LEFT/RIGHT fragments. Pivot aggTrade belongs LEFT once; RIGHT begins from pivot price state and excludes pivot row. Multi-underlying aggregate is indivisible. Canonical candles unchanged.
+
+For repeated exact-touch or repeated selected-extremum cases there is no authoritative key, so do not create an exact LEFT/RIGHT split; use T25 fallback semantics.
 
 Boundary fragment identity is deterministic from `macro_anchor_id + side + calculation_resolution`; leg membership is separate context.
 
 Fragment source read MUST use T22A bounded 5m bucket reader and SHALL NOT load a complete day/month.
 
 ### T25 Unresolved-time fallback
-Do not force a split when time remains unresolved. Derive only guaranteed fixed-grid interior. If none exists, expected/observed counts are zero and boundary-dependent fallback metrics null with `no_unambiguous_interior`.
+Do not force a split when time remains unresolved. For repeated exact-touch cases preserve first/last exact touches as descriptive possible-boundary bounds, not as an authoritative selection. Derive only guaranteed fixed-grid interior. If none exists, expected/observed counts are zero and boundary-dependent fallback metrics null with `no_unambiguous_interior`.
 ### T26 Market/provenance
 Canonical market scope and historical macro provenance remain separate.
 
@@ -91,13 +95,13 @@ Approved matrices/Q sequence.
 ### T42 Refined macro close path
 For R in 5m/15m/1H/4H/1D: refined start pivot -> qualifying R closes -> refined end pivot if needed. Never mix aggTrade fragment path into TF path.
 ### T43 Boundary microstructure
-Persist separate aggregate-trade LEFT/RIGHT path/activity/volume metrics.
+Persist separate aggregate-trade LEFT/RIGHT path/activity/volume metrics for resolved pivots. Preserve repeated-touch episode descriptors separately where exact fragment split is unavailable.
 ### T44 Fallback macro path
 Only guaranteed fixed-grid constituents; Q begins with first eligible open.
 
 ## Phase 5 — Overlap
 ### T50 Observation overlap
-Use exact self-contained formulas in `price-path-speed-and-overlap/spec.md`. Resolved macro uses typed non-overlapping sequence `start RIGHT fragment -> interiors -> end LEFT fragment` with same pair formulas/aggregation and no boundary-candle duplication. Fallback uses only guaranteed interior pairs.
+Use exact self-contained formulas in `price-path-speed-and-overlap/spec.md`. Compute overlap separately at every approved calculation resolution rather than collapsing the movement to a single preferred timeframe. Resolved macro uses typed non-overlapping sequence `start RIGHT fragment -> interiors -> end LEFT fragment` with same pair formulas/aggregation and no boundary-candle duplication. Fallback uses only guaranteed interior pairs.
 
 ## Phase 6 — Volume/volatility
 ### T60 Directional volume
@@ -115,17 +119,17 @@ Resolved: start RIGHT + interior + end LEFT. Fallback: guaranteed interior only.
 ### T70 Retrospective macro context
 Exact temporal fractions only with resolved endpoint times.
 ### T71 Retracement formula
-Direct percentage, no Fib.
+Direct percentage, no Fib in first-pass descriptive research.
 ### T72 Production retracement set
 Exactly 118 adjacent opposite-direction shared-pivot relationships; 9 discontinuous excluded.
 
 ## Phase 8 — Dictionary/manifests/extraction
 ### T80 Feature dictionary
-Define exact/fallback/source/aggTrade semantics once.
+Define exact/fallback/source/aggTrade/repeated-touch semantics once.
 ### T81 Manifests
-All logical tables including aggTrade evidence/fragments.
+All logical tables including aggTrade evidence/fragments/repeated-touch descriptors.
 ### T82 Extraction
-Support macro source/localization/refinement/fallback/fragments/retracements without hidden recomputation/raw substitution. Use partition/column pruning and bounded source access where source archives are involved.
+Support macro source/localization/refinement/fallback/fragments/retracements/repeated-touch episodes without hidden recomputation/raw substitution. Use partition/column pruning and bounded source access where source archives are involved.
 
 ## Phase 9 — Checkpoint/resume
 ### T90/T91/T92
@@ -133,7 +137,7 @@ Persist validated collected/derived data no later than every 20 minutes so <=20 
 
 ## Phase 10 — QA
 ### T100 Golden suite
-Implement/pass synchronized golden suite. Fixtures are self-contained.
+Implement/pass synchronized golden suite. Fixtures are self-contained and include unique exact touch, repeated exact touch, unique no-exact extremum, and repeated no-exact extremum cases.
 ### T100A Bounded-I/O QA gate
 Instrumented tests MUST fail if:
 - one fragment request reads/parses a complete aggTrade day/month instead of only its 5m bucket;
@@ -147,13 +151,13 @@ The QA report records source interval requested, archive/member, scanned/returne
 ### T101 Independent artifact QA
 Inspect persisted Parquet/manifests, not builder flags.
 ### T102 Forbidden labels/names
-No impulse/correction/range/chop/Fib/FibTime/Elliott labels.
+No impulse/correction/range/chop/Fib/FibTime/Elliott labels in first-pass descriptive feature construction.
 ### T103 Reference trust
 Legacy inconsistent higher-TF caches remain diagnostic unless independently validated.
 
 ## Phase 11 — Bounded smoke only
 ### T110
-Representative continuous/gap/boundary/off-grid-source and macro exact/extreme/repeated-extreme fixtures, including at least one large aggTrade archive whose fragment request proves bounded 5m streaming access.
+Representative continuous/gap/boundary/off-grid-source and macro unique-exact/repeated-exact/unique-extreme/repeated-extreme fixtures, including at least one large aggTrade archive whose fragment request proves bounded 5m streaming access.
 ### T111
 Run bounded smoke after all applicable golden and bounded-I/O tests pass.
 ### T112
