@@ -19,7 +19,7 @@ Observed approved data only. Preserve raw timestamp provenance; canonicalize off
 ### T12 Gaps/segments
 Recompute strict canonical gaps/segments. Real gaps/market transition split continuity; archive changes do not.
 ### T13 Fixed UTC grid
-Build 5m/15m/1H/4H/1D from canonical 1m with explicit incomplete boundary/gap rows.
+Build 5m/15m/1H/4H/12H/1D from canonical 1m with explicit incomplete boundary/gap rows. Primary first-pass macro-signature research resolutions are 1D/12H/4H. Do not add 1W to the primary grid in this pass; reserve it for optional later coarse-context robustness work on sufficiently long macro segments.
 ### T14 Geometry
 Complete target candle geometry.
 ### T15 Cross-TF map
@@ -93,7 +93,7 @@ Same-segment/resolution/exact adjacency.
 ### T41 Fixed/rolling path/activity
 Approved matrices/Q sequence.
 ### T42 Refined macro close path
-For R in 5m/15m/1H/4H/1D: refined start pivot -> qualifying R closes -> refined end pivot if needed. Never mix aggTrade fragment path into TF path.
+For R in 5m/15m/1H/4H/12H/1D: refined start pivot -> qualifying R closes -> refined end pivot if needed. Never mix aggTrade fragment path into TF path. First-pass macro-signature comparisons must export the same objective feature family for 1D/12H/4H for every eligible macro segment.
 ### T43 Boundary microstructure
 Persist separate aggregate-trade LEFT/RIGHT path/activity/volume metrics for resolved pivots. Preserve repeated-touch episode descriptors separately where exact fragment split is unavailable.
 ### T44 Fallback macro path
@@ -101,7 +101,7 @@ Only guaranteed fixed-grid constituents; Q begins with first eligible open.
 
 ## Phase 5 — Overlap
 ### T50 Observation overlap
-Use exact self-contained formulas in `price-path-speed-and-overlap/spec.md`. Compute overlap separately at every approved calculation resolution rather than collapsing the movement to a single preferred timeframe. Resolved macro uses typed non-overlapping sequence `start RIGHT fragment -> interiors -> end LEFT fragment` with same pair formulas/aggregation and no boundary-candle duplication. Fallback uses only guaranteed interior pairs.
+Use exact self-contained formulas in `price-path-speed-and-overlap/spec.md`. Compute overlap separately at every approved calculation resolution rather than collapsing the movement to a single preferred timeframe. For the first-pass macro-signature study, 1D/12H/4H are mandatory comparison resolutions for each eligible macro segment. Resolved macro uses typed non-overlapping sequence `start RIGHT fragment -> interiors -> end LEFT fragment` with same pair formulas/aggregation and no boundary-candle duplication. Fallback uses only guaranteed interior pairs.
 
 ## Phase 6 — Volume/volatility
 ### T60 Directional volume
@@ -129,7 +129,7 @@ Define exact/fallback/source/aggTrade/repeated-touch semantics once.
 ### T81 Manifests
 All logical tables including aggTrade evidence/fragments/repeated-touch descriptors.
 ### T82 Extraction
-Support macro source/localization/refinement/fallback/fragments/retracements/repeated-touch episodes without hidden recomputation/raw substitution. Use partition/column pruning and bounded source access where source archives are involved.
+Support macro source/localization/refinement/fallback/fragments/retracements/repeated-touch episodes without hidden recomputation/raw substitution. Use partition/column pruning and bounded source access where source archives are involved. Extraction must support side-by-side 1D/12H/4H feature output for the same macro segment.
 
 ## Phase 9 — Checkpoint/resume
 ### T90/T91/T92
@@ -157,7 +157,7 @@ Legacy inconsistent higher-TF caches remain diagnostic unless independently vali
 
 ## Phase 11 — Bounded smoke only
 ### T110
-Representative continuous/gap/boundary/off-grid-source and macro unique-exact/repeated-exact/unique-extreme/repeated-extreme fixtures, including at least one large aggTrade archive whose fragment request proves bounded 5m streaming access.
+Representative continuous/gap/boundary/off-grid-source and macro unique-exact/repeated-exact/unique-extreme/repeated-extreme fixtures, including at least one large aggTrade archive whose fragment request proves bounded 5m streaming access. Include at least one macro segment long enough to compare 1D/12H/4H feature outputs.
 ### T111
 Run bounded smoke after all applicable golden and bounded-I/O tests pass.
 ### T112
