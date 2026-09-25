@@ -1,149 +1,275 @@
-# План действий после первичного анализа макро-ног
+# План исследования структуры после первичной макроразметки
 
-Цель: после того как сбор данных и разметка будут признаны корректными, пройти фиксированную последовательность исследований и не менять порядок без отдельного решения.
+## Текущее состояние знания
 
-## 0. Спроектировать и написать extraction tool
+На текущем этапе у нас есть только:
+- подтверждённые точки макроструктуры `A, B, C, D, ...`;
+- исторические отрезки движения цены между соседними макроточками `A→B`, `B→C`, `C→D`, ...;
+- историческая разметка того, какие из этих macro segments относятся к макроимпульсному и макрокоррекционному движению.
 
-До основного исследовательского этапа нужен отдельный инструмент извлечения выборок из итогового датасета. Он должен позволять воспроизводимо формировать выборки по parent/child structure, типу режима, направлению, таймфрейму, фазе ноги, структурному исходу и нужным feature-полям.
+У нас **пока нет доказанного понятия `parent leg`, `child leg` или внутренней иерархии движений**. Эти понятия нельзя использовать как исходную истину. Они могут появиться позже только как результат исследования.
+
+Главная задача первого этапа: понять, чем объективно отличается поведение цены и свечей внутри известных макроимпульсных и макрокоррекционных segments, и проверить, воспроизводятся ли найденные признаки на меньших масштабах.
+
+## 0. Подготовить extraction tool
+
+До основного исследования нужен воспроизводимый инструмент извлечения выборок из итогового датасета.
+
+Он должен позволять выбирать:
+- macro segment ID и его границы A→B;
+- исторический macro movement class из утверждённой макроразметки;
+- направление движения;
+- calculation resolution;
+- фазу внутри macro segment по относительному времени и/или относительному ценовому прогрессу;
+- необходимые objective feature-поля;
+- период рынка / regime context, если он уже определён внешней утверждённой макроразметкой.
 
 Обязательные требования:
-- одинаковый запрос должен давать воспроизводимый результат;
-- фильтры и определения выборки должны сохраняться вместе с результатом;
-- extraction tool не должен сам решать, что является хорошим сигналом;
-- исследовательские пороги не вшиваются в tool заранее;
-- каждый запрос должен соответствовать конкретной исследовательской гипотезе;
-- результат должен сохранять parent/child IDs и временные границы для проверки на графике;
-- исключить look-ahead.
+- одинаковый запрос даёт воспроизводимый результат;
+- сохраняются фильтры и определение выборки;
+- tool не решает сам, что является хорошим сигналом;
+- исследовательские пороги не вшиваются заранее;
+- каждый запрос соответствует конкретной гипотезе;
+- сохраняются macro segment ID, A/B anchors и временные границы для проверки на графике;
+- исключается look-ahead для causal features;
+- retrospective macro labels остаются research labels и не становятся live features.
 
-Результат этапа: спецификация extraction tool, реализация, тесты и каталог стандартных исследовательских запросов.
+## 1. Primary macro-signature study: 1D / 12H / 4H
 
-## 1. Зафиксировать сигнатуру макро-импульса и его завершения
+Для каждого известного macro segment A→B рассчитать одинаковый набор objective movement features на трёх основных candle resolutions:
+- `1D`;
+- `12H`;
+- `4H`.
 
-Определить, какие признаки и их динамика действительно различают active impulse, mature/late impulse, deceleration и transition в correction/range.
+Это три параллельных представления **одного и того же macro segment**, а не три разные истинные структуры рынка.
 
-Анализировать не только агрегаты всей ноги, но и изменение признаков по ходу движения.
+На каждом resolution считать как минимум:
+- range overlap и body overlap между соседними свечами;
+- overlap Jaccard / overlap shares;
+- penetration / extension;
+- close-path и log close-path;
+- path efficiency;
+- counter-direction path;
+- alternation;
+- скорость и изменение скорости;
+- обновление экстремумов;
+- candle geometry: body/wick shares;
+- volatility / ATR-normalized measures;
+- volume/activity features, когда источник и coverage позволяют корректный расчёт.
 
-Результат: устойчивые признаки, направление их изменения, распределения и список неинформативных признаков.
+Цель: определить, на каком resolution и какие combinations features устойчиво различают известные macro impulse и macro correction segments.
 
-## 2. Разложить macro-legs на внутренние движения
+### Почему не выбирать один timeframe заранее
 
-Для каждой macro-leg построить child-структуру на меньших ТФ.
+Нельзя заранее считать 1D, 12H или 4H «правильным» structural timeframe. Исследование должно показать:
+- где свечей достаточно для статистически содержательного path/overlap анализа;
+- где macro behavior ещё не растворяется в локальном шуме;
+- какие признаки устойчивы между scales;
+- какие признаки специфичны для конкретного resolution.
 
-Сохранять:
-- parent_leg_id;
-- child_leg_id;
-- тип parent-leg;
-- направления parent и child;
-- положение child внутри parent по цене и времени.
+### 1W
 
-Внутренние движения нельзя анализировать без parent-контекста.
+`1W` не входит в primary signature set на первом проходе.
 
-## 3. Нормализовать признаки между масштабами
+Причина: для многих macro segments недельных свечей будет слишком мало для устойчивого анализа overlap, alternation и динамики признаков.
 
-Для фрактального сравнения проверить нормализацию через ATR/volatility, амплитуду и длительность parent-leg, локальный range, относительную скорость и relative efficiency.
+`1W` сохраняется как optional coarse-context resolution для:
+- самых длинных macro segments;
+- многомесячных bull/bear regimes;
+- robustness checks после основного 1D/12H/4H исследования.
 
-Результат: признаки, которые можно корректно сравнивать между 4H, 1H, 15m, 5m и 1m.
+Недостаточное число недельных свечей не должно приводить к искусственным выводам.
 
-## 4. Проверить фрактальную повторяемость механики
+## 2. Исследовать динамику признаков внутри macro segment
 
-Проверить, повторяется ли на меньших масштабах последовательность:
+Анализировать не только агрегат A→B целиком.
 
-directional expansion → высокая efficiency/speed → потеря скорости → ухудшение обновления экстремумов → рост overlap/crossings/returns → compression → transition.
+Для каждого macro segment на 1D/12H/4H исследовать, как признаки меняются по мере движения:
+- начало;
+- середина;
+- поздняя часть;
+- область перед B.
+
+Фазы сначала задавать нейтрально, например относительными квантилями времени/ценового прогресса, без присвоения заранее семантических состояний `mature`, `decelerating` и т. п.
+
+Результат: распределения и траектории признаков, которые реально отличаются между историческими macro impulse и macro correction.
+
+## 3. Repeated-touch macro boundaries
+
+Repeated exact-touch pivot episode является отдельным типом boundary evidence согласно canonical macro-trade-boundary-refinement contract.
+
+Для repeated touch:
+- price anchor считается известным;
+- единственный authoritative timestamp не выбирается;
+- сохраняются first touch, last touch, touch count, touch span и все supporting aggTrades;
+- exact time-dependent metrics считаются только там, где boundary resolved;
+- fallback использует только интервалы, гарантированно лежащие внутри segment при любом допустимом boundary time.
+
+Дополнительно разрешается research-only boundary sensitivity analysis:
+- посчитать, насколько исследовательские результаты меняются при использовании first-touch bound и last-touch bound;
+- эти варианты не становятся canonical pivot timestamp;
+- если вывод стабилен при обоих bounds, считать его robust к boundary ambiguity;
+- если вывод меняется, маркировать feature/result как boundary-sensitive.
+
+## 4. Найти macro impulse/correction signatures
+
+После сравнения всех macro segments определить:
+- какие признаки действительно различают исторические macro impulse vs correction;
+- направление изменения признаков;
+- устойчивость по разным эпохам BTC;
+- устойчивость на 1D/12H/4H;
+- список неинформативных признаков;
+- признаки, работающие только после тонкой подгонки.
+
+Не создавать формальные live states до этого этапа.
+
+## 5. Только после macro signature discovery проверить перенос на меньшие масштабы
+
+После того как macro impulse/correction signatures найдены, проверить, встречаются ли похожие objective movement classes внутри macro segments на меньших resolutions.
+
+Первый кандидат для такого исследования — `1H`, затем `15m`; `5m/1m` оставлять для более позднего tactical/execution layer, если данные покажут необходимость.
+
+На этом этапе ещё не предполагать `parent_leg_id` / `child_leg_id`.
+
+Задача:
+- найти внутренние directional movements объективным, отдельно утверждённым методом;
+- измерить их теми же normalized features;
+- проверить, похожи ли некоторые внутренние движения на найденную macro impulse signature, а другие — на macro correction signature;
+- проверить устойчивость аналогии статистически и visually на historical replay.
+
+Только если вложенная повторяемость подтверждается, можно вводить formal parent/child hierarchy.
+
+## 6. Проверить нормализацию между масштабами
+
+Для scale comparison проверить нормализацию через:
+- ATR / realized volatility;
+- амплитуду исследуемого движения;
+- elapsed time;
+- local range;
+- relative speed;
+- path efficiency;
+- relative overlap/penetration metrics.
+
+Результат: признаки, которые можно корректно сравнивать между 1D, 12H, 4H и затем 1H/15m.
+
+## 7. Проверить фрактальную гипотезу
+
+Мы не предполагаем заранее, что рынок фрактален в нужной для стратегии форме.
+
+После получения macro signatures проверить, повторяется ли на меньшем масштабе последовательность вроде:
+
+directional expansion → высокая efficiency/speed → изменение скорости → ухудшение обновления экстремумов → рост overlap/alternation/returns → compression/transition.
+
+Названия стадий здесь являются описанием гипотезы, а не готовыми labels.
+
+Результат:
+- scale-invariant features;
+- scale-dependent features;
+- отсутствие повторяемости, если данные её не подтверждают.
+
+## 8. Только после подтверждения вложенности построить hierarchy model
+
+Если данные показывают устойчивую вложенную структуру, отдельно спроектировать:
+- что является movement unit на каждом scale;
+- как определяется его начало и конец causal способом;
+- когда меньшее движение относится к более крупному;
+- как хранить направление и position-inside-larger-movement;
+- как избегать future leakage.
+
+Именно здесь, а не раньше, могут появиться `parent movement` / `child movement` или другие более подходящие термины.
+
+## 9. Проверить multi-timeframe согласованность
+
+После появления доказанной hierarchy определить:
+- какой scale меняется первым;
+- какие признаки являются ранним предупреждением;
+- какие дают позднее confirmation;
+- какие признаки противоречат друг другу между scales;
+- какие combinations полезны для tactical и structural decisions.
+
+## 10. Сформировать формальные states
+
+Только после анализа данных сформировать states вроде:
+- impulse-like active movement;
+- mature / decelerating movement;
+- correction-like movement;
+- possible range / transition;
+- continuation / reversal candidate.
+
+Финальные названия и границы должны следовать из результатов исследования.
+
+## 11. Добавить depth / retracement / Fibonacci как research features
+
+После появления causal movement hierarchy можно исследовать location/depth внутри более крупного движения.
+
+Fibonacci levels не считать истинными правилами входа заранее.
+
+Разрешено исследовать как features, например:
+- 0.382;
+- 0.5;
+- 0.618;
+- 0.786;
+- continuous retracement depth;
+- time retracement / duration ratios.
+
+Цель: проверить, меняется ли probability/outcome conditioning на depth и combined structure state.
+
+## 12. Проверить устойчивость результатов
 
 Проверять отдельно:
-- child-импульсы внутри macro-импульса;
-- child-импульсы внутри macro-correction;
-- движения по направлению parent;
-- движения против направления parent.
-
-Результат: scale-invariant признаки и признаки, зависящие от конкретного ТФ.
-
-## 5. Исследовать локальные импульсы внутри коррекций
-
-Выбрать выраженные child-импульсы внутри macro-correction и определить их начало, развитие, замедление и следующий structural outcome.
-
-Нас интересует не само замедление, а то, что происходит после него.
-
-## 6. Разделить два разных исхода замедления
-
-A. child-импульс закончился, но parent-correction продолжается.
-
-B. child-импульс закончился одновременно с завершением всей parent-correction и начинается возврат к parent macro-impulse.
-
-Сравнить случаи по положению внутри parent, depth/time, предыдущей child-структуре, Fib/FibTime, structural/overlay levels, speed/efficiency, extremums, overlap/compression, volume/volatility и MTF-поведению.
-
-Результат: признаки, различающие конец отдельной child-leg и конец всей parent-correction.
-
-## 7. Проверить multi-timeframe согласованность
-
-Определить порядок появления признаков на младшем, среднем и старшем ТФ и отделить ранние предупреждения от позднего подтверждения.
-
-Результат: MTF-последовательность для tactical и structural gate.
-
-## 8. Сформировать формальные состояния
-
-Только после анализа данных сформировать состояния вроде:
-- impulse_active;
-- impulse_mature;
-- impulse_decelerating;
-- possible_range;
-- transition;
-- correction_active;
-- parent_correction_may_be_ending;
-- impulse_finished_confirmed.
-
-Названия и границы заранее не фиксировать: они должны следовать из результатов исследования.
-
-## 9. Разделить ранний tactical signal и позднее structural confirmation
-
-Не смешивать раннее обнаружение deceleration/possible_range для RangeBot с окончательным подтверждением завершения macro-impulse или parent-correction.
-
-Результат: tactical gate, structural confirmation gate и условия отмены каждого состояния.
-
-## 10. Проверить устойчивость результатов
-
-Проверять на разных периодах, bullish/bearish режимах, high/low volatility, trend/range, spot/futures где возможно и на данных, не использованных при подборе порогов.
-
-Проверить чувствительность к gaps, качеству свечей, ТФ, длинам окон и segmentation thresholds.
+- разные периоды;
+- bullish/bearish historical macro regimes;
+- high/low volatility;
+- modern BTC era vs older history;
+- out-of-sample periods;
+- sensitivity к gaps, data quality, timeframe, window lengths и segmentation assumptions.
 
 Признак, работающий только после тонкой подгонки, считать слабым.
 
-## 11. Проверить практическую ценность модели
+## 13. Проверить практическую ценность модели
 
-Для каждого состояния измерить не только classification accuracy, но и:
-- вероятность continuation parent direction;
-- вероятность range;
-- вероятность continuation correction;
+Для каждого candidate state измерить:
+- probability continuation в направлении более крупного подтверждённого movement context;
+- probability correction continuation;
+- probability reversal/transition;
 - последующий размер движения;
 - time-to-confirmation;
 - MAE/MFE;
-- ложные ранние включения RangeBot/ImpulseBot.
+- false early switches;
+- robustness после fees/slippage для будущих strategy hypotheses.
 
-## 12. Формализовать правила для ботов
+## 14. Формализовать правила для ботов
 
-После завершения исследования оформить отдельную спецификацию и определить:
-- что получает RangeBot;
-- что получает ImpulseBot;
-- что остаётся в общем regime/structure layer;
-- какие признаки context-only и не должны сами запускать торговое действие.
+Только после research validation оформить отдельную спецификацию:
+- regime/structure layer;
+- RangeBot;
+- ImpulseBot или другое фактически подтверждённое разделение;
+- context-only features;
+- action-triggering features;
+- risk layer.
 
-## 13. Провести контрольный historical replay
+## 15. Контрольный historical replay
 
-На выбранных исторических участках проверить:
-- какой state алгоритм видел бы в каждый момент;
-- момент переключения;
+На выбранных historical periods проверить:
+- что causal algorithm реально знал в каждый момент;
+- момент изменения state;
 - отсутствие future leakage;
-- отсутствие state-flapping;
-- соответствие алгоритма реальной структуре на графике.
+- отсутствие недопустимого state-flapping;
+- соответствие calculated state реальному chart context;
+- отдельно repeated-touch boundary-sensitive cases.
 
-Только после этого переходить к production-логике ботов.
+Только после этого переходить к production trading logic.
 
 ---
 
 ## Главный принцип
 
-Мы не предполагаем заранее, что рынок фрактален в нужной нам форме. Мы проверяем это на данных.
+Текущая известная структура:
 
-Искомая цепочка:
+`macro points A/B/C/... → known historical macro segments A→B/B→C/...`
 
-extraction tool → macro-структура → child-структура → нормализованное сравнение масштабов → проверка повторяемости → parent/child context → различение structural outcomes → формальные состояния → out-of-sample validation → правила RangeBot / ImpulseBot.
+Дальше исследование должно идти так:
+
+`macro segments → 1D/12H/4H objective signatures → impulse/correction distinction → within-segment feature dynamics → test recurrence on 1H/15m → only if supported: hierarchy → MTF causal states → out-of-sample validation → strategy rules`.
+
+Не вводить `parent/child` как факт до того, как вложенная структура подтверждена данными.
