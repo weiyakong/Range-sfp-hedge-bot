@@ -31,7 +31,7 @@ SCHEMA_VERSION = "canonical-futures-candles-v1"
 MARKET = "binance_usdt_m_futures"
 INSTRUMENT = "BTCUSDT"
 MINUTE_MS = 60_000
-KNOWN_GAP_MS = 1_567_970_400_000  # 2019-09-08T19:00:00Z
+KNOWN_GAP_MS = 1_567_969_200_000  # 2019-09-08T19:00:00Z
 NUMERIC_FIELDS = (
     "open",
     "high",
@@ -50,9 +50,21 @@ ADDITIVE_FIELDS = (
     "taker_buy_quote_volume",
 )
 TIMEFRAMES = {
+    "3m": 3,
+    "5m": 5,
+    "15m": 15,
     "4h": 240,
     "12h": 720,
     "1d": 1440,
+}
+SOURCE_CONTRACT = {
+    "market": "USDT-M perpetual futures",
+    "symbol": "BTCUSDT",
+    "timeframe": "1m",
+    "strict_start_utc": "2019-09-08T17:57:00Z",
+    "strict_end_utc": "2026-09-25T23:59:00Z",
+    "observed_rows": 3_706_922,
+    "known_real_gaps": ["2019-09-08T19:00:00Z"],
 }
 RAW_FIELDS = (
     "open_time",
@@ -537,23 +549,23 @@ def structural_qa(rows: list[dict], resolution: str, expected: int, source_end_m
 
 
 def aggregate_selected_rows(
-    manifest: dict, selected: dict[str, set[int]]
+    manifest: dict, selected: dict[str, set[int]], timeframes: dict[str, int]
 ) -> dict[str, dict[int, dict]]:
     windows = []
     for resolution, starts in selected.items():
-        duration = TIMEFRAMES[resolution] * MINUTE_MS
+        duration = timeframes[resolution] * MINUTE_MS
         windows.extend((start, start + duration - MINUTE_MS) for start in starts)
     source_start_ms = parse_utc(manifest["dataset"]["strict_start_utc"])
     accumulators = {
         resolution: {
-            start: CandleAccumulator(resolution, TIMEFRAMES[resolution], source_start_ms, {KNOWN_GAP_MS}, [])
+            start: CandleAccumulator(resolution, timeframes[resolution], source_start_ms, {KNOWN_GAP_MS}, [])
             for start in starts
         }
         for resolution, starts in selected.items()
     }
     for row in iter_source_rows(manifest, windows):
         timestamp = int(row[0])
-        for resolution, expected in TIMEFRAMES.items():
+        for resolution, expected in timeframes.items():
             start = bucket_start_ms(timestamp, expected)
             target = accumulators[resolution].get(start)
             if target is not None:
@@ -582,16 +594,16 @@ def values_match(left: dict, right: dict, *, tolerant: bool = False) -> bool:
     return True
 
 
-def golden_qa(manifest: dict, derived: dict[str, list[dict]]) -> dict:
+def golden_qa(manifest: dict, derived: dict[str, list[dict]], timeframes: dict[str, int]) -> dict:
     selected: dict[str, set[int]] = {}
-    for resolution, expected in TIMEFRAMES.items():
+    for resolution, expected in timeframes.items():
         selected[resolution] = {
             bucket_start_ms(parse_utc("2020-01-01T00:00:00Z"), expected),
             bucket_start_ms(KNOWN_GAP_MS, expected),
             bucket_start_ms(parse_utc("2024-01-01T00:00:00Z"), expected),
             derived[resolution][-1]["start_time_ms"],
         }
-    fresh = aggregate_selected_rows(manifest, selected)
+    fresh = aggregate_selected_rows(manifest, selected, timeframes)
     errors = []
     checks = []
     for resolution, starts in selected.items():
@@ -621,122 +633,351 @@ def aggregate_children(children: list[dict], start: int, duration_ms: int) -> di
     }
 
 
-def cross_timeframe_qa(derived: dict[str, list[dict]]) -> dict:
-    errors_4h_12h = []
-    errors_12h_1d = []
-    by_4h = {row["start_time_ms"]: row for row in derived["4h"]}
-    by_12h = {row["start_time_ms"]: row for row in derived["12h"]}
-    for parent in derived["12h"]:
-        if not parent["complete"]:
-            continue
-        start = parent["start_time_ms"]
-        children = [by_4h.get(start + index * 4 * 60 * MINUTE_MS) for index in range(3)]
-        if any(child is None or not child["complete"] for child in children):
-            errors_4h_12h.append(f"children:{utc_iso(start)}")
-            continue
-        aggregate = aggregate_children(children, start, 12 * 60 * MINUTE_MS)
-        if not values_match(parent, aggregate, tolerant=True):
-            errors_4h_12h.append(f"values:{utc_iso(start)}")
-    for parent in derived["1d"]:
-        if not parent["complete"]:
-            continue
-        start = parent["start_time_ms"]
-        children = [by_12h.get(start + index * 12 * 60 * MINUTE_MS) for index in range(2)]
-        if any(child is None or not child["complete"] for child in children):
-            errors_12h_1d.append(f"children:{utc_iso(start)}")
-            continue
-        aggregate = aggregate_children(children, start, 24 * 60 * MINUTE_MS)
-        if not values_match(parent, aggregate, tolerant=True):
-            errors_12h_1d.append(f"values:{utc_iso(start)}")
+def cross_timeframe_qa(derived: dict[str, list[dict]], relationships: Sequence[tuple[str, str]]) -> dict:
+    result = {}
+    for child_resolution, parent_resolution in relationships:
+        errors = []
+        child_minutes = TIMEFRAMES[child_resolution]
+        parent_minutes = TIMEFRAMES[parent_resolution]
+        if parent_minutes % child_minutes:
+            raise ValueError(f"Non-nested cross-timeframe relationship: {child_resolution}->{parent_resolution}")
+        child_count = parent_minutes // child_minutes
+        by_child = {row["start_time_ms"]: row for row in derived[child_resolution]}
+        for parent in derived[parent_resolution]:
+            if not parent["complete"]:
+                continue
+            start = parent["start_time_ms"]
+            children = [by_child.get(start + index * child_minutes * MINUTE_MS) for index in range(child_count)]
+            if any(child is None or not child["complete"] for child in children):
+                errors.append(f"children:{utc_iso(start)}")
+                continue
+            aggregate = aggregate_children(children, start, parent_minutes * MINUTE_MS)
+            if not values_match(parent, aggregate, tolerant=True):
+                errors.append(f"values:{utc_iso(start)}")
+        result[f"{child_resolution}_to_{parent_resolution}"] = {
+            "status": "PASS" if not errors else "FAIL", "errors": errors
+        }
+    return result
+
+
+def verify_source_contract(manifest: dict, rows: int, first_timestamp: int | None, last_timestamp: int | None,
+                           gaps: list[dict], errors: list[str]) -> dict:
+    dataset = manifest.get("dataset", {})
+    for field, expected in SOURCE_CONTRACT.items():
+        if dataset.get(field) != expected:
+            errors.append(f"manifest_{field}")
+    if rows != SOURCE_CONTRACT["observed_rows"]:
+        errors.append("observed_row_count")
+    if first_timestamp != parse_utc(SOURCE_CONTRACT["strict_start_utc"]):
+        errors.append("first_timestamp")
+    if last_timestamp != parse_utc(SOURCE_CONTRACT["strict_end_utc"]):
+        errors.append("last_timestamp")
+    expected_gap = {
+        "previous": "2019-09-08T18:59:00Z",
+        "next": "2019-09-08T19:01:00Z",
+        "missing": 1,
+    }
+    if gaps != [expected_gap]:
+        errors.append("unexpected_gaps")
     return {
-        "4h_to_12h": {"status": "PASS" if not errors_4h_12h else "FAIL", "errors": errors_4h_12h},
-        "12h_to_1d": {"status": "PASS" if not errors_12h_1d else "FAIL", "errors": errors_12h_1d},
+        "status": "PASS" if not errors else "FAIL",
+        "rows": rows,
+        "first_utc": utc_iso(first_timestamp) if first_timestamp is not None else None,
+        "last_utc": utc_iso(last_timestamp) if last_timestamp is not None else None,
+        "gaps": gaps,
+        "errors": errors,
     }
 
 
-def build_and_validate(source_manifest_path: Path, data_root: Path, repo_root: Path) -> dict:
+def audit_source(manifest: dict) -> dict:
+    previous_timestamp = None
+    first_timestamp = None
+    source_rows = 0
+    source_gaps = []
+    source_errors = []
+    for row in iter_source_rows(manifest):
+        timestamp = int(row[0])
+        if previous_timestamp is not None and timestamp <= previous_timestamp:
+            source_errors.append(f"source_order_or_duplicate:{utc_iso(timestamp)}")
+        if timestamp % MINUTE_MS:
+            source_errors.append(f"source_off_grid:{utc_iso(timestamp)}")
+        if previous_timestamp is not None and timestamp - previous_timestamp != MINUTE_MS:
+            source_gaps.append({
+                "previous": utc_iso(previous_timestamp), "next": utc_iso(timestamp),
+                "missing": (timestamp - previous_timestamp) // MINUTE_MS - 1,
+            })
+        if first_timestamp is None:
+            first_timestamp = timestamp
+        previous_timestamp = timestamp
+        source_rows += 1
+    return verify_source_contract(manifest, source_rows, first_timestamp, previous_timestamp,
+                                  source_gaps, source_errors)
+
+
+def write_streamed_timeframe(manifest: dict, source_manifest_path: Path, source_manifest_sha: str,
+                             resolution: str, output_root: Path, repo_root: Path,
+                             build_timestamp: str) -> dict:
+    """Aggregate one resolution with one calendar-year buffer, then atomically publish it."""
+    final_dir = output_root / resolution
+    if final_dir.exists():
+        existing_manifest = final_dir / "manifest.json"
+        if existing_manifest.is_file():
+            existing = json.loads(existing_manifest.read_text(encoding="utf-8"))
+            if existing.get("source_manifest_sha256") == source_manifest_sha:
+                valid = all(Path(item["path"]).is_file() and sha256_file(Path(item["path"])) == item["sha256"]
+                            for item in existing.get("output_files", []))
+                if valid:
+                    expected = TIMEFRAMES[resolution]
+                    existing["timestamp_contract"] = {
+                        "start_time": "UTC bar open", "end_time": "UTC exclusive bar end"
+                    }
+                    existing["known_gap_affected_bar_count"] = sum(
+                        bucket_start_ms(parse_utc(gap), expected)
+                        >= bucket_start_ms(parse_utc(manifest["dataset"]["strict_start_utc"]), expected)
+                        for gap in manifest["dataset"]["known_real_gaps"]
+                    )
+                    atomic_json(existing_manifest, existing)
+                    return {"status": "reused", "manifest": existing}
+        raise FileExistsError(f"Existing output is not a validated reusable build: {final_dir}")
+
+    expected = TIMEFRAMES[resolution]
+    source_start_ms = parse_utc(manifest["dataset"]["strict_start_utc"])
+    temp_dir = output_root / f".{resolution}.build-{uuid.uuid4().hex}"
+    temp_dir.mkdir(parents=True)
+    accumulator = CandleAccumulator(resolution, expected, source_start_ms, {KNOWN_GAP_MS}, [])
+    output_files = []
+    incomplete_intervals = []
+    total_rows = complete_rows = 0
+
+    def write_year_buffer() -> None:
+        nonlocal total_rows, complete_rows
+        rows = accumulator.rows
+        if not rows:
+            return
+        year = datetime.fromtimestamp(rows[0]["start_time_ms"] / 1000, timezone.utc).year
+        if any(datetime.fromtimestamp(row["start_time_ms"] / 1000, timezone.utc).year != year for row in rows):
+            raise AssertionError(f"Mixed-year buffer for {resolution} {year}")
+        path = temp_dir / f"part-{year}.parquet"
+        pq.write_table(rows_to_table(rows), path, compression="zstd", compression_level=9,
+                       use_dictionary=["market", "instrument", "resolution", "incomplete_reason"],
+                       write_statistics=True)
+        output_files.append({"path": str(final_dir / path.name), "year": year, "rows": len(rows),
+                             "bytes": path.stat().st_size, "sha256": sha256_file(path)})
+        total_rows += len(rows)
+        complete_rows += sum(bool(row["complete"]) for row in rows)
+        incomplete_intervals.extend(
+            {"start_utc": utc_iso(row["start_time_ms"]), "reason": row["incomplete_reason"]}
+            for row in rows if not row["complete"]
+        )
+        rows.clear()
+
+    try:
+        for source in iter_source_rows(manifest):
+            source_year = datetime.fromtimestamp(int(source[0]) / 1000, timezone.utc).year
+            accumulator.add(source)
+            if accumulator.rows:
+                buffered_year = datetime.fromtimestamp(
+                    accumulator.rows[0]["start_time_ms"] / 1000, timezone.utc
+                ).year
+                if buffered_year < source_year:
+                    write_year_buffer()
+        accumulator.flush()
+        write_year_buffer()
+        if not output_files:
+            raise AssertionError(f"No output rows for {resolution}")
+        derived_manifest = {
+            "schema_version": SCHEMA_VERSION,
+            "aggregation_version": AGGREGATION_VERSION,
+            "build_timestamp_utc": build_timestamp,
+            "market": MARKET,
+            "instrument": INSTRUMENT,
+            "resolution": resolution,
+            "timestamp_contract": {"start_time": "UTC bar open", "end_time": "UTC exclusive bar end"},
+            "source_manifest_path": str(source_manifest_path),
+            "source_manifest_sha256": source_manifest_sha,
+            "source_coverage": {
+                "start_utc": manifest["dataset"]["strict_start_utc"],
+                "end_utc": manifest["dataset"]["strict_end_utc"],
+                "observed_rows": manifest["dataset"]["observed_rows"],
+            },
+            "output_coverage": {
+                "start_utc": utc_iso(parse_utc(manifest["dataset"]["strict_start_utc"]) // (expected * MINUTE_MS) * (expected * MINUTE_MS)),
+                "end_utc_exclusive": utc_iso(bucket_start_ms(parse_utc(manifest["dataset"]["strict_end_utc"]), expected) + expected * MINUTE_MS),
+            },
+            "total_rows": total_rows,
+            "complete_rows": complete_rows,
+            "incomplete_rows": total_rows - complete_rows,
+            "incomplete_intervals": incomplete_intervals,
+            "known_gaps": manifest["dataset"]["known_real_gaps"],
+            "partitioning": "year",
+            "parquet_compression": "zstd",
+            "output_files": output_files,
+            "code_version": {"git_commit_at_build": git_commit(repo_root), "pipeline_sha256": sha256_file(Path(__file__))},
+        }
+        atomic_json(temp_dir / "manifest.json", derived_manifest)
+        output_root.mkdir(parents=True, exist_ok=True)
+        os.replace(temp_dir, final_dir)
+        return {"status": "built", "manifest": derived_manifest}
+    except Exception:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+
+
+def iter_derived_rows(tf_dir: Path) -> Iterator[dict]:
+    for path in sorted(tf_dir.glob("part-*.parquet")):
+        for batch in pq.ParquetFile(path).iter_batches(batch_size=100_000):
+            for row in batch.to_pylist():
+                row["start_time_ms"] = int(row.pop("start_time").timestamp() * 1000)
+                row["end_time_ms"] = int(row.pop("end_time").timestamp() * 1000)
+                yield row
+
+
+def structural_qa_stream(tf_dir: Path, resolution: str, expected: int, source_end_ms: int) -> dict:
+    errors, starts = [], set()
+    previous_start = None
+    rows = complete = 0
+    last = None
+    duration = expected * MINUTE_MS
+    for row in iter_derived_rows(tf_dir):
+        start = row["start_time_ms"]
+        if previous_start is not None and start <= previous_start:
+            errors.append("non_monotonic_or_duplicates")
+        if start in starts:
+            errors.append("duplicates")
+        starts.add(start)
+        if start % duration:
+            errors.append(f"off_grid:{utc_iso(start)}")
+        numeric = [float(row[field]) for field in NUMERIC_FIELDS]
+        if not all(math.isfinite(value) for value in numeric):
+            errors.append(f"non_finite:{utc_iso(start)}")
+        if row["high"] < max(row["open"], row["close"]) or row["low"] > min(row["open"], row["close"]):
+            errors.append(f"invalid_ohlc:{utc_iso(start)}")
+        if row["high"] < row["low"] or any(row[field] < 0 for field in ADDITIVE_FIELDS):
+            errors.append(f"invalid_additive_or_range:{utc_iso(start)}")
+        if row["complete"] and row["constituent_count"] != expected:
+            errors.append(f"bad_complete_count:{utc_iso(start)}")
+        if not row["complete"] and not row["incomplete_reason"]:
+            errors.append(f"unexplained_incomplete:{utc_iso(start)}")
+        previous_start, last = start, row
+        rows += 1
+        complete += bool(row["complete"])
+    if last is None or last["start_time_ms"] != bucket_start_ms(source_end_ms, expected):
+        errors.append("missing_last_interval")
+    elif not last["complete"]:
+        errors.append("last_interval_incomplete")
+    return {"resolution": resolution, "status": "PASS" if not errors else "FAIL", "errors": errors,
+            "rows": rows, "complete": complete, "incomplete": rows - complete}
+
+
+def selected_derived_rows(tf_dir: Path, starts: set[int]) -> dict[int, dict]:
+    return {row["start_time_ms"]: row for row in iter_derived_rows(tf_dir) if row["start_time_ms"] in starts}
+
+
+def golden_qa_stream(manifest: dict, output_root: Path, timeframes: dict[str, int]) -> dict:
+    selected = {
+        resolution: {bucket_start_ms(parse_utc("2020-01-01T00:00:00Z"), expected),
+                     bucket_start_ms(KNOWN_GAP_MS, expected),
+                     bucket_start_ms(parse_utc("2024-01-01T00:00:00Z"), expected),
+                     bucket_start_ms(parse_utc(manifest["dataset"]["strict_end_utc"]), expected)}
+        for resolution, expected in timeframes.items()
+    }
+    fresh = aggregate_selected_rows(manifest, selected, timeframes)
+    errors, checks = [], []
+    for resolution, starts in selected.items():
+        stored = selected_derived_rows(output_root / resolution, starts)
+        for start in sorted(starts):
+            match = start in stored and values_match(stored[start], fresh[resolution][start])
+            checks.append({"resolution": resolution, "start_utc": utc_iso(start), "match": match})
+            if not match:
+                errors.append(f"{resolution}:{utc_iso(start)}")
+    return {"status": "PASS" if not errors else "FAIL", "errors": errors, "checks": checks}
+
+
+def cross_timeframe_qa_stream(output_root: Path, relationships: Sequence[tuple[str, str]]) -> dict:
+    result = {}
+    for child_resolution, parent_resolution in relationships:
+        errors = []
+        child_minutes, parent_minutes = TIMEFRAMES[child_resolution], TIMEFRAMES[parent_resolution]
+        child_count = parent_minutes // child_minutes
+        child_iter = iter_derived_rows(output_root / child_resolution)
+        child = next(child_iter, None)
+        for parent in iter_derived_rows(output_root / parent_resolution):
+            children = []
+            while child is not None and child["start_time_ms"] < parent["end_time_ms"]:
+                if child["start_time_ms"] >= parent["start_time_ms"]:
+                    children.append(child)
+                child = next(child_iter, None)
+            if not parent["complete"]:
+                continue
+            if len(children) != child_count or any(not row["complete"] for row in children):
+                errors.append(f"children:{utc_iso(parent['start_time_ms'])}")
+            elif not values_match(parent, aggregate_children(children, parent["start_time_ms"], parent_minutes * MINUTE_MS), tolerant=True):
+                errors.append(f"values:{utc_iso(parent['start_time_ms'])}")
+        result[f"{child_resolution}_to_{parent_resolution}"] = {
+            "status": "PASS" if not errors else "FAIL", "errors": errors
+        }
+    return result
+
+
+def build_and_validate(source_manifest_path: Path, data_root: Path, repo_root: Path,
+                       resolutions: Sequence[str] | None = None) -> dict:
     total_started = time.perf_counter()
     source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
     source_sha = sha256_file(source_manifest_path)
     source_start_ms = parse_utc(source_manifest["dataset"]["strict_start_utc"])
     source_end_ms = parse_utc(source_manifest["dataset"]["strict_end_utc"])
+    selected = tuple(resolutions or ("4h", "12h", "1d"))
+    unknown = sorted(set(selected) - set(TIMEFRAMES))
+    if not selected or unknown:
+        raise ValueError(f"Unsupported resolutions: {unknown}")
+    selected_timeframes = {resolution: TIMEFRAMES[resolution] for resolution in selected}
+    source_qa = audit_source(source_manifest)
+    if source_qa["status"] != "PASS":
+        raise RuntimeError(f"Canonical 1m source contract failed: {source_qa}")
     build_started = time.perf_counter()
-    accumulators = {
-        resolution: CandleAccumulator(resolution, expected, source_start_ms, {KNOWN_GAP_MS}, [])
-        for resolution, expected in TIMEFRAMES.items()
-    }
-    previous_timestamp = None
-    source_rows = 0
-    for row in iter_source_rows(source_manifest):
-        timestamp = int(row[0])
-        if previous_timestamp is not None and timestamp <= previous_timestamp:
-            raise ValueError(f"Source order/duplicate violation at {utc_iso(timestamp)}")
-        if timestamp % MINUTE_MS:
-            raise ValueError(f"Off-grid source timestamp: {utc_iso(timestamp)}")
-        previous_timestamp = timestamp
-        source_rows += 1
-        for accumulator in accumulators.values():
-            accumulator.add(row)
-    for accumulator in accumulators.values():
-        accumulator.flush()
-    if source_rows != source_manifest["dataset"]["observed_rows"]:
-        raise ValueError(f"Source row count mismatch: {source_rows}")
     build_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     output_root = data_root / "derived/BTCUSDT"
     write_results = {
-        resolution: write_timeframe(
-            accumulator.rows,
-            resolution,
-            output_root,
-            source_manifest_path,
-            source_sha,
-            source_manifest,
-            repo_root,
-            build_timestamp,
-        )
-        for resolution, accumulator in accumulators.items()
+        resolution: write_streamed_timeframe(source_manifest, source_manifest_path, source_sha, resolution,
+                                             output_root, repo_root, build_timestamp)
+        for resolution in selected
     }
     build_seconds = time.perf_counter() - build_started
 
     qa_started = time.perf_counter()
-    derived = {resolution: read_derived(output_root / resolution) for resolution in TIMEFRAMES}
     structural = {
-        resolution: structural_qa(derived[resolution], resolution, expected, source_end_ms)
-        for resolution, expected in TIMEFRAMES.items()
+        resolution: structural_qa_stream(output_root / resolution, resolution, expected, source_end_ms)
+        for resolution, expected in selected_timeframes.items()
     }
-    golden = golden_qa(source_manifest, derived)
-    cross = cross_timeframe_qa(derived)
+    golden = golden_qa_stream(source_manifest, output_root, selected_timeframes)
+    relationships = [pair for pair in (("3m", "15m"), ("5m", "15m"), ("4h", "12h"), ("12h", "1d"))
+                     if set(pair).issubset(selected)]
+    cross = cross_timeframe_qa_stream(output_root, relationships)
     qa_seconds = time.perf_counter() - qa_started
     passed = (
         all(result["status"] == "PASS" for result in structural.values())
         and golden["status"] == "PASS"
-        and cross["4h_to_12h"]["status"] == "PASS"
-        and cross["12h_to_1d"]["status"] == "PASS"
+        and all(result["status"] == "PASS" for result in cross.values())
     )
     report = {
         "status": "PASS" if passed else "FAIL",
         "source_manifest_path": str(source_manifest_path),
         "source_manifest_sha256": source_sha,
-        "source_rows": source_rows,
+        "source_rows": source_qa["rows"],
+        "source_qa": source_qa,
         "outputs": {
             resolution: {
                 "path": str(output_root / resolution),
                 "status": write_results[resolution]["status"],
-                "rows": len(derived[resolution]),
-                "complete": sum(row["complete"] for row in derived[resolution]),
-                "incomplete": sum(not row["complete"] for row in derived[resolution]),
+                "rows": structural[resolution]["rows"],
+                "complete": structural[resolution]["complete"],
+                "incomplete": structural[resolution]["incomplete"],
                 "bytes": sum(item["bytes"] for item in write_results[resolution]["manifest"]["output_files"]),
-                "first_interval_utc": utc_iso(derived[resolution][0]["start_time_ms"]),
-                "first_complete_interval_utc": utc_iso(next(row["start_time_ms"] for row in derived[resolution] if row["complete"])),
-                "last_complete_interval_utc": utc_iso(next(row["start_time_ms"] for row in reversed(derived[resolution]) if row["complete"])),
-                "last_interval_utc": utc_iso(derived[resolution][-1]["start_time_ms"]),
-                "incomplete_intervals": [
-                    {"start_utc": utc_iso(row["start_time_ms"]), "reason": row["incomplete_reason"]}
-                    for row in derived[resolution]
-                    if not row["complete"]
-                ],
+                "first_interval_utc": write_results[resolution]["manifest"]["output_coverage"]["start_utc"],
+                "last_interval_utc": utc_iso(source_end_ms // (selected_timeframes[resolution] * MINUTE_MS) * (selected_timeframes[resolution] * MINUTE_MS)),
+                "incomplete_intervals": write_results[resolution]["manifest"].get("incomplete_intervals", []),
             }
-            for resolution in TIMEFRAMES
+            for resolution in selected
         },
         "qa": {"structural": structural, "golden": golden, "cross_timeframe": cross},
         "runtime_seconds": {
@@ -745,14 +986,17 @@ def build_and_validate(source_manifest_path: Path, data_root: Path, repo_root: P
             "total": round(time.perf_counter() - total_started, 3),
         },
     }
-    atomic_json(data_root / "manifests/canonical_futures_candles_build_report.json", report)
+    report_name = "canonical_futures_candles_build_report.json" if selected == ("4h", "12h", "1d") else (
+        "canonical_futures_candles_" + "_".join(selected) + "_build_report.json"
+    )
+    atomic_json(data_root / f"manifests/{report_name}", report)
     if not passed:
         raise RuntimeError("Canonical candle QA failed; see build report")
     return report
 
 
-def stamp_git_commit(data_root: Path, commit: str) -> None:
-    for resolution in TIMEFRAMES:
+def stamp_git_commit(data_root: Path, commit: str, resolutions: Sequence[str]) -> None:
+    for resolution in resolutions:
         path = data_root / f"derived/BTCUSDT/{resolution}/manifest.json"
         manifest = json.loads(path.read_text(encoding="utf-8"))
         manifest["code_version"]["git_commit"] = commit
@@ -764,15 +1008,18 @@ def main() -> None:
     parser.add_argument("--source-manifest", type=Path)
     parser.add_argument("--data-root", type=Path, required=True)
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
+    parser.add_argument("--resolutions", nargs="+", choices=sorted(TIMEFRAMES))
     parser.add_argument("--stamp-git-commit")
     args = parser.parse_args()
     if args.stamp_git_commit:
-        stamp_git_commit(args.data_root, args.stamp_git_commit)
+        if not args.resolutions:
+            parser.error("--resolutions is required with --stamp-git-commit")
+        stamp_git_commit(args.data_root, args.stamp_git_commit, args.resolutions)
         print(json.dumps({"stamped_git_commit": args.stamp_git_commit}, indent=2))
         return
     if args.source_manifest is None:
         parser.error("--source-manifest is required for a build")
-    report = build_and_validate(args.source_manifest, args.data_root, args.repo_root)
+    report = build_and_validate(args.source_manifest, args.data_root, args.repo_root, args.resolutions)
     print(json.dumps(report, indent=2))
 
 
