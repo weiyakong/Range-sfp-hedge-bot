@@ -4,6 +4,14 @@ Version: **0.4.5**
 
 Range SFP Hedge Bot is a **TradingView visual analysis project**. Version 0.4.5 is a diagnostic release that keeps Relevant High / Low SFP logic strict while showing which source created each SFP level.
 
+## Data pipeline engineering rule
+
+Before any large-scale market-data build, resampling, collection, or feature-generation task, read and follow:
+
+`docs/DATA_PIPELINE_RULES.md`
+
+This is the canonical repository rule for memory-safe chunked/partitioned execution, incremental persistence, checkpoints at least every 20 minutes, streaming/bounded QA, atomic artifacts, and resumable long-running data jobs.
+
 ## Main purpose of v0.4.5
 
 Version 0.4.5 helps identify which Relevant/SFP sources are useful and which ones are noise:
