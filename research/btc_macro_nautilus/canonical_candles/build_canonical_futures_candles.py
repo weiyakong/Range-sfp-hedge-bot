@@ -875,7 +875,8 @@ def selected_derived_rows(tf_dir: Path, starts: set[int]) -> dict[int, dict]:
 
 def golden_qa_stream(manifest: dict, output_root: Path, timeframes: dict[str, int]) -> dict:
     selected = {
-        resolution: {bucket_start_ms(parse_utc("2020-01-01T00:00:00Z"), expected),
+        resolution: {bucket_start_ms(parse_utc(manifest["dataset"]["strict_start_utc"]), expected),
+                     bucket_start_ms(parse_utc("2020-01-01T00:00:00Z"), expected),
                      bucket_start_ms(KNOWN_GAP_MS, expected),
                      bucket_start_ms(parse_utc("2024-01-01T00:00:00Z"), expected),
                      bucket_start_ms(parse_utc(manifest["dataset"]["strict_end_utc"]), expected)}
