@@ -2,7 +2,7 @@
 
 This stage compares validated slowdown subsegments (`delta_speed_movement_rate_mean < 0`) before the next-subsegment direction is known. The observation contains only the current subsegment and its inbound transition; the next subsegment contributes only the canonical direction used to define `CONTINUATION` or `REVERSAL`.
 
-The primary population uses strong inbound boundaries. Weak boundaries are written separately as sensitivity evidence. Univariate outputs include Stage 2E raw deltas, validated ratios, and standardized magnitudes. The one multivariate diagnostic is fixed ridge logistic regression with leave-one-macro-leg-out validation; its model matrix uses complete current measures and raw deltas only.
+The primary population uses strong inbound boundaries. Weak boundaries are written separately as sensitivity evidence. Univariate outputs include Stage 2E raw deltas, validated ratios, and standardized magnitudes. The one multivariate diagnostic is fixed ridge logistic regression with leave-one-macro-leg-out validation; its model matrix uses complete current measures and raw deltas only. Signed net-movement fields remain in the univariate evidence but are excluded from that model because their sign carries current direction-relative-to-parent context. That context is reported and stratified separately in `direction_context_sensitivity.csv`.
 
 Generated artifacts are written outside Git under the supplied data root:
 

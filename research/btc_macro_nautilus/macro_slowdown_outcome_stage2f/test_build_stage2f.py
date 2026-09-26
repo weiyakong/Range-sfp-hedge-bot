@@ -6,6 +6,7 @@ class T(unittest.TestCase):
  def test_logistic_finite(self):self.assertTrue(np.isfinite(M.fit(np.array([[0.],[1.],[2.],[3.]]),np.array([0,0,1,1]))).all())
  def test_bootstrap_reproducible(self):self.assertEqual(M.bootstrap(np.array([1,2]),np.array([3,4]),1,20),M.bootstrap(np.array([1,2]),np.array([3,4]),1,20))
  def test_auc_known_order(self):self.assertEqual(M.auc(np.array([0,0,1,1]),np.array([.1,.2,.8,.9])),1.0)
+ def test_direction_context_not_in_model(self):self.assertTrue({'net_move','delta_net_log_move'}.isdisjoint(M.MODEL_PRED))
  def test_checksum_index_verifies(self):
   with tempfile.TemporaryDirectory() as d:
    p=Path(d);(p/'a.txt').write_text('a');(p/'b.txt').write_text('b')
