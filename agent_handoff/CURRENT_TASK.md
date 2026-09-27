@@ -2,13 +2,28 @@
 
 Task ID: `DERIV-COLLECTOR-001`
 
-Status: `PLANNED`
+Status: COMPLETED
 
-Active implementation owner: unassigned
+Active implementation owner: Antigravity
 
-Independent reviewer: unassigned
+Independent reviewer: Codex
 
 Last updated: 2026-09-27
+
+## Production deployment & verification summary
+
+- Production Worker deployed: `btc-derivatives-collector` (`https://btc-derivatives-collector.regjimeyle.workers.dev`).
+- Remote D1 migration applied: `0001_initial_schema.sql` on database `btc-derivatives` (UUID `eaefc1f7-7729-425d-84d6-60441db0833c`).
+- Cron schedule: `*/10 * * * *`.
+- Two consecutive natural scheduled runs verified in production:
+  - Run 1 (`dc002de6-ffb6-457a-b780-3df2bb594366`, 16:31:02 UTC): status `success`, bootstrap window (120 min) successful, 996 rows inserted.
+  - Run 2 (`dbb3db8f-96cc-4604-bd14-09c7af3511a5`, 16:40:52 UTC): status `success`, checkpoint catch-up successful (+9 min), 246 rows inserted.
+- Checkpoints progression verified: `covered_through_utc` advanced from `1790526600` (16:30 UTC) to `1790527140` (16:39 UTC) strictly aligned to closed 1-minute boundary.
+- Overlap handling is idempotent: duplicate normalized rows = 0 (`HAVING COUNT(*) > 1` returned 0 rows).
+- Selected markets verified: Binance, Bybit, OKX BTC/USDT perpetuals selected under `primary_usdt_v1` policy; zero non-USDT markets selected.
+- Missing data semantics verified: sparse liquidations preserved without synthetic zero-fills; OKX predicted funding correctly remains empty/null.
+- Production validation passed: 100% upstream HTTP 200 requests; zero CPU/resource-limit errors.
+
 
 ## Goal
 
