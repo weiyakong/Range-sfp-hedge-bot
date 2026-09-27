@@ -27,7 +27,7 @@ The intended conceptual pipeline is:
 
 `canonical candles -> raw pivots -> independent reactions -> reaction zones -> structural boundaries/ranges -> contextual overlays -> trading logic`
 
-Only the first stage is currently fixed. Later arrows remain research questions until explicitly promoted to FIXED status.
+Only the raw-pivot layer and the Stage 2I-B research architecture are currently fixed. The semantic rules that convert raw pivots into independent reactions remain under research.
 
 ---
 
@@ -270,7 +270,11 @@ Their purpose is to expose a central problem: many raw HIGH/LOW events may occur
 
 ## 7. Stage 2I-B — micro fluctuation vs independent reaction
 
-Status: **OPEN**
+Overall semantic status: **OPEN**
+
+Research architecture status: **FIXED — DUAL-LAYER APPROACH**
+
+The project has explicitly chosen to develop **both** a retrospective structural reference and a separate causal recognition layer. This architecture is canonical. The concrete algorithms inside B1 and B2 remain open until researched and approved.
 
 ### 7.1 Research question
 
@@ -290,50 +294,100 @@ The pivot near 61.5 may mark the end of a distinct downward movement and the sta
 
 Price equality or proximity alone does not decide this distinction.
 
-### 7.2 Diagnostics available from Stage A
+### 7.2 Fixed Stage B architecture
 
-Potentially informative measurements already exist or were reviewed, including:
+**FIXED:** Stage 2I-B is split into two layers.
 
-- incoming move size;
-- outgoing move size;
-- duration before/after pivot;
-- outgoing / incoming move ratio;
-- path efficiency;
-- persistence / alternation where canonical definitions exist;
-- local price span;
-- prior same-type extension;
-- later breach/survival diagnostics;
-- local volatility/activity context.
+#### Stage 2I-B1 — Retrospective structural reference
 
-These are **diagnostics**, not current Stage B rules.
+Purpose:
 
-No threshold may be inferred from a variable name alone.
+Use the full realized path around/after raw pivots to investigate which raw pivots actually separated distinct movements when viewed post factum.
 
-### 7.3 Open methodology questions
+B1 may use future-relative information because it is an offline research/reference layer.
 
-The Stage 2I-A review explicitly leaves these unresolved:
+B1 output is **not** a live signal and **not** a feature available at pivot time.
 
-1. representation/treatment of dual HIGH+LOW candles;
-2. denominator choice for any retracement-style measure;
-3. horizon and scale for concepts such as trapped / invalidated;
-4. retrospective segmentation versus a label available causally at `available_from`.
+Its role is to provide a transparent structural reference against which causal schemes can later be evaluated.
+
+The concrete B1 definition is still OPEN. Candidate retrospective families include:
+
+- two-sided retrospective prominence;
+- retrospective sequence segmentation;
+- refinements derived from Stage A diagnostics.
+
+B1 must compare plausible designs rather than silently choosing an arbitrary cutoff.
+
+#### Stage 2I-B2 — Causal recognition
+
+Purpose:
+
+Determine when and from which information available after `available_from` a live system could recognize the same type of independent reaction without access to future data.
+
+B2 must use only information genuinely available by each tested recognition time.
+
+B2 is evaluated against the B1 reference while keeping the information boundary strict.
+
+B2 must measure at least:
+
+- agreement with the retrospective reference;
+- false recognition / missed recognition;
+- recognition delay in bars/time;
+- sensitivity to market regime/scale;
+- treatment of right-edge unresolved cases;
+- whether performance is stable across time periods.
+
+Candidate causal families include:
+
+- causal confirmation-window independence;
+- causal rolling historical prominence;
+- later causal schemes justified by the B1 findings.
+
+The concrete B2 recognition rule is still OPEN.
+
+### 7.3 Hard separation between B1 and B2
+
+**FIXED.**
+
+Retrospective information used to construct B1 reference labels must never leak into B2 predictors or live inference.
+
+Every Stage B field/output must explicitly identify whether it is:
+
+- `reference/postevent` — allowed only for retrospective labeling/evaluation;
+- `causal` — available to a live recognizer at a stated time;
+- `metadata` — identifiers/provenance only.
+
+A B1 label can be used as a training/evaluation target only if its exact generation method and hindsight window are versioned and documented.
+
+A B1 diagnostic cannot be reused as a B2 feature merely because it predicts the B1 label.
+
+### 7.4 What remains open
+
+The dual-layer architecture resolves the previous either/or question of retrospective versus causal research: **the project will do both**.
+
+The following methodological questions remain OPEN:
+
+1. exact B1 retrospective reference definition;
+2. exact B2 causal confirmation/recognition definition;
+3. representation/treatment of dual HIGH+LOW candles;
+4. denominator choice for any retracement-style measure;
+5. horizon and scale for concepts such as trapped / invalidated;
+6. how to handle ambiguous/unresolved B1 cases rather than forcing a binary label;
+7. how to score B2 when B1 itself is uncertain or design-dependent.
 
 A downstream implementation must not silently answer these questions.
 
-### 7.4 Candidate Stage B research designs
+### 7.5 Next research order
 
-Status: **OPEN / UNRANKED**
+**FIXED order:**
 
-The Stage A review records four candidate families:
+1. run Stage 2I-B1 research first;
+2. inspect/compare retrospective reference designs;
+3. explicitly choose or refine the B1 reference contract;
+4. only then run Stage 2I-B2 causal recognition research against that reference;
+5. do not proceed to Stage 2I-C reaction-zone semantics until Stage B is sufficiently resolved for independent-reaction events to be reproducible.
 
-1. two-sided retrospective prominence;
-2. causal confirmation-window independence;
-3. causal rolling historical prominence;
-4. retrospective sequence segmentation.
-
-None is currently canonical and none is ranked as the winner.
-
-A future Stage B task may compare these or refine them, but the chosen methodology must be explicitly documented here before being treated as a label generator for training or live use.
+This ordering prevents a causal recognizer from being optimized against an unexamined or unstable target.
 
 ---
 
@@ -517,6 +571,8 @@ If any later system learns Stage B/C/D behavior statistically, the training hand
 
 No model may be trained against a retrospective label whose meaning or live availability has not been documented.
 
+Under the fixed Stage 2I-B dual-layer architecture, B1 retrospective labels may serve as offline training/evaluation targets only after their label-generation contract is explicitly fixed. B2 features must remain causal and must never contain B1 post-event information.
+
 ---
 
 ## 14. Change-control rule
@@ -524,7 +580,9 @@ No model may be trained against a retrospective label whose meaning or live avai
 Any future task that changes one of the following must update this canonical document in the same research cycle:
 
 - raw pivot definition;
-- Stage B independent-reaction semantics;
+- Stage B research architecture;
+- B1 retrospective reference semantics;
+- B2 causal recognition semantics;
 - zone formation semantics;
 - boundary/range semantics;
 - causal availability time;
@@ -542,7 +600,7 @@ Methodological ambiguity must be surfaced as OPEN rather than silently resolved 
 
 ## 15. Current canonical state
 
-As of Stage 2I-A Review:
+As of the Stage 2I-B architecture decision:
 
 | Layer | Status | Canonical meaning |
 |---|---|---|
@@ -550,7 +608,9 @@ As of Stage 2I-A Review:
 | Strict five-bar raw pivots | FIXED | Raw local candidate generator |
 | Pivot `available_from` | FIXED | After second right-hand candle closes |
 | Causal vs post-event namespace | FIXED | Information-status contract |
-| Micro vs independent reaction | OPEN | Stage 2I-B research |
+| Stage 2I-B architecture | FIXED | Dual-layer: B1 retrospective reference + B2 causal recognition |
+| B1 independent-reaction reference semantics | OPEN | Must be researched before label contract is fixed |
+| B2 causal recognition semantics | OPEN | Must be researched after B1 reference is examined |
 | Dual-candle Stage B treatment | OPEN | No intrabar order in 4H data |
 | Reaction-zone formation | OPEN | Stage 2I-C research |
 | Zone width | OPEN | Must not be assumed fixed yet |
@@ -559,4 +619,4 @@ As of Stage 2I-A Review:
 | Fib / VP / SFP / OB overlays | OPEN / LATER | Separate feature families |
 | Legacy `structural_levels.csv` | DEPRECATED | Must not be used as authority |
 
-The next methodological decision belongs to Stage 2I-B. No later layer should be implemented as canonical before Stage B's semantics and causal contract are explicitly resolved and promoted here.
+The next step is Stage 2I-B1 retrospective-reference research. No Stage 2I-B2 causal recognizer should be treated as canonical until the B1 target/reference has been examined and explicitly fixed or revised.
