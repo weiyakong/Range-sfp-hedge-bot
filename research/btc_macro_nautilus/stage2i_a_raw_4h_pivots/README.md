@@ -32,4 +32,18 @@ Fixed-horizon upward/downward excursions are non-negative distances from pivot p
 
 ```bash
 python3 -m unittest research/btc_macro_nautilus/stage2i_a_raw_4h_pivots/test_build_stage2i_a.py
+python3 -m unittest research/btc_macro_nautilus/stage2i_a_raw_4h_pivots/test_review_stage2i_a.py
 ```
+
+## Diagnostic structure review
+
+The non-labeling Stage 2I-A review is reproducible with:
+
+```bash
+python3 research/btc_macro_nautilus/stage2i_a_raw_4h_pivots/review_stage2i_a.py \
+  --data-root /Users/yeshevika/Documents/Codex/Range-sfp-hedge-bot-data \
+  --repo-root /Users/yeshevika/Documents/Codex/2026-07-27/new-chat/work/range-sfp-hedge-bot-clone \
+  --mode production
+```
+
+It creates diagnostic tables/charts under `DATA_ROOT/research/stage2i_a_raw_4h_pivots/pivot_structure_review/` and a machine-readable summary beside the frozen Stage A artifacts. It does not alter the Stage A Parquet or implement Stage B.
