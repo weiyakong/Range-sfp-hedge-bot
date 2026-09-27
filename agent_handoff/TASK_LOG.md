@@ -211,6 +211,42 @@ Append-only handoff history for Codex / Antigravity work.
 - Next safe action:
   - Ready for final independent verification by Codex.
 
+## 2026-09-27 — DERIV-COLLECTOR-001 (Production Deployment & Verification)
+
+- Agent: Antigravity
+- Role: implementation
+- Status: COMPLETED
+- Action: successfully executed first remote deployment to Cloudflare Workers and production D1, verified two consecutive natural scheduled runs.
+- Production Deployment Details:
+  - Worker Name: `btc-derivatives-collector`
+  - Worker URL: `https://btc-derivatives-collector.regjimeyle.workers.dev`
+  - D1 Database: `btc-derivatives` (UUID `eaefc1f7-7729-425d-84d6-60441db0833c`)
+  - Remote Migration: `0001_initial_schema.sql` applied cleanly
+  - Trigger: Cron `*/10 * * * *`
+  - Secret: `COINALYZE_API_KEY` bound and verified
+- Natural Scheduled Invocations Verified:
+  - First Scheduled Run (`dc002de6-ffb6-457a-b780-3df2bb594366`, 16:31:02 UTC):
+    - Status: `success`, duration: ~19.5s, rows inserted: 996
+    - Performed full catalog discovery and bootstrap window (120 minutes) across 12 partitions
+    - Discovered & selected primary USDT perpetuals: `BTCUSDT_PERP.A` (Binance), `BTCUSDT.6` (Bybit), `BTCUSDT_PERP.3` (OKX)
+    - Zero non-USDT markets selected (USDC/USD/USD1 contracts classified as `alternative_perpetual`)
+    - Initial `covered_through_utc`: `1790526600` (16:30:00 UTC, closed 1-minute boundary)
+  - Second Scheduled Run (`dbb3db8f-96cc-4604-bd14-09c7af3511a5`, 16:40:52 UTC):
+    - Status: `success`, duration: ~11.6s, rows inserted: 246
+    - Reused validated discovery snapshot from D1 cache
+    - Checkpoint progression: `covered_through_utc` advanced strictly to `1790527140` (16:39:00 UTC, +9 minutes)
+    - Normalized row growth: exactly +9 rows per continuous series (from 120 to 129 rows)
+    - Liquidations growth: +1 row on Bybit (`1790526960`), 0 on Binance/OKX (sparse event fidelity preserved)
+    - OKX predicted funding: correctly remained 0 rows / `last_observation_timestamp_utc = null` without synthetic zeros
+- Verification Gates:
+  - Idempotency & Dedup: `SELECT ... GROUP BY ... HAVING COUNT(*) > 1` returned 0 rows (zero duplicate PKs)
+  - HTTP Endpoints: `GET /health` returned 200 OK; `GET /` returned 404; `POST /health` returned 405
+  - Upstream Telemetry: 100% of Coinalyze API requests in `raw_envelopes` returned status 200 OK
+  - Resource Limits: zero CPU time exceeded or Error 1102; execution comfortably within Cloudflare Free worker budget
+- Task Status:
+  - DERIV-COLLECTOR-001 is fully completed and operational in production.
+
+
 
 
 
