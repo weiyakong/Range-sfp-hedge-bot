@@ -972,7 +972,7 @@ def run_pipeline(
             "coverage": float(len(interior_resolved_ids) / len(events)),
             "ambiguous_share": float(ambig_share),
             "unresolved_share": float((len(events) - len(interior_resolved_ids)) / len(events)),
-            "censored_share": float((len(boundary_ids) + 2) / len(events)),
+            "censored_share": float(len(boundary_ids) / len(events)),
             "cross_design_agreement": agreement_text,
             "year_stability_descriptors": year_stab_text,
             "volatility_sensitivity_descriptors": vol_sens_text,
@@ -994,7 +994,7 @@ def run_pipeline(
         vol_sens_text="Raw scale expands in high vol (~1.4x), tracks trailing TR42",
         param_sens_text="Min vs geo hierarchy r=0.984; differences stay strictly localized to sub-2%",
         info_ret_text="Preserves continuous scale metric; preserves exact rank ordering without ties",
-        coarse_stab_text="100% invariant at coarse scales >= 15% (identical macro pivot sets)",
+        coarse_stab_text="Min hierarchy coarse pivots >=15% (N=61) are 100% contained in Geo hierarchy (N=104); Jaccard similarity is 58.65%",
         thresh_dep_text="Zero threshold dependence (continuous unbinned scale)",
         dim_text="1D continuous float [0, inf)",
     ))
@@ -1033,7 +1033,7 @@ def run_pipeline(
         vol_sens_text="Balanced sensitivity; absorbs both geometric path and volatility scale",
         param_sens_text="Mean vs median consensus r=0.994; max rank difference < 0.08",
         info_ret_text="Smooth scalar synthesis; collapses multi-attribute geometry into 1 rank",
-        coarse_stab_text="Top-10% core has 93.1% overlap across all 3 constituent families",
+        coarse_stab_text="Top-10% core has 93.1% overlap across all 3 constituent views",
         thresh_dep_text="Zero threshold dependence",
         dim_text="1D continuous float [0, 1]",
     ))
@@ -1048,7 +1048,7 @@ def run_pipeline(
         vol_sens_text="High volatility increases share of high survival tiers (macro swings exceed 10%)",
         param_sens_text="Determined by log grid; spacing reflects geometric scale progression",
         info_ret_text="Collapses continuous scale into 11 tiers; tied pairs fraction = 16.4%",
-        coarse_stab_text="Tier 9 (>=15%) and Tier 10 (>=25%) are 100% stable macro invariants",
+        coarse_stab_text="Tier 9 (>=15%) and Tier 10 (>=25%) capture coarse macro turns; min hierarchy tiers are 100% contained in geo hierarchy",
         thresh_dep_text="Explicit dependence on 10 predefined threshold points",
         dim_text="1D discrete ordinal integer [0..10]",
     ))
@@ -1080,12 +1080,12 @@ def run_pipeline(
         comparison_rows.append(build_comparison_row(
             family="Confidence",
             variant=f"CONF-UNANIMOUS-T{pct}",
-            notes=f"Unanimous agreement in {pct}% tails across A-min, B-min, and Vol-norm",
-            agreement_text=f"Requires 100% agreement of 3 independent families; strict core",
-            year_stab_text="Tail membership highly stable; strong tail present in all years",
+            notes=f"Unanimous agreement in {pct}% tails across A-min, B-min, and Vol-norm views",
+            agreement_text=f"Requires 100% concordance across 3 distinct retrospective evidence views; strict core",
+            year_stab_text="Distribution shifts with market regimes; strong share varies across years",
             vol_sens_text="Vol-normalized requirement filters nominal dollar anomalies in high vol",
             param_sens_text=f"Varying tail size {pct}%: Strong={u_counts['STRONG']}, Weak={u_counts['WEAK']}",
-            info_ret_text=f"Discards {u_ambig_share:.1%} of resolved population as AMBIGUOUS; zero false tail claims",
+            info_ret_text=f"Discards {u_ambig_share:.1%} of resolved population as AMBIGUOUS; cross-view agreement concordance",
             coarse_stab_text="Coarse macro pivots are unanimously STRONG (100% membership)",
             thresh_dep_text=f"Explicit tail threshold T={tail:.2f}",
             dim_text="Categorical [STRONG, WEAK, AMBIGUOUS, UNRESOLVED]",
@@ -1101,9 +1101,9 @@ def run_pipeline(
         comparison_rows.append(build_comparison_row(
             family="Confidence",
             variant=f"CONF-MAJORITY-T{pct}",
-            notes=f"Majority agreement (>=2 of 3 families) in {pct}% tails",
-            agreement_text=f"Resilient to single-family outlier; overlap with unanimous is 100% of unanimous",
-            year_stab_text="Tail shares stable across years; captures broader confident population",
+            notes=f"Majority agreement (>=2 of 3 views) in {pct}% tails",
+            agreement_text=f"Resilient to single-view divergence; overlap with unanimous is 100% of unanimous",
+            year_stab_text="Annual tail shares reflect underlying market volatility and regime changes",
             vol_sens_text="Majority voting balances path geometry against volatility normalization",
             param_sens_text=f"Varying tail size {pct}%: Strong={m_counts['STRONG']}, Weak={m_counts['WEAK']}",
             info_ret_text=f"Discards {m_ambig_share:.1%} of resolved population as AMBIGUOUS",
@@ -1197,6 +1197,22 @@ def run_pipeline(
         })
 
     # 12. Parameter Sensitivity Table (Section 10)
+    # Coarse macro sets for dynamic overlap computation
+    macro_min_15 = {e for e in interior_resolved_ids if resolved_hierarchy_min[e] is not None and resolved_hierarchy_min[e] >= 0.15}
+    macro_geo_15 = {e for e in interior_resolved_ids if resolved_hierarchy_geo[e] is not None and resolved_hierarchy_geo[e] >= 0.15}
+    macro_min_25 = {e for e in interior_resolved_ids if resolved_hierarchy_min[e] is not None and resolved_hierarchy_min[e] >= 0.25}
+    macro_geo_25 = {e for e in interior_resolved_ids if resolved_hierarchy_geo[e] is not None and resolved_hierarchy_geo[e] >= 0.25}
+
+    jaccard_min_geo_15 = float(len(macro_min_15 & macro_geo_15) / len(macro_min_15 | macro_geo_15))
+    jaccard_min_geo_25 = float(len(macro_min_25 & macro_geo_25) / len(macro_min_25 | macro_geo_25))
+
+    vol_top_quartile = {e for e in interior_resolved_ids if rank_prominence_vol[e] >= 0.75}
+    macro_min_in_vol_top = float(len(macro_min_15 & vol_top_quartile) / len(macro_min_15)) if macro_min_15 else 0.0
+
+    consensus_mean_top10 = {e for e in interior_resolved_ids if consensus_mean[e] >= 0.90}
+    consensus_med_top10 = {e for e in interior_resolved_ids if consensus_median[e] >= 0.90}
+    jaccard_consensus_top10 = float(len(consensus_mean_top10 & consensus_med_top10) / len(consensus_mean_top10 | consensus_med_top10))
+
     parameter_rows: List[Dict[str, Any]] = [
         {
             "comparison_dimension": "Hierarchy Cost Formulation",
@@ -1215,8 +1231,8 @@ def run_pipeline(
                 {e for e in interior_resolved_ids if rank_hierarchy_min[e] >= 0.75} &
                 {e for e in interior_resolved_ids if rank_hierarchy_geo[e] >= 0.75}
             ) / len({e for e in interior_resolved_ids if rank_hierarchy_min[e] >= 0.75})),
-            "macro_overlap_ge15pct": 1.0,
-            "stability_finding": "High stability (r=0.984). Rank differences localized to intermediate scales.",
+            "macro_overlap_ge15pct": jaccard_min_geo_15,
+            "stability_finding": f"High rank agreement (r=0.984). Min hierarchy (N=61) is 100% contained in Geo hierarchy (N=104); Jaccard similarity is {jaccard_min_geo_15:.2%}.",
         },
         {
             "comparison_dimension": "Normalization Basis",
@@ -1235,8 +1251,8 @@ def run_pipeline(
                 {e for e in interior_resolved_ids if rank_hierarchy_min[e] >= 0.75} &
                 {e for e in interior_resolved_ids if rank_prominence_vol[e] >= 0.75}
             ) / len({e for e in interior_resolved_ids if rank_hierarchy_min[e] >= 0.75})),
-            "macro_overlap_ge15pct": 0.95,
-            "stability_finding": "Substantial agreement (r=0.862), but volatility normalization accounts for quiet-regime turns.",
+            "macro_overlap_ge15pct": macro_min_in_vol_top,
+            "stability_finding": f"Substantial agreement (r=0.862); {macro_min_in_vol_top:.1%} of coarse scale >=15% pivots fall in top quartile of volatility-normalized prominence.",
         },
         {
             "comparison_dimension": "Continuous Consensus Rule",
@@ -1255,8 +1271,8 @@ def run_pipeline(
                 {e for e in interior_resolved_ids if consensus_mean[e] >= 0.75} &
                 {e for e in interior_resolved_ids if consensus_median[e] >= 0.75}
             ) / len({e for e in interior_resolved_ids if consensus_mean[e] >= 0.75})),
-            "macro_overlap_ge15pct": 1.0,
-            "stability_finding": "Very high agreement (r=0.994). Mean and median are virtually interchangeable.",
+            "macro_overlap_ge15pct": jaccard_consensus_top10,
+            "stability_finding": f"Very high agreement (r=0.994). Top-10% macro core has Jaccard overlap of {jaccard_consensus_top10:.2%}.",
         },
     ]
 
@@ -1266,6 +1282,11 @@ def run_pipeline(
         u_strong = {e for e in interior_resolved_ids if confidence_states[e][f"conf_unanimous_t{pct}"] == "STRONG"}
         m_strong = {e for e in interior_resolved_ids if confidence_states[e][f"conf_majority_t{pct}"] == "STRONG"}
         overlap = len(u_strong & m_strong) / len(m_strong) if m_strong else 1.0
+        # Overlap of macro >=15% pivots between unanimous and majority strong sets
+        u_macro = u_strong & macro_min_15
+        m_macro = m_strong & macro_min_15
+        macro_tail_overlap = float(len(u_macro & m_macro) / len(u_macro | m_macro)) if (u_macro or m_macro) else 1.0
+
         parameter_rows.append({
             "comparison_dimension": f"Confidence Tail Rule (Tail={pct}%)",
             "variant_1": "unanimous",
@@ -1274,8 +1295,8 @@ def run_pipeline(
             "rank_correlation": None,
             "mean_absolute_difference": None,
             "top_quartile_overlap": float(overlap),
-            "macro_overlap_ge15pct": 1.0,
-            "stability_finding": f"Unanimous is strict subset of Majority ({len(u_strong)} vs {len(m_strong)} events).",
+            "macro_overlap_ge15pct": macro_tail_overlap,
+            "stability_finding": f"Unanimous is strict subset of Majority ({len(u_strong)} vs {len(m_strong)} events). Both capture 100% of macro scale >=15% pivots in STRONG tail.",
         })
 
     # 13. Ambiguity Diagnostics Breakdown (Section 11)
@@ -1316,6 +1337,121 @@ def run_pipeline(
                 "ambiguous_rank_spread_median": desc_span["median"],
                 "ambiguous_rank_spread_iqr": desc_span["iqr"],
             })
+
+    # 13B. Coarse Structure Overlap Artifact (Audited Section 10)
+    coarse_overlap_rows: List[Dict[str, Any]] = []
+    for thresh, s_min, s_geo in [
+        (0.15, macro_min_15, macro_geo_15),
+        (0.25, macro_min_25, macro_geo_25),
+    ]:
+        inter = len(s_min & s_geo)
+        union = len(s_min | s_geo)
+        jacc = float(inter / union) if union else 1.0
+        c_min_in_geo = float(inter / len(s_min)) if s_min else 1.0
+        c_geo_in_min = float(inter / len(s_geo)) if s_geo else 1.0
+        coarse_overlap_rows.append({
+            "threshold_pct": int(thresh * 100),
+            "min_hierarchy_count": len(s_min),
+            "geo_hierarchy_count": len(s_geo),
+            "intersection_count": inter,
+            "union_count": union,
+            "jaccard_similarity": jacc,
+            "containment_min_in_geo": c_min_in_geo,
+            "containment_geo_in_min": c_geo_in_min,
+            "exact_mathematical_subset": c_min_in_geo == 1.0,
+            "finding_notes": f"Min hierarchy is 100% contained in Geo hierarchy at scale >={int(thresh*100)}%; Geo retains {len(s_geo) - inter} additional pivots (Jaccard = {jacc:.2%}).",
+        })
+
+    # 13C. Disagreement Scale Diagnostics Artifact (Audited Section 8)
+    disagreement_scale_rows: List[Dict[str, Any]] = []
+    for tail in CONFIDENCE_TAIL_SIZES:
+        pct = int(tail * 100)
+        for rule in ("unanimous", "majority"):
+            state_key = f"conf_{rule}_t{pct}"
+            ambig_eids = [e for e in interior_resolved_ids if confidence_states[e][state_key] == "AMBIGUOUS"]
+            n_ambig = len(ambig_eids)
+            scales = [resolved_hierarchy_min[e] for e in ambig_eids if resolved_hierarchy_min[e] is not None]
+
+            c_lt_15 = sum(1 for s in scales if s < 0.015)
+            c_15_50 = sum(1 for s in scales if 0.015 <= s < 0.050)
+            c_50_100 = sum(1 for s in scales if 0.050 <= s < 0.100)
+            c_ge_100 = sum(1 for s in scales if s >= 0.100)
+
+            disagreement_scale_rows.append({
+                "tail_size_pct": pct,
+                "confidence_rule": rule,
+                "ambiguous_count": n_ambig,
+                "count_lt_1_5pct": c_lt_15,
+                "share_lt_1_5pct": float(c_lt_15 / n_ambig) if n_ambig else 0.0,
+                "count_1_5_to_5pct": c_15_50,
+                "share_1_5_to_5pct": float(c_15_50 / n_ambig) if n_ambig else 0.0,
+                "count_5_to_10pct": c_50_100,
+                "share_5_to_10pct": float(c_50_100 / n_ambig) if n_ambig else 0.0,
+                "count_ge_10pct": c_ge_100,
+                "share_ge_10pct": float(c_ge_100 / n_ambig) if n_ambig else 0.0,
+                "strictly_confined_1_5_to_5pct": (c_lt_15 == 0 and c_50_100 == 0 and c_ge_100 == 0),
+                "empirical_finding": f"Predominantly concentrated in 1.5%-5.0% ({float(c_15_50 / n_ambig):.1%}), but {float((c_50_100 + c_ge_100) / n_ambig):.1%} extends to >=5.0%.",
+            })
+
+    # 13D. Claim Validation Audit Artifact
+    claim_validation_rows: List[Dict[str, Any]] = [
+        {
+            "claim_id": "CLM-01-ZERO-FALSE-TAIL",
+            "claim_statement": "Confidence tails achieve zero false tail claims",
+            "original_status": "Asserted as definitive guarantee",
+            "audited_verdict": "REJECTED_METHODOLOGICALLY",
+            "audited_correction": "Zero false tail claims cannot be asserted without ground truth. Replaced with empirical concordance across retrospective evidence views.",
+        },
+        {
+            "claim_id": "CLM-02-INDEPENDENT-FAMILIES",
+            "claim_statement": "Confidence rules combine 3 independent evidence families",
+            "original_status": "Asserted as independent families",
+            "audited_verdict": "REJECTED_METHODOLOGICALLY",
+            "audited_correction": "Views derive from the same underlying 4H price series and exhibit r=0.86-0.97. Replaced with distinct retrospective evidence views.",
+        },
+        {
+            "claim_id": "CLM-03-DISAGREEMENT-SCALE-CONFINEMENT",
+            "claim_statement": "Disagreement is strictly concentrated in 1.5% to 5.0% scale",
+            "original_status": "Asserted as strictly concentrated",
+            "audited_verdict": "REFUTED_EMPIRICALLY",
+            "audited_correction": f"Predominantly in 1.5%-5.0% (90.15% Majority T20, 75.61% Unanimous T20), but 9.85% (Majority) and 24.39% (Unanimous) extend outside this band (up to 10%+).",
+        },
+        {
+            "claim_id": "CLM-04-SCALE-BELOW-1PCT-MICRO",
+            "claim_statement": "Scale < 1% fluctuations are micro and consistently identified in weak tail",
+            "original_status": "Asserted as micro fluctuations",
+            "audited_verdict": "REJECTED_METHODOLOGICALLY",
+            "audited_correction": "Preservation contract prohibits semantic micro label. Under Unanimous T20, 14.07% of <1% events are AMBIGUOUS rather than WEAK.",
+        },
+        {
+            "claim_id": "CLM-05-LONGITUDINAL-TAIL-STABILITY",
+            "claim_statement": "Tail membership is stable across years",
+            "original_status": "Asserted as stable membership",
+            "audited_verdict": "REFUTED_CONCEPTUALLY_AND_EMPIRICALLY",
+            "audited_correction": "Events occur at single points in time. Annual tail shares drift significantly with market regimes (Strong share 9.01% in 2025 to 40.58% in 2021).",
+        },
+        {
+            "claim_id": "CLM-06-COARSE-MACRO-INVARIANCE",
+            "claim_statement": "Coarse macro pivots >=15% are 100% invariant across hierarchy formulations",
+            "original_status": "Hardcoded as 1.0 (100% identical sets)",
+            "audited_verdict": "QUALIFIED_EMPIRICALLY",
+            "audited_correction": f"Min hierarchy (N=61) is 100% contained in Geo hierarchy (N=104), but Geo contains 43 additional pivots at >=15%. Jaccard similarity is 58.65%.",
+        },
+        {
+            "claim_id": "CLM-07-PREFERRED-CONTRACT-SELECTION",
+            "claim_statement": "CONF-MAJORITY-T20 is the preferred reference representation",
+            "original_status": "Selected as preferred winner",
+            "audited_verdict": "REJECTED_BY_SCOPE",
+            "audited_correction": "Stage 2I-B1 is purely exploratory. No preferred winner or canonical contract may be chosen before Stage 2I-B2.",
+        },
+        {
+            "claim_id": "CLM-08-CENSORED-SHARE-DOUBLE-COUNT",
+            "claim_statement": "Censored share is (len(boundary_ids) + 2) / 4450",
+            "original_status": "Calculated as 420 / 4450 (9.4382%)",
+            "audited_verdict": "CORRECTED_MATHEMATICALLY",
+            "audited_correction": "boundary_ids already includes the 2 dataset edge survivors. Correct formula is len(boundary_ids) / len(events) = 418 / 4450 (9.3933%).",
+        },
+    ]
 
     # 14. 2026 Calibration Intervals Breakdown (Section 13)
     # Intervals from PA_STRUCTURE_CANONICAL.md:
@@ -1484,6 +1620,21 @@ def run_pipeline(
     calib_parquet_path = output_dir / "calibration_2026.parquet"
     write_deterministic_parquet(calib_parquet_path, calibration_rows)
 
+    coarse_parquet_path = output_dir / "coarse_structure_overlap.parquet"
+    write_deterministic_parquet(coarse_parquet_path, coarse_overlap_rows)
+    coarse_csv_path = output_dir / "coarse_structure_overlap.csv"
+    write_csv(coarse_csv_path, coarse_overlap_rows)
+
+    disagree_parquet_path = output_dir / "disagreement_scale_diagnostics.parquet"
+    write_deterministic_parquet(disagree_parquet_path, disagreement_scale_rows)
+    disagree_csv_path = output_dir / "disagreement_scale_diagnostics.csv"
+    write_csv(disagree_csv_path, disagreement_scale_rows)
+
+    claim_parquet_path = output_dir / "claim_validation.parquet"
+    write_deterministic_parquet(claim_parquet_path, claim_validation_rows)
+    claim_csv_path = output_dir / "claim_validation.csv"
+    write_csv(claim_csv_path, claim_validation_rows)
+
     # 18. Generate Schemas for All Parquet Artifacts
     table_map = {
         "master_event_reference": master_parquet_path,
@@ -1497,6 +1648,9 @@ def run_pipeline(
         "parameter_sensitivity": param_parquet_path,
         "ambiguity_diagnostics": ambig_parquet_path,
         "calibration_2026": calib_parquet_path,
+        "coarse_structure_overlap": coarse_parquet_path,
+        "disagreement_scale_diagnostics": disagree_parquet_path,
+        "claim_validation": claim_parquet_path,
     }
     for name, p_path in table_map.items():
         pq_table = pq.read_table(p_path)
@@ -1531,6 +1685,7 @@ def run_pipeline(
         "dual_separator_boundaries": len(dual_boundary_ids),
         "ordinary_resolved_sequence_events": len(interior_resolved_ids),
         "coverage_resolved_fraction": float(len(interior_resolved_ids) / len(events)),
+        "censored_share": float(len(boundary_ids) / len(events)),
         "cross_design_correlations": {
             "hierarchy_min_vs_geo_rank": _rank_correlation(
                 [rank_hierarchy_min[e] for e in interior_resolved_ids],
@@ -1557,8 +1712,12 @@ def run_pipeline(
             "distribution_description": "Unbroken continuum without natural empty gaps",
         },
         "coarse_structure_stability": {
-            "macro_threshold_15pct_invariance": True,
-            "macro_threshold_25pct_invariance": True,
+            "macro_threshold_15pct_min_in_geo_containment": 1.0,
+            "macro_threshold_15pct_jaccard": jaccard_min_geo_15,
+            "macro_threshold_25pct_min_in_geo_containment": 1.0,
+            "macro_threshold_25pct_jaccard": jaccard_min_geo_25,
+            "is_exact_mathematical_subset": True,
+            "stability_description": "Min hierarchy pivots are 100% contained in Geo hierarchy, but Geo retains additional pivots at the same threshold due to arithmetic-geometric inequality.",
         },
         "2026_calibration_counts": {
             "interval_59_0_to_60_5k": sum(1 for r in calibration_rows if r["calibration_interval"] == "59.0-60.5k"),
@@ -1576,6 +1735,9 @@ def run_pipeline(
         master_parquet_path, seq_parquet_path, cont_parquet_path, ord_parquet_path,
         conf_parquet_path, comp_parquet_path, comp_csv_path, temp_parquet_path,
         vol_parquet_path, param_parquet_path, ambig_parquet_path, calib_parquet_path,
+        coarse_parquet_path, coarse_csv_path,
+        disagree_parquet_path, disagree_csv_path,
+        claim_parquet_path, claim_csv_path,
         output_dir / "summary.json",
         plots_dir / "b1_comp_01_clear_large_turn.svg",
         plots_dir / "b1_comp_02_small_local_fluctuation.svg",

@@ -128,7 +128,45 @@ def validate_artifacts(artifact_dir: Path) -> None:
             raise ValueError(f"Comparison row {row['variant']} has master_N != {EXPECTED_MASTER_COUNT}")
         if row["resolved_N"] != EXPECTED_RESOLVED_COUNT:
             raise ValueError(f"Comparison row {row['variant']} has resolved_N != {EXPECTED_RESOLVED_COUNT}")
-    print("✓ Comparison table verified: all head-to-head variants share identical denominators (N=2,867).")
+        if abs(row["censored_share"] - (418.0 / 4450.0)) > 1e-6:
+            raise ValueError(f"Censored share double count detected in row {row['variant']}: {row['censored_share']}")
+    print("✓ Comparison table verified: all head-to-head variants share identical denominators (N=2,867) and correct censored share (418/4450).")
+
+    # 5B. Validate Diagnostic Artifacts
+    coarse_path = artifact_dir / "coarse_structure_overlap.parquet"
+    if not coarse_path.exists():
+        raise FileNotFoundError(f"Missing {coarse_path}")
+    coarse_rows = pq.read_table(coarse_path).to_pylist()
+    if len(coarse_rows) != 2:
+        raise ValueError(f"Expected 2 coarse overlap rows, got {len(coarse_rows)}")
+    row_15 = next(r for r in coarse_rows if r["threshold_pct"] == 15)
+    row_25 = next(r for r in coarse_rows if r["threshold_pct"] == 25)
+    if row_15["min_hierarchy_count"] != 61 or row_15["geo_hierarchy_count"] != 104 or row_15["intersection_count"] != 61:
+        raise ValueError(f"Coarse overlap 15% counts incorrect: {row_15}")
+    if row_25["min_hierarchy_count"] != 22 or row_25["geo_hierarchy_count"] != 35 or row_25["intersection_count"] != 22:
+        raise ValueError(f"Coarse overlap 25% counts incorrect: {row_25}")
+    print("✓ Coarse structure overlap verified: exact empirical counts (15%: 61 in 104; 25%: 22 in 35).")
+
+    disagree_path = artifact_dir / "disagreement_scale_diagnostics.parquet"
+    if not disagree_path.exists():
+        raise FileNotFoundError(f"Missing {disagree_path}")
+    disagree_rows = pq.read_table(disagree_path).to_pylist()
+    if len(disagree_rows) != 8:
+        raise ValueError(f"Expected 8 disagreement scale diagnostic rows, got {len(disagree_rows)}")
+    maj_20_diag = next(r for r in disagree_rows if r["tail_size_pct"] == 20 and r["confidence_rule"] == "majority")
+    if maj_20_diag["ambiguous_count"] != 1767:
+        raise ValueError(f"Majority T20 ambiguous count mismatch: expected 1767, got {maj_20_diag['ambiguous_count']}")
+    if maj_20_diag["count_1_5_to_5pct"] != 1593:
+        raise ValueError(f"Majority T20 1.5-5% count mismatch: expected 1593, got {maj_20_diag['count_1_5_to_5pct']}")
+    print("✓ Disagreement scale diagnostics verified: empirical distribution computed across all tail sweeps.")
+
+    claim_path = artifact_dir / "claim_validation.parquet"
+    if not claim_path.exists():
+        raise FileNotFoundError(f"Missing {claim_path}")
+    claim_rows = pq.read_table(claim_path).to_pylist()
+    if len(claim_rows) != 8:
+        raise ValueError(f"Expected 8 claim validation audit rows, got {len(claim_rows)}")
+    print("✓ Claim validation audit verified: all 8 audited methodological claims cataloged.")
 
     # 6. SVG Charts Existence
     plots_dir = artifact_dir / "plots"
@@ -154,6 +192,8 @@ def validate_artifacts(artifact_dir: Path) -> None:
         raise ValueError("Summary master population mismatch")
     if summary["ordinary_resolved_sequence_events"] != EXPECTED_RESOLVED_COUNT:
         raise ValueError("Summary resolved population mismatch")
+    if abs(summary["censored_share"] - (418.0 / 4450.0)) > 1e-6:
+        raise ValueError(f"Summary censored share double count: {summary['censored_share']}")
     print("✓ summary.json verified.")
     print("\n>>> ALL VALIDATION CHECKS PASSED SUCCESSFULLY. <<<")
 

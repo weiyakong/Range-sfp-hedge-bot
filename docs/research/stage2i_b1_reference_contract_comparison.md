@@ -13,6 +13,7 @@ This study compares alternative representations of retrospective price-action st
   - Stage 2I-B2 is **NOT** launched.
   - Canonical B1 reference contract is **NOT** chosen in this study.
   - `PA_STRUCTURE_CANONICAL.md` is strictly **UNMODIFIED**.
+  - A methodological patch audit was applied to eliminate ungrounded claims (zero false tail assertions, independent families terminology, unverified disagreement bounds, semantic micro labeling, longitudinal stability overstatements, hardcoded macro overlap metrics, preferred contract selection, and boundary censoring double counts).
 
 ---
 
@@ -36,9 +37,11 @@ Under the fixed B+C candidate-preservation contract:
 | Non-Dual Alternating Segments | 145 | — | Continuous timeline segments separated by dual barriers. |
 | Technical Same-Type Prepass Exclusions | 865 | 19.44% | Preserved with `excluded_from_alternating_sequence = True`; `scale = None`. |
 | Alternating Sequence Candidates | 3,285 | 73.82% | Candidates entering segment-aware hierarchy across 145 segments. |
-| Dataset Left-Edge Censored | 1 | 0.02% | `P4H_000006_HIGH` (start of dataset; no preceding 4H history). |
-| Dataset Right-Edge Censored | 1 | 0.02% | `P4H_015442_LOW` (end of dataset; no following 4H history). |
-| Dual-Separator Boundary Candidates | 416 | 9.35% | Segment endpoints / boundary survivors adjacent to dual barriers; `scale = None`. |
+| Boundary Censored Candidates (`boundary_ids`) | 418 | 9.39% | Segment endpoints, dual neighbors, and dataset edges (416 dual boundaries + 2 dataset edges); `scale = None`. |
+| — Dataset Left-Edge Censored | 1 | 0.02% | `P4H_000006_HIGH` (start of dataset; no preceding 4H history). |
+| — Dataset Right-Edge Censored | 1 | 0.02% | `P4H_015442_LOW` (end of dataset; no following 4H history). |
+| — Dual-Separator Boundary Candidates | 416 | 9.35% | Segment endpoints / boundary survivors adjacent to dual barriers; `scale = None`. |
+| Total Unresolved / Censored Candidates | 1,583 | 35.57% | Preserved without semantic degradation ($300 \text{ dual} + 865 \text{ same-type} + 418 \text{ boundary}$). |
 | **Ordinary Resolved Sequence Events** | **2,867** | **64.43%** | **Identical common resolved evaluation denominator for all head-to-head comparisons.** |
 
 ---
@@ -58,8 +61,8 @@ All comparisons are evaluated across the exact same common resolved population (
 | **Ordinal** | **ORD-Q3** | 2,867 | 64.43% | 0.00% | 35.57% | Rank correlation $r=0.96-0.98$ | Collapses ~955 ranks/bin; 33.3% tied pairs | 1D categorical (3 levels) |
 | **Ordinal** | **ORD-Q4** | 2,867 | 64.43% | 0.00% | 35.57% | Rank correlation $r=0.96-0.98$ | Collapses ~716 ranks/bin; 25.0% tied pairs | 1D categorical (4 levels) |
 | **Ordinal** | **ORD-Q5** | 2,867 | 64.43% | 0.00% | 35.57% | Rank correlation $r=0.96-0.98$ | Collapses ~573 ranks/bin; 20.0% tied pairs | 1D categorical (5 levels) |
-| **Confidence** | **CONF-UNANIMOUS-T10** | 2,867 | 64.43% | 91.11% | 35.57% | Strict unanimous consensus of 3 families | Discards 91.1% resolved as AMBIGUOUS | Categorical: Strong (104), Weak (151) |
-| **Confidence** | **CONF-MAJORITY-T10** | 2,867 | 64.43% | 81.93% | 35.57% | Majority voting ($\ge 2$ of 3 families) | Discards 81.9% resolved as AMBIGUOUS | Categorical: Strong (236), Weak (282) |
+| **Confidence** | **CONF-UNANIMOUS-T10** | 2,867 | 64.43% | 91.11% | 35.57% | Strict unanimous consensus of 3 retrospective views | Discards 91.1% resolved as AMBIGUOUS | Categorical: Strong (104), Weak (151) |
+| **Confidence** | **CONF-MAJORITY-T10** | 2,867 | 64.43% | 81.93% | 35.57% | Majority voting ($\ge 2$ of 3 retrospective views) | Discards 81.9% resolved as AMBIGUOUS | Categorical: Strong (236), Weak (282) |
 | **Confidence** | **CONF-UNANIMOUS-T20** | 2,867 | 64.43% | 79.94% | 35.57% | Strict unanimous consensus in 20% tails | Discards 79.9% resolved as AMBIGUOUS | Categorical: Strong (268), Weak (307) |
 | **Confidence** | **CONF-MAJORITY-T20** | 2,867 | 64.43% | 61.63% | 35.57% | Majority voting in 20% tails | Discards 61.6% resolved as AMBIGUOUS | Categorical: Strong (539), Weak (561) |
 | **Confidence** | **CONF-UNANIMOUS-T25** | 2,867 | 64.43% | 72.41% | 35.57% | Strict unanimous consensus in 25% tails | Discards 72.4% resolved as AMBIGUOUS | Categorical: Strong (375), Weak (416) |
@@ -77,7 +80,7 @@ The segment-aware B+C rebuild confirms that price-action structure is inherently
 - Segment-aware hierarchical simplification scales correlate strongly between minimum-cost and geometric-cost formulations ($r = 0.968$).
 - Minimum hierarchy removal scale correlates strongly with two-sided retrospective prominence ($r = 0.930$).
 - Consensus mean and median continuous ranks agree at $r = 0.978$.
-- Macro structural anchors at scales $\ge 15\%$ and $\ge 25\%$ remain 100% identical across formulations.
+- Macro structural pivots at scales $\ge 15\%$ and $\ge 25\%$ exhibit high consistency, but are not identical sets: the Min hierarchy set is an exact mathematical subset of the Geo hierarchy set ($100\%$ containment: 61/61 at $\ge 15\%$, 22/22 at $\ge 25\%$), with Jaccard similarity of $58.65\%$ and $62.86\%$ respectively due to the AM-GM inequality ($\sqrt{ab} \ge \min(a, b)$).
 
 ### 2. Is there evidence of natural ordinal boundaries?
 **NO.**
@@ -99,10 +102,10 @@ Quantile boundaries divide an unbroken distribution into equal-frequency slices 
 - **Lost:** Fine intra-tier distinctions. Approximately 16.4% of event pairs become tied. A move that survived 2.9% is placed in the same bucket (Tier 4: $\ge 2\%$) as a move that survived 2.1%.
 
 ### 5. Can stable agreement tails be constructed?
-**YES.**
-By requiring agreement across independent evidence families (Prominence A-min, Hierarchy B-min, and Volatility-Normalized Sensitivity), robust strong and weak tails emerge:
-- Top macro events (major reversals) exhibit 100% agreement across all evidence families.
-- Tail membership remains stable across years and market regimes.
+**YES (WITH REGIME-DEPENDENT DRIFT).**
+By requiring agreement across distinct retrospective evidence views (Prominence A-min, Hierarchy B-min, and Volatility-Normalized Sensitivity), robust strong and weak concordance tails emerge:
+- Top macro events (major reversals) exhibit 100% agreement across all evidence views.
+- However, tail proportions are not static across years; they drift significantly with market regimes. In high-volatility regimes (e.g. the 2021 bull market), the STRONG tail share reaches $40.58\%$ under Majority T20 while the WEAK tail share drops to $1.33\%$. Conversely, in quiet consolidation regimes (e.g. 2023), the WEAK tail expands to $35.15\%$ while the STRONG tail contracts to $13.91\%$. Tail procedures remain stable, but empirical event distributions reflect underlying volatility regimes.
 
 ### 6. How does the ambiguous population behave across 10%, 20%, 25%, and 30% tail sizes?
 As tail size widens, the ambiguous middle contracts steadily, but remains dominant:
@@ -112,13 +115,13 @@ As tail size widens, the ambiguous middle contracts steadily, but remains domina
 - **30% Tail:** Unanimous ambiguous share = `65.68%` (Majority: `42.20%`). Downstream loss = `77.89%` (Majority: `62.76%`).
 
 ### 7. How do unanimous and majority definitions differ?
-- **Unanimous (`CONF-UNANIMOUS`):** Strict intersection. Requires 100% concordance among all three independent families. Generates zero false tail claims, but labels 65% to 91% of resolved pivots as ambiguous.
-- **Majority (`CONF-MAJORITY`):** 2-out-of-3 consensus. Expands tail coverage by 2.0x to 2.3x while tolerating single-family metric idiosyncrasies (e.g., quiet-market excursions that rank high in volatility normalization but moderate in raw log excursion).
+- **Unanimous (`CONF-UNANIMOUS`):** Strict intersection requiring 100% concordance across all three retrospective evidence views. Enforces maximum cross-view consensus, but labels 65.7% to 91.1% of resolved pivots as ambiguous. It cannot claim "zero false tails" because no objective ground truth exists.
+- **Majority (`CONF-MAJORITY`):** 2-out-of-3 consensus. Expands tail coverage by 2.0x to 2.3x while tolerating single-view metric idiosyncrasies (e.g., quiet-market excursions that rank high in volatility normalization but moderate in raw log excursion).
 
-### 8. Which findings are robust across evidence families?
-- Macro structural pivots ($\ge 15\%$ scale) are invariant across A prominence, B hierarchy, and volatility normalization.
-- Micro fluctuations ($< 1\%$ scale) are consistently identified in the weak tail across all three families.
-- Disagreement is strictly concentrated in the intermediate range (excursions between 1.5% and 5.0%), where path efficiency and local volatility scaling can diverge.
+### 8. Which findings are robust across evidence views?
+- **Coarse macro pivots ($\ge 15\%$ scale):** Min hierarchy is 100% contained in Geo hierarchy ($61/61$ at $\ge 15\%$, $22/22$ at $\ge 25\%$). Geo retains additional pivots, yielding Jaccard similarities of $58.65\%$ and $62.86\%$.
+- **Small-scale fluctuations ($< 1\%$ scale):** Across the 135 resolved pivots with hierarchy scale $<1.0\%$, $100\%$ (135/135) fall in the WEAK tail under Majority T20. Under Unanimous T20, $85.93\%$ (116/135) fall in the WEAK tail while $14.07\%$ (19/135) are AMBIGUOUS. The label "micro" is strictly avoided in compliance with the B+C preservation contract.
+- **Disagreement distribution:** Disagreement is predominantly concentrated in the 1.5%–5.0% band ($90.15\%$ under Majority T20, $75.61\%$ under Unanimous T20), but is **not** strictly confined to it. A non-negligible fraction extends into 5.0%–10.0% ($9.34\%$ Majority, $15.75\%$ Unanimous) and $\ge 10.0\%$ ($0.51\%$ Majority, $2.14\%$ Unanimous).
 
 ### 9. Stability across years, volatility regimes, and hierarchy formulations
 - **Across Years (2019–2026):**
@@ -128,19 +131,20 @@ As tail size widens, the ambiguous middle contracts steadily, but remains domina
   - Raw log excursion median expands from `0.0192` in low vol to `0.0440` in high vol (~2.3x expansion).
   - Volatility-normalized prominence median remains remarkably invariant across regimes: `2.10x` in low vol, `2.00x` in medium vol, and `1.87x` in high vol.
 - **Across Hierarchy Formulations:**
-  - Minimum vs Geometric hierarchy exhibits $r = 0.968$. Disagreements are localized to intermediate boundary merges.
+  - Minimum vs Geometric hierarchy exhibits $r = 0.968$. Disagreements are localized to intermediate boundary merges and the AM-GM expansion in Geo hierarchy.
 
 ### 10. Where does information loss occur in ordinal and partial-tail representations?
 - **Ordinal Loss:** Loss of relative rank resolution. Up to 33.3% of event pairs become tied. Fine structural spacing is lost.
 - **Partial-Tail Loss:** Truncation of the middle distribution. If a downstream pipeline only consumes strong/weak tails, between `62.8%` and `94.3%` of all market events are discarded as ambiguous or unresolved.
 
 ### 11. Are coarse / high-survival pivots preserved across representations?
-**YES, 100% INVARIANT.**
-Across all tested continuous, ordinal, and confidence representations, coarse macro turning points (e.g. March 2020 low, November 2021 high, November 2022 low) are preserved without exception:
+**YES (WITH MATHEMATICAL SUBSET RELATION).**
+Across all tested continuous, ordinal, and confidence representations, coarse macro turning points (e.g. March 2020 low, November 2021 high, November 2022 low) are preserved:
 - They achieve rank $> 0.95$ in continuous representations.
 - They fall into Tier 9 or 10 in ORD-SURVIVAL.
 - They fall into Q3 in ORD-Q3, Q4 in ORD-Q4, and Q5 in ORD-Q5.
 - They belong to the STRONG tail under both unanimous and majority confidence rules.
+- Between Min and Geo hierarchy formulations, Min at $\ge 15\%$ is 100% contained in Geo ($61/61$), while Geo retains 43 additional pivots (Jaccard similarity = $58.65\%$).
 
 ### 12. Handling of special states and censoring
 The pipeline maintains a strict 6-state taxonomy with zero data loss across all 4,450 raw pivots:
@@ -159,16 +163,63 @@ The empirical evidence decisively demonstrates that no single representation is 
 - Confidence tails discard the majority of market events as ambiguous.
 
 ### 14. Does the evidence support a layered representation?
-**YES (EMPIRICAL CONCLUSION).**
-The data strongly support a **layered structural output**:
+**YES (EMPIRICAL CONCLUSION / NO CANONICAL SELECTION).**
+The data support a **layered structural output architecture**:
 1. **Foundation Layer (Continuous Components):** Retains the full multi-dimensional structural geometry (`CONT-COMPONENTS`: prominence min/geo/balance, hierarchy min/geo, local volatility normalization).
 2. **Standardized Comparison Layer (Continuous Rank):** Provides normalized percentile ranks (`CONT-RANK` / `CONT-CONSENSUS`) for scale-free ranking.
 3. **Discrete Structural Tier View (ORD-SURVIVAL):** Translates continuous scale into actionable physical log survival tiers without arbitrary equal-frequency distortion.
-4. **Confidence / High-Conviction Filter (CONF-MAJORITY-T20 / UNANIMOUS):** Provides explicit strong/weak anchor subsets for downstream components that require high-conviction agreement, while explicitly preserving ambiguous and unresolved candidates.
+4. **Agreement Concordance Filter (Confidence Tails):** Provides explicit strong/weak concordance subsets for downstream consumers requiring high agreement across retrospective views, while preserving ambiguous and unresolved candidates.
+
+*Note:* Selection of a canonical reference representation is explicitly **DEFERRED** to Stage 2I-B2. Confidence represents cross-view concordance, not objective certainty.
 
 ---
 
-## 5. 2026 Human Calibration Window Analysis
+## 5. Methodological Patch Audit & Claim Validation
+
+A rigorous methodological patch audit was conducted on the Stage 2I-B1 findings to resolve overstatements, clarify definitions, and correct formula errors.
+
+### 5.1 Claim Validation Audit Catalog
+
+| Claim ID | Original Claim Statement | Original Status | Audited Verdict | Audited Correction & Empirical Resolution |
+|---|---|---|---|---|
+| **CLM-01** | Confidence tails achieve zero false tail claims | Asserted as definitive guarantee | **REJECTED_METHODOLOGICALLY** | Zero false tail claims cannot be asserted without ground truth. Replaced with empirical concordance across retrospective evidence views. |
+| **CLM-02** | Confidence rules combine 3 independent evidence families | Asserted as independent families | **REJECTED_METHODOLOGICALLY** | Views derive from the same underlying 4H price series and exhibit $r=0.86\text{–}0.97$. Replaced with "distinct retrospective evidence views". |
+| **CLM-03** | Disagreement is strictly concentrated in 1.5% to 5.0% scale | Asserted as strictly concentrated | **REFUTED_EMPIRICALLY** | Predominantly in 1.5%–5.0% (90.15% Majority T20, 75.61% Unanimous T20), but 9.85% (Majority) and 24.39% (Unanimous) extend outside this band (up to 10%+). |
+| **CLM-04** | Scale < 1% fluctuations are micro and consistently identified in weak tail | Asserted as micro fluctuations | **REJECTED_METHODOLOGICALLY** | Preservation contract prohibits semantic micro label. Under Unanimous T20, 14.07% of <1% events are AMBIGUOUS rather than WEAK. |
+| **CLM-05** | Tail membership is stable across years | Asserted as stable membership | **REFUTED_CONCEPTUALLY_AND_EMPIRICALLY** | Events occur at single points in time. Annual tail shares drift significantly with market regimes (Strong share 9.01% in 2025 to 40.58% in 2021). |
+| **CLM-06** | Coarse macro pivots >=15% are 100% invariant across hierarchy formulations | Hardcoded as 1.0 (100% identical sets) | **QUALIFIED_EMPIRICALLY** | Min hierarchy ($N=61$) is 100% contained in Geo hierarchy ($N=104$), but Geo contains 43 additional pivots at $\ge 15\%$. Jaccard similarity is 58.65%. |
+| **CLM-07** | CONF-MAJORITY-T20 is the preferred reference representation | Selected as preferred winner | **REJECTED_BY_SCOPE** | Stage 2I-B1 is purely exploratory. No preferred winner or canonical contract may be chosen before Stage 2I-B2. |
+| **CLM-08** | Censored share is $(\text{len}(\text{boundary\_ids}) + 2) / 4450$ | Calculated as $420 / 4450$ (9.4382%) | **CORRECTED_MATHEMATICALLY** | `boundary_ids` already includes the 2 dataset edge survivors. Correct formula is $\text{len}(\text{boundary\_ids}) / \text{len}(\text{events}) = 418 / 4450$ ($9.3933\%$). |
+
+### 5.2 Coarse Structure Overlap ($\ge 15\%$ and $\ge 25\%$)
+
+Computed directly from empirical sets in `coarse_structure_overlap.parquet`:
+
+| Scale Threshold | Min Hierarchy N | Geo Hierarchy N | Intersection N | Union N | Min in Geo Containment | Geo in Min Containment | Jaccard Similarity | Mathematical Subset |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| **$\ge 15\%$** | 61 | 104 | 61 | 104 | **100.00%** | 58.65% | **58.65%** | **TRUE** (Min $\subseteq$ Geo) |
+| **$\ge 25\%$** | 22 | 35 | 22 | 35 | **100.00%** | 62.86% | **62.86%** | **TRUE** (Min $\subseteq$ Geo) |
+
+*Mathematical Explanation:* By the AM-GM inequality, $\sqrt{ab} \ge \min(a, b)$. The geometric-mean removal cost is strictly greater than or equal to the minimum removal cost for every triangle. Consequently, every pivot retained in the Min hierarchy at scale $\theta$ is guaranteed to be retained in the Geo hierarchy at scale $\ge \theta$. Geo retains additional pivots, resulting in a Jaccard similarity of 58.65% at $\ge 15\%$ and 62.86% at $\ge 25\%$.
+
+### 5.3 Disagreement Scale Diagnostics
+
+Distribution of ambiguous event scales from `disagreement_scale_diagnostics.parquet`:
+
+| Confidence Rule | Tail Size | Ambiguous N | $< 1.5\%$ Count (Share) | 1.5%–5.0% Count (Share) | 5.0%–10.0% Count (Share) | $\ge 10.0\%$ Count (Share) | Strictly Confined to 1.5%–5.0%? |
+|---|---:|---:|---:|---:|---:|---:|---|
+| **Majority** | 10% | 2,349 | 141 (6.00%) | 1,766 (75.18%) | 417 (17.75%) | 25 (1.06%) | **FALSE** |
+| **Majority** | 20% | 1,767 | 0 (0.00%) | 1,593 (90.15%) | 165 (9.34%) | 9 (0.51%) | **FALSE** |
+| **Majority** | 25% | 1,504 | 0 (0.00%) | 1,406 (93.48%) | 90 (5.98%) | 8 (0.53%) | **FALSE** |
+| **Majority** | 30% | 1,210 | 0 (0.00%) | 1,141 (94.30%) | 63 (5.21%) | 6 (0.50%) | **FALSE** |
+| **Unanimous** | 10% | 2,612 | 266 (10.18%) | 1,772 (67.84%) | 496 (18.99%) | 78 (2.99%) | **FALSE** |
+| **Unanimous** | 20% | 2,292 | 149 (6.50%) | 1,733 (75.61%) | 361 (15.75%) | 49 (2.14%) | **FALSE** |
+| **Unanimous** | 25% | 2,076 | 116 (5.59%) | 1,645 (79.24%) | 276 (13.29%) | 39 (1.88%) | **FALSE** |
+| **Unanimous** | 30% | 1,883 | 93 (4.94%) | 1,520 (80.72%) | 234 (12.43%) | 36 (1.91%) | **FALSE** |
+
+---
+
+## 6. 2026 Human Calibration Window Analysis
 
 The three 2026 non-label calibration intervals demonstrate how representations behave in dense areas:
 
@@ -179,17 +230,17 @@ The three 2026 non-label calibration intervals demonstrate how representations b
 | **66.5–69.0k** | 46 (23 HIGH, 23 LOW) | 37 | 9 | 5 | 32 | Multiscale Continuum (Strong to Weak) |
 
 In the dense 66.5–69.0k interval:
-- The 46 raw pivots span across all structural scales: 8 events qualify as STRONG tail, 7 as WEAK tail, and 17 as AMBIGUOUS.
-- This proves empirically that dense trading areas contain a mixture of minor micro-rotations and meaningful turning points that cannot be treated as a uniform structural zone.
+- The 46 raw pivots span across all structural scales: 8 events qualify as STRONG tail, 7 as WEAK tail, and 17 as AMBIGUOUS under Majority T20.
+- This proves empirically that dense trading areas contain a mixture of minor fluctuations and meaningful turning points that cannot be treated as a uniform structural zone.
 
 ---
 
-## 6. Representative QA Visual Charts
+## 7. Representative QA Visual Charts
 
 Seven canonical 4H SVG plots have been generated in `plots/`:
-1. `b1_comp_01_clear_large_turn.svg`: March 2020 reversal (bars 1074–1164) showing unambiguous macro invariant classification.
+1. `b1_comp_01_clear_large_turn.svg`: March 2020 reversal (bars 1074–1164) showing macro invariant classification.
 2. `b1_comp_02_small_local_fluctuation.svg`: Bars 7280–7330 showing sub-1% local noise consolidated or assigned WEAK status.
-3. `b1_comp_03_ambiguous_middle_scale.svg`: Bars 8400–8480 showing intermediate rotations where evidence families diverge.
+3. `b1_comp_03_ambiguous_middle_scale.svg`: Bars 8400–8480 showing intermediate rotations where evidence views diverge.
 4. `b1_comp_04_dual_mediated.svg`: Bars 6065–6115 demonstrating dual candles acting as structural separators.
 5. `b1_comp_05_choppy_range.svg`: Bars 3816–3906 showing dense range trading with preserved candidates.
 6. `b1_comp_06_directional_move.svg`: Bars 2832–2922 showing trending leg with same-type candidates preserved alongside alternating run.
@@ -197,12 +248,14 @@ Seven canonical 4H SVG plots have been generated in `plots/`:
 
 ---
 
-## 7. QA and Verification Status
+## 8. QA and Verification Status
 
 - Master Population Invariance: PASS (all 4,450 frozen IDs preserved).
 - B+C Dual-Barrier Semantics: PASS (145 segments, no cross-barrier hierarchy edge).
 - Candidate Preservation: PASS (865 technical exclusions preserved with `scale = None`).
+- Boundary Censoring Consistency: PASS (418 boundary candidates = 9.39% of master; zero double count).
 - Common Denominator Consistency: PASS ($N = 2,867$ for all resolved comparisons).
 - Unresolved Candidate Handling: PASS (zero forced scale 0 or arbitrary values).
+- Methodological Audit Verification: PASS (all 8 audit claims validated and reflected in code/data).
 - Deterministic Output: PASS (byte-identical rerun verified).
-- Checksums & Manifest: PASS (all 20 production artifacts validated).
+- Checksums & Manifest: PASS (all 23 production artifacts validated).

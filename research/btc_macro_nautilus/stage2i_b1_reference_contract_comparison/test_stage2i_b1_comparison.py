@@ -238,7 +238,121 @@ class TestStage2IB1Comparison(unittest.TestCase):
         self.assertGreaterEqual(len(rows), 7)
         h_row = next(r for r in rows if r["comparison_dimension"] == "Hierarchy Cost Formulation")
         self.assertGreater(h_row["rank_correlation"], 0.95, "Hierarchy min and geo must have r > 0.95")
-        self.assertEqual(h_row["macro_overlap_ge15pct"], 1.0, "Coarse macro structure must be invariant")
+        self.assertAlmostEqual(h_row["macro_overlap_ge15pct"], 61.0 / 104.0, places=4, msg="macro_overlap_ge15pct must be dynamically computed Jaccard (61/104)")
+
+    # Test 14: computed macro overlap values from sets
+    def test_14_computed_macro_overlap_from_sets(self):
+        coarse_table = pq.read_table(ARTIFACT_DIR / "coarse_structure_overlap.parquet")
+        rows = coarse_table.to_pylist()
+        self.assertEqual(len(rows), 2)
+        r15 = next(r for r in rows if r["threshold_pct"] == 15)
+        r25 = next(r for r in rows if r["threshold_pct"] == 25)
+        self.assertEqual(r15["min_hierarchy_count"], 61)
+        self.assertEqual(r15["geo_hierarchy_count"], 104)
+        self.assertEqual(r15["intersection_count"], 61)
+        self.assertAlmostEqual(r15["jaccard_similarity"], 61.0 / 104.0, places=4)
+        self.assertEqual(r15["containment_min_in_geo"], 1.0)
+        self.assertEqual(r25["min_hierarchy_count"], 22)
+        self.assertEqual(r25["geo_hierarchy_count"], 35)
+        self.assertEqual(r25["intersection_count"], 22)
+        self.assertAlmostEqual(r25["jaccard_similarity"], 22.0 / 35.0, places=4)
+        self.assertEqual(r25["containment_min_in_geo"], 1.0)
+
+    # Test 15: valid denominators in all comparisons
+    def test_15_valid_denominators(self):
+        comp_table = pq.read_table(ARTIFACT_DIR / "contract_comparison.parquet")
+        for r in comp_table.to_pylist():
+            self.assertEqual(r["master_N"], 4450)
+            self.assertEqual(r["resolved_N"], 2867)
+            self.assertAlmostEqual(r["coverage"], 2867 / 4450, places=4)
+            self.assertAlmostEqual(r["censored_share"], 418 / 4450, places=4)
+
+    # Test 16: reproducible >=15% and >=25% comparisons
+    def test_16_reproducible_coarse_comparisons(self):
+        cont_table = pq.read_table(ARTIFACT_DIR / "reference_continuous.parquet")
+        resolved = [r for r in cont_table.to_pylist() if r["representation_resolved"]]
+        s_min_15 = {r["event_id"] for r in resolved if r["reference__hierarchy_min_scale"] >= 0.15}
+        s_geo_15 = {r["event_id"] for r in resolved if r["reference__hierarchy_geo_scale"] >= 0.15}
+        s_min_25 = {r["event_id"] for r in resolved if r["reference__hierarchy_min_scale"] >= 0.25}
+        s_geo_25 = {r["event_id"] for r in resolved if r["reference__hierarchy_geo_scale"] >= 0.25}
+        self.assertEqual(len(s_min_15), 61)
+        self.assertEqual(len(s_geo_15), 104)
+        self.assertTrue(s_min_15.issubset(s_geo_15))
+        self.assertEqual(len(s_min_25), 22)
+        self.assertEqual(len(s_geo_25), 35)
+        self.assertTrue(s_min_25.issubset(s_geo_25))
+
+    # Test 17: disagreement range matches empirical data
+    def test_17_disagreement_range_matches_data(self):
+        diag_table = pq.read_table(ARTIFACT_DIR / "disagreement_scale_diagnostics.parquet")
+        rows = diag_table.to_pylist()
+        maj_20 = next(r for r in rows if r["tail_size_pct"] == 20 and r["confidence_rule"] == "majority")
+        self.assertEqual(maj_20["ambiguous_count"], 1767)
+        self.assertEqual(maj_20["count_1_5_to_5pct"], 1593)
+        self.assertEqual(maj_20["count_5_to_10pct"], 165)
+        self.assertEqual(maj_20["count_ge_10pct"], 9)
+        self.assertFalse(maj_20["strictly_confined_1_5_to_5pct"])
+
+    # Test 18: no zero false tail claims
+    def test_18_no_zero_false_tail_claims(self):
+        comp_table = pq.read_table(ARTIFACT_DIR / "contract_comparison.parquet")
+        for r in comp_table.to_pylist():
+            self.assertNotIn("zero false tail", r["information_retention_descriptors"].lower())
+            self.assertNotIn("zero false tail", r["notes"].lower())
+        claim_table = pq.read_table(ARTIFACT_DIR / "claim_validation.parquet")
+        clm1 = next(r for r in claim_table.to_pylist() if r["claim_id"] == "CLM-01-ZERO-FALSE-TAIL")
+        self.assertEqual(clm1["audited_verdict"], "REJECTED_METHODOLOGICALLY")
+
+    # Test 19: no micro scale promotions
+    def test_19_no_micro_scale_promotions(self):
+        master_table = pq.read_table(ARTIFACT_DIR / "master_event_reference.parquet")
+        for r in master_table.to_pylist():
+            self.assertNotEqual(r.get("special_state"), "micro")
+            self.assertNotEqual(r.get("exclusion_reason"), "micro")
+
+    # Test 20: no independent families phrasing
+    def test_20_no_independent_families_phrasing(self):
+        comp_table = pq.read_table(ARTIFACT_DIR / "contract_comparison.parquet")
+        for r in comp_table.to_pylist():
+            self.assertNotIn("independent families", r["cross_design_agreement"].lower())
+            self.assertNotIn("independent evidence", r["cross_design_agreement"].lower())
+
+    # Test 21: no preferred winner or canonical contract chosen
+    def test_21_no_preferred_contract_chosen(self):
+        comp_table = pq.read_table(ARTIFACT_DIR / "contract_comparison.parquet")
+        for r in comp_table.to_pylist():
+            self.assertNotIn("preferred", r["notes"].lower())
+            self.assertNotIn("recommended canonical", r["notes"].lower())
+
+    # Test 22: no censored double count
+    def test_22_no_censored_double_count(self):
+        summary_table = pq.read_table(ARTIFACT_DIR / "contract_comparison.parquet")
+        for r in summary_table.to_pylist():
+            self.assertEqual(r["censored_share"], 418.0 / 4450.0)
+            self.assertNotEqual(r["censored_share"], 420.0 / 4450.0)
+
+    # Test 23: PA_STRUCTURE_CANONICAL.md is untouched
+    def test_23_canonical_untouched(self):
+        canonical_path = MODULE_PATH.parents[2] / "PA_STRUCTURE_CANONICAL.md"
+        if canonical_path.exists():
+            content = canonical_path.read_text(encoding="utf-8")
+            self.assertNotIn("Stage 2I-B1", content)
+            self.assertNotIn("Stage 2I-B2", content)
+
+    # Test 24: Stage 2I-B2 is absent
+    def test_24_stage_b2_absent(self):
+        b2_dir = MODULE_PATH.parent.parent / "stage2i_b2_predictiveness"
+        self.assertFalse(b2_dir.exists(), "Stage 2I-B2 directory must NOT exist")
+
+    # Test 25: all audit diagnostic artifacts exist
+    def test_25_audit_artifacts_exist(self):
+        for name in ("coarse_structure_overlap", "disagreement_scale_diagnostics", "claim_validation"):
+            p_file = ARTIFACT_DIR / f"{name}.parquet"
+            c_file = ARTIFACT_DIR / f"{name}.csv"
+            self.assertTrue(p_file.exists(), f"Missing {p_file}")
+            self.assertTrue(c_file.exists(), f"Missing {c_file}")
+            self.assertGreater(p_file.stat().st_size, 0)
+            self.assertGreater(c_file.stat().st_size, 0)
 
 
 if __name__ == "__main__":
