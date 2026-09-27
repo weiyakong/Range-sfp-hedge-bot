@@ -389,6 +389,52 @@ A downstream implementation must not silently answer these questions.
 
 This ordering prevents a causal recognizer from being optimized against an unexamined or unstable target.
 
+### 7.6 Stage 2I-B1 completed research evidence
+
+Status: **RESEARCH COMPLETE / REFERENCE SEMANTICS REMAIN OPEN**
+
+Implementation and factual-report commit:
+
+`97533acadccf591a9aa026610b7fa00b69e7aebd`
+
+Authoritative factual report:
+
+`docs/research/stage2i_b1_retrospective_reference.md`
+
+Generated artifact root:
+
+`/Users/yeshevika/Documents/Codex/Range-sfp-hedge-bot-data/research/stage2i_b1_retrospective_reference/`
+
+Verified empirical findings:
+
+- all 4,450 frozen Stage 2I-A pivot IDs are preserved;
+- the primary sequence defers all 300 dual events and creates no fictitious same-bar temporal transition;
+- deterministic same-type consolidation leaves 3,226 pivots in the primary alternating sequence;
+- two-sided prominence, minimum/geometric removal hierarchies, and log/volatility scale sweeps show a continuous multiscale population rather than a natural binary separation;
+- minimum two-sided prominence and the primary hierarchy agree strongly (`r = 0.916` on normalized scores);
+- minimum and geometric hierarchy ranks are highly stable (`r = 0.984`);
+- local-volatility normalization changes membership but reduces volatility-regime density drift;
+- the tested asymmetric `outgoing / incoming` retracement-ratio sweep has weak agreement with the magnitude-based designs and a cascade between parameter 0.3 and 0.4;
+- dual extrema can receive unordered two-sided diagnostics, but 4H data still cannot place them in one temporal alternating sequence;
+- year/regime differences remain, while direct dependence on absolute BTC price level is small after log/volatility normalization;
+- no final MICRO/INDEPENDENT labels, reference cutoff, B2 features, zones, signals or trading results were created.
+
+Rejected as a standalone authority:
+
+- the specific tested asymmetric retracement-ratio sweep. Its cascade and weak cross-design agreement make it unsuitable as the sole B1 reference. This does not reject all future retracement formulations.
+
+Remaining OPEN questions:
+
+1. continuous versus ordinal versus confidence-weighted versus partial-tail reference contract;
+2. minimum versus geometric hierarchy emphasis;
+3. whether local-volatility normalization belongs in the reference or remains sensitivity-only;
+4. whether to redesign or exclude the asymmetric retracement arm from consensus;
+5. whether dual outside bars remain deferred or become a distinct unordered state;
+6. boundary-censoring semantics in a future reference;
+7. an explicit ambiguity policy before any B2 target is fixed.
+
+This study does not promote B1 semantics from OPEN to FIXED. Stage 2I-B2 must not start against an implicit target; the B1 contract still requires explicit review/selection or a follow-up refinement study.
+
 ---
 
 ## 8. Stage 2I-C — repeated reaction zones
@@ -609,7 +655,8 @@ As of the Stage 2I-B architecture decision:
 | Pivot `available_from` | FIXED | After second right-hand candle closes |
 | Causal vs post-event namespace | FIXED | Information-status contract |
 | Stage 2I-B architecture | FIXED | Dual-layer: B1 retrospective reference + B2 causal recognition |
-| B1 independent-reaction reference semantics | OPEN | Must be researched before label contract is fixed |
+| B1 retrospective research | COMPLETE EVIDENCE | A/B/C multiscale artifacts and factual report completed |
+| B1 independent-reaction reference semantics | OPEN | Continuous/ordinal/confidence/partial-tail contract still requires explicit selection |
 | B2 causal recognition semantics | OPEN | Must be researched after B1 reference is examined |
 | Dual-candle Stage B treatment | OPEN | No intrabar order in 4H data |
 | Reaction-zone formation | OPEN | Stage 2I-C research |
@@ -619,4 +666,4 @@ As of the Stage 2I-B architecture decision:
 | Fib / VP / SFP / OB overlays | OPEN / LATER | Separate feature families |
 | Legacy `structural_levels.csv` | DEPRECATED | Must not be used as authority |
 
-The next step is Stage 2I-B1 retrospective-reference research. No Stage 2I-B2 causal recognizer should be treated as canonical until the B1 target/reference has been examined and explicitly fixed or revised.
+The next step is explicit review/selection or refinement of the completed B1 evidence. No Stage 2I-B2 causal recognizer should be treated as canonical until the B1 target/reference has been explicitly fixed or revised.

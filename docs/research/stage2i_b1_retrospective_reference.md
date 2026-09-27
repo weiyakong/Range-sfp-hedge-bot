@@ -227,6 +227,10 @@ Generated research root:
 
 `/Users/yeshevika/Documents/Codex/Range-sfp-hedge-bot-data/research/stage2i_b1_retrospective_reference/`
 
+Implementation and factual-report commit:
+
+`97533acadccf591a9aa026610b7fa00b69e7aebd`
+
 Required artifacts:
 
 - `b1_pivot_reference_diagnostics.parquet` — 4,450 rows;
