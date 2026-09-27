@@ -8,7 +8,7 @@ crons = ["*/10 * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "btc-derivatives"
-database_id = "DEPLOY_TIME_D1_DATABASE_ID"
+database_id = "eaefc1f7-7729-425d-84d6-60441db0833c"
 migrations_dir = "migrations"
 
 [vars]
