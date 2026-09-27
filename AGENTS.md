@@ -698,3 +698,27 @@ Stop the entire implementation only when:
 - continuing would require inventing business logic;
 - continuing would corrupt downstream semantics;
 - a destructive or incompatible change is required but not authorized.
+
+---
+
+## 37. Mandatory research claim discipline
+
+For every research or data-analysis task, the following reading order is mandatory:
+
+1. `AGENTS.md`
+2. `docs/DATA_PIPELINE_RULES.md`
+3. `docs/research/RESEARCH_CLAIM_DISCIPLINE.md`
+4. the task-specific canonical methodology / approved specification
+
+`docs/research/RESEARCH_CLAIM_DISCIPLINE.md` is a repository-wide research contract. It applies to analytical code, diagnostics, comparison studies, research reports, and any task that turns computed data into substantive conclusions.
+
+A research/data-analysis task is not complete until its FINAL CLAIM AUDIT has been performed according to that document.
+
+Before final report, commit, or authorized push, verify at minimum that:
+
+- every strong claim traces to an actual computed metric/artifact and denominator;
+- no empirical metric is hard-coded;
+- agreement is not presented as ground-truth correctness;
+- numerical thresholds are not silently promoted into semantic labels;
+- sensitivity variants are not silently promoted into preferred/canonical choices;
+- report wording does not exceed what the computed evidence establishes.
