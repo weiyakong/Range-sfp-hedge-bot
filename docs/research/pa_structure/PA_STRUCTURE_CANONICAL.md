@@ -310,13 +310,24 @@ B1 output is **not** a live signal and **not** a feature available at pivot time
 
 Its role is to provide a transparent structural reference against which causal schemes can later be evaluated.
 
-The concrete B1 definition is still OPEN. Candidate retrospective families include:
+The overall B1 reference semantics remain OPEN, but the candidate-preservation policy below is FIXED for the B1 research/reference module. Candidate retrospective families include:
 
 - two-sided retrospective prominence;
 - retrospective sequence segmentation;
 - refinements derived from Stage A diagnostics.
 
 B1 must compare plausible designs rather than silently choosing an arbitrary cutoff.
+
+**FIXED candidate-preservation policy (B + C):**
+
+- same-type prepass is a technical transform used to construct an alternating representation; it is not a semantic significance filter;
+- a same-type pivot excluded from an alternating representation must remain preserved in the research population with explicit provenance such as `excluded_from_alternating_sequence = true`;
+- such an excluded pivot must not be labelled `micro`, `independent = false`, or assigned semantic `structural scale = 0` solely because of the prepass;
+- dual HIGH+LOW candles remain unordered on 4H data and must not receive fabricated intrabar HIGH→LOW or LOW→HIGH ordering;
+- a dual candle acts as a barrier for same-type prepass runs: pivots of the same type on opposite sides of a dual candle must not be automatically consolidated across that candle;
+- when ambiguity remains, B1 research should preserve the additional candidate rather than discard a potentially meaningful reaction prematurely.
+
+This policy applies to the retrospective research/reference module only. It is not a live Nautilus rule, not a Stage 2I-B2 causal rule, and not a trading filter.
 
 #### Stage 2I-B2 — Causal recognition
 
@@ -369,7 +380,7 @@ The following methodological questions remain OPEN:
 
 1. exact B1 retrospective reference definition;
 2. exact B2 causal confirmation/recognition definition;
-3. representation/treatment of dual HIGH+LOW candles;
+3. exact downstream representation of dual HIGH+LOW candles beyond their fixed unordered/barrier treatment in B1;
 4. denominator choice for any retracement-style measure;
 5. horizon and scale for concepts such as trapped / invalidated;
 6. how to handle ambiguous/unresolved B1 cases rather than forcing a binary label;
@@ -422,6 +433,33 @@ Verified empirical findings:
 Rejected as a standalone authority:
 
 - the specific tested asymmetric retracement-ratio sweep. Its cascade and weak cross-design agreement make it unsuitable as the sole B1 reference. This does not reject all future retracement formulations.
+
+### 7.7 Same-type prepass sensitivity audit and accepted B1 preservation policy
+
+Audit commit:
+
+`6d707801bd2af4b81d046614b19bca4475a49eed`
+
+Authoritative audit report:
+
+`docs/research/stage2i_b1_same_type_prepass_audit.md`
+
+Generated artifact root:
+
+`/Users/yeshevika/Documents/Codex/Range-sfp-hedge-bot-data/research/stage2i_b1_same_type_prepass_audit/`
+
+Verified audit findings:
+
+- the current prepass removed 924 non-dual same-type pivots before the hierarchy;
+- only 88/924 (`9.5%`) had realized adverse departure below 1%;
+- median realized adverse departure was `2.176%`;
+- 271/924 (`29.3%`) exceeded 3%, 88/924 (`9.5%`) exceeded 5%, and 31/924 (`3.4%`) exceeded 7.5%;
+- therefore prepass exclusion alone does not empirically justify semantic `structural scale = 0` or a `micro` label;
+- 77 removals were dual-mediated; dual-aware handling rescued 59 events;
+- dual-aware changes are concentrated in the local hierarchy and coarse structure remained invariant at the 15% and 25% log scales;
+- the audit found no natural binary separation inside the removed population.
+
+**FIXED B1 research/reference decision:** adopt the conservative B + C preservation policy described in §7.2. This decision governs candidate preservation and prepass semantics only. It does not yet choose the full B1 independent-reaction target contract.
 
 Remaining OPEN questions:
 
@@ -646,7 +684,7 @@ Methodological ambiguity must be surfaced as OPEN rather than silently resolved 
 
 ## 15. Current canonical state
 
-As of the Stage 2I-B architecture decision:
+As of the Stage 2I-B1 candidate-preservation decision:
 
 | Layer | Status | Canonical meaning |
 |---|---|---|
@@ -656,9 +694,10 @@ As of the Stage 2I-B architecture decision:
 | Causal vs post-event namespace | FIXED | Information-status contract |
 | Stage 2I-B architecture | FIXED | Dual-layer: B1 retrospective reference + B2 causal recognition |
 | B1 retrospective research | COMPLETE EVIDENCE | A/B/C multiscale artifacts and factual report completed |
+| B1 candidate-preservation / same-type prepass policy | FIXED | Conservative B + C: dual-aware barrier; excluded same-type pivots preserved and not semantically scale-zero |
 | B1 independent-reaction reference semantics | OPEN | Continuous/ordinal/confidence/partial-tail contract still requires explicit selection |
 | B2 causal recognition semantics | OPEN | Must be researched after B1 reference is examined |
-| Dual-candle Stage B treatment | OPEN | No intrabar order in 4H data |
+| Dual-candle B1 prepass treatment | FIXED | Unordered on 4H and acts as a barrier for same-type consolidation; no fabricated intrabar order |
 | Reaction-zone formation | OPEN | Stage 2I-C research |
 | Zone width | OPEN | Must not be assumed fixed yet |
 | Structural boundaries/ranges | OPEN | Stage 2I-D research |
