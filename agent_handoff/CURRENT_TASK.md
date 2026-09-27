@@ -2,11 +2,11 @@
 
 Task ID: `DERIV-COLLECTOR-001`
 
-Status: `PLANNED`
+Status: APPROVED
 
-Active implementation owner: unassigned
+Active implementation owner: Antigravity
 
-Independent reviewer: unassigned
+Independent reviewer: Codex
 
 Last updated: 2026-09-27
 
