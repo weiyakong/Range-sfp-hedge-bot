@@ -80,15 +80,16 @@ The segment-aware B+C rebuild confirms that price-action structure is inherently
 - Segment-aware hierarchical simplification scales correlate strongly between minimum-cost and geometric-cost formulations ($r = 0.968$).
 - Minimum hierarchy removal scale correlates strongly with two-sided retrospective prominence ($r = 0.930$).
 - Consensus mean and median continuous ranks agree at $r = 0.978$.
-- Macro structural pivots at scales $\ge 15\%$ and $\ge 25\%$ exhibit high consistency, but are not identical sets: the Min hierarchy set is an exact mathematical subset of the Geo hierarchy set ($100\%$ containment: 61/61 at $\ge 15\%$, 22/22 at $\ge 25\%$), with Jaccard similarity of $58.65\%$ and $62.86\%$ respectively due to the AM-GM inequality ($\sqrt{ab} \ge \min(a, b)$).
+- Macro structural pivots at scales $\ge 15\%$ and $\ge 25\%$ exhibit high empirical consistency, but are not identical sets: at the tested thresholds, the Min hierarchy set happens to be fully contained within the Geo hierarchy set ($100\%$ empirical containment: 61/61 at $\ge 15\%$, 22/22 at $\ge 25\%$), with Jaccard similarities of $58.65\%$ and $62.86\%$ respectively. For any fixed triplet, the local removal cost satisfies $\sqrt{ab} \ge \min(a, b)$, but this local inequality alone does not establish global set containment for the full iterative hierarchy across all arbitrary thresholds.
 
 ### 2. Is there evidence of natural ordinal boundaries?
-**NO.**
+**NOT DETECTED / NOT SUPPORTED IN TESTED DIAGNOSTICS.**
+Natural ordinal boundaries were not detected / not supported in the tested representations and diagnostics.
 Adjacent-gap analysis reveals:
 - Maximum adjacent scale gap: `0.2541` (at the extreme right tail of historical cycle peaks).
 - Median adjacent scale gap: `0.00000278` ($2.78 \times 10^{-6}$).
 - The ratio of maximum gap to median gap is large, but there are no persistent empty gaps separating intermediate levels.
-- Across the entire spectrum from 0.5% to 15%, the distribution forms an unbroken continuum. Forced clustering would impose artificial boundaries that do not exist in market geometry.
+- Across the entire spectrum from 0.5% to 15%, the distribution forms an unbroken continuum. While this does not prove that natural ordinal structure can never exist under any conceivable scheme, forced clustering under the tested representations would impose artificial boundaries that do not correspond to observed market geometry.
 
 ### 3. How strongly do Q3/Q4/Q5 categories depend on arbitrary binning?
 **SUBSTANTIALLY.**
@@ -98,7 +99,7 @@ Quantile boundaries divide an unbroken distribution into equal-frequency slices 
 - Therefore, quantile classes must be recognized as arbitrary discretization tools, not genuine structural regimes.
 
 ### 4. What does ORD-SURVIVAL preserve and what does it lose?
-- **Preserved:** Clear, physical interpretation. An event's tier directly indicates up to what log percentage excursion (from 0.5% to 25%) the pivot remained unabsorbed by larger moves. Tiers 9 ($\ge 15\%$) and 10 ($\ge 25\%$) act as stable macro invariants.
+- **Preserved:** Clear, physical interpretation. An event's tier directly indicates up to what log percentage excursion (from 0.5% to 25%) the pivot remained unabsorbed by larger moves. Tiers 9 ($\ge 15\%$) and 10 ($\ge 25\%$) act as stable macro structural anchors.
 - **Lost:** Fine intra-tier distinctions. Approximately 16.4% of event pairs become tied. A move that survived 2.9% is placed in the same bucket (Tier 4: $\ge 2\%$) as a move that survived 2.1%.
 
 ### 5. Can stable agreement tails be constructed?
@@ -129,7 +130,7 @@ As tail size widens, the ambiguous middle contracts steadily, but remains domina
   - Rank distributions remain uniform across all calendar years.
 - **Across Volatility Regimes (Tertiles):**
   - Raw log excursion median expands from `0.0192` in low vol to `0.0440` in high vol (~2.3x expansion).
-  - Volatility-normalized prominence median remains remarkably invariant across regimes: `2.10x` in low vol, `2.00x` in medium vol, and `1.87x` in high vol.
+  - Volatility normalization substantially reduces volatility-regime drift relative to raw-log scale (raw scale median expands ~2.3x from 0.0192 to 0.0440, whereas volatility-normalized prominence median exhibits residual variation of 2.10x in low vol, 2.00x in medium vol, and 1.87x in high vol).
 - **Across Hierarchy Formulations:**
   - Minimum vs Geometric hierarchy exhibits $r = 0.968$. Disagreements are localized to intermediate boundary merges and the AM-GM expansion in Geo hierarchy.
 
@@ -138,13 +139,13 @@ As tail size widens, the ambiguous middle contracts steadily, but remains domina
 - **Partial-Tail Loss:** Truncation of the middle distribution. If a downstream pipeline only consumes strong/weak tails, between `62.8%` and `94.3%` of all market events are discarded as ambiguous or unresolved.
 
 ### 11. Are coarse / high-survival pivots preserved across representations?
-**YES (WITH MATHEMATICAL SUBSET RELATION).**
+**YES (WITH EMPIRICAL CONTAINMENT AT TESTED MACRO SCALES).**
 Across all tested continuous, ordinal, and confidence representations, coarse macro turning points (e.g. March 2020 low, November 2021 high, November 2022 low) are preserved:
 - They achieve rank $> 0.95$ in continuous representations.
 - They fall into Tier 9 or 10 in ORD-SURVIVAL.
 - They fall into Q3 in ORD-Q3, Q4 in ORD-Q4, and Q5 in ORD-Q5.
 - They belong to the STRONG tail under both unanimous and majority confidence rules.
-- Between Min and Geo hierarchy formulations, Min at $\ge 15\%$ is 100% contained in Geo ($61/61$), while Geo retains 43 additional pivots (Jaccard similarity = $58.65\%$).
+- Between Min and Geo hierarchy formulations, Min at $\ge 15\%$ is empirically 100% contained in Geo ($61/61$), while Geo retains 43 additional pivots (Jaccard similarity = $58.65\%$). At $\ge 25\%$, Min is empirically 100% contained in Geo ($22/22$), with Geo retaining 13 additional pivots (Jaccard similarity = $62.86\%$).
 
 ### 12. Handling of special states and censoring
 The pipeline maintains a strict 6-state taxonomy with zero data loss across all 4,450 raw pivots:
@@ -156,21 +157,22 @@ The pipeline maintains a strict 6-state taxonomy with zero data loss across all 
 6. `ordinary_resolved_sequence_event` (2,867 events): Fully resolved sequence events with two-sided context.
 
 ### 13. Is there empirical evidence favoring a single representation?
-**NO.**
-The empirical evidence decisively demonstrates that no single representation is universally sufficient:
+**NO TESTED SINGLE REPRESENTATION DOMINATED.**
+No tested single representation dominated all evaluated criteria:
 - A continuous scalar collapses multi-dimensional structural attributes into a single projection.
 - Ordinal representations suffer from arbitrary boundary placement and high tie rates.
 - Confidence tails discard the majority of market events as ambiguous.
+This finding reflects the trade-offs observed across the tested formulations; it does not assert a universal impossibility theorem for all single representations.
 
 ### 14. Does the evidence support a layered representation?
-**YES (EMPIRICAL CONCLUSION / NO CANONICAL SELECTION).**
-The data support a **layered structural output architecture**:
+**COMPATIBLE CANDIDATE ARCHITECTURE (NO CANONICAL SELECTION).**
+The observed trade-offs are compatible with a layered representation as a candidate architecture for user review:
 1. **Foundation Layer (Continuous Components):** Retains the full multi-dimensional structural geometry (`CONT-COMPONENTS`: prominence min/geo/balance, hierarchy min/geo, local volatility normalization).
 2. **Standardized Comparison Layer (Continuous Rank):** Provides normalized percentile ranks (`CONT-RANK` / `CONT-CONSENSUS`) for scale-free ranking.
 3. **Discrete Structural Tier View (ORD-SURVIVAL):** Translates continuous scale into actionable physical log survival tiers without arbitrary equal-frequency distortion.
 4. **Agreement Concordance Filter (Confidence Tails):** Provides explicit strong/weak concordance subsets for downstream consumers requiring high agreement across retrospective views, while preserving ambiguous and unresolved candidates.
 
-*Note:* Selection of a canonical reference representation is explicitly **DEFERRED** to Stage 2I-B2. Confidence represents cross-view concordance, not objective certainty.
+*Note:* A layered representation remains a plausible candidate for user review, but is not selected as canonical or final architecture. No preferred sensitivity variant is selected by this comparison study. The final B1 reference contract remains OPEN pending user review, and must be selected or refined before Stage 2I-B2 is launched. Confidence represents cross-view concordance, not objective certainty.
 
 ---
 
@@ -187,20 +189,20 @@ A rigorous methodological patch audit was conducted on the Stage 2I-B1 findings 
 | **CLM-03** | Disagreement is strictly concentrated in 1.5% to 5.0% scale | Asserted as strictly concentrated | **REFUTED_EMPIRICALLY** | Predominantly in 1.5%–5.0% (90.15% Majority T20, 75.61% Unanimous T20), but 9.85% (Majority) and 24.39% (Unanimous) extend outside this band (up to 10%+). |
 | **CLM-04** | Scale < 1% fluctuations are micro and consistently identified in weak tail | Asserted as micro fluctuations | **REJECTED_METHODOLOGICALLY** | Preservation contract prohibits semantic micro label. Under Unanimous T20, 14.07% of <1% events are AMBIGUOUS rather than WEAK. |
 | **CLM-05** | Tail membership is stable across years | Asserted as stable membership | **REFUTED_CONCEPTUALLY_AND_EMPIRICALLY** | Events occur at single points in time. Annual tail shares drift significantly with market regimes (Strong share 9.01% in 2025 to 40.58% in 2021). |
-| **CLM-06** | Coarse macro pivots >=15% are 100% invariant across hierarchy formulations | Hardcoded as 1.0 (100% identical sets) | **QUALIFIED_EMPIRICALLY** | Min hierarchy ($N=61$) is 100% contained in Geo hierarchy ($N=104$), but Geo contains 43 additional pivots at $\ge 15\%$. Jaccard similarity is 58.65%. |
-| **CLM-07** | CONF-MAJORITY-T20 is the preferred reference representation | Selected as preferred winner | **REJECTED_BY_SCOPE** | Stage 2I-B1 is purely exploratory. No preferred winner or canonical contract may be chosen before Stage 2I-B2. |
+| **CLM-06** | Coarse macro pivots >=15% are 100% invariant across hierarchy formulations | Hardcoded as 1.0 (100% identical sets) | **QUALIFIED_EMPIRICALLY** | Min hierarchy ($N=61$) is empirically 100% contained in Geo hierarchy ($N=104$), but Geo contains 43 additional pivots at $\ge 15\%$. Jaccard similarity is 58.65%. Local inequality does not establish a universal global containment theorem. |
+| **CLM-07** | CONF-MAJORITY-T20 is the preferred reference representation | Selected as preferred winner | **REJECTED_BY_SCOPE** | Stage 2I-B1 is purely exploratory. No preferred sensitivity variant is selected by this comparison study. The final B1 reference contract remains OPEN pending user review, and must be selected/refined before Stage 2I-B2 is launched. |
 | **CLM-08** | Censored share is $(\text{len}(\text{boundary\_ids}) + 2) / 4450$ | Calculated as $420 / 4450$ (9.4382%) | **CORRECTED_MATHEMATICALLY** | `boundary_ids` already includes the 2 dataset edge survivors. Correct formula is $\text{len}(\text{boundary\_ids}) / \text{len}(\text{events}) = 418 / 4450$ ($9.3933\%$). |
 
 ### 5.2 Coarse Structure Overlap ($\ge 15\%$ and $\ge 25\%$)
 
 Computed directly from empirical sets in `coarse_structure_overlap.parquet`:
 
-| Scale Threshold | Min Hierarchy N | Geo Hierarchy N | Intersection N | Union N | Min in Geo Containment | Geo in Min Containment | Jaccard Similarity | Mathematical Subset |
+| Scale Threshold | Min Hierarchy N | Geo Hierarchy N | Intersection N | Union N | Min in Geo Containment | Geo in Min Containment | Jaccard Similarity | Empirical Full Containment |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
-| **$\ge 15\%$** | 61 | 104 | 61 | 104 | **100.00%** | 58.65% | **58.65%** | **TRUE** (Min $\subseteq$ Geo) |
-| **$\ge 25\%$** | 22 | 35 | 22 | 35 | **100.00%** | 62.86% | **62.86%** | **TRUE** (Min $\subseteq$ Geo) |
+| **$\ge 15\%$** | 61 | 104 | 61 | 104 | **100.00%** | 58.65% | **58.65%** | **TRUE** (Min $\subseteq$ Geo observed) |
+| **$\ge 25\%$** | 22 | 35 | 22 | 35 | **100.00%** | 62.86% | **62.86%** | **TRUE** (Min $\subseteq$ Geo observed) |
 
-*Mathematical Explanation:* By the AM-GM inequality, $\sqrt{ab} \ge \min(a, b)$. The geometric-mean removal cost is strictly greater than or equal to the minimum removal cost for every triangle. Consequently, every pivot retained in the Min hierarchy at scale $\theta$ is guaranteed to be retained in the Geo hierarchy at scale $\ge \theta$. Geo retains additional pivots, resulting in a Jaccard similarity of 58.65% at $\ge 15\%$ and 62.86% at $\ge 25\%$.
+*Methodological Note:* For a single isolated triplet, the arithmetic-geometric inequality ensures that $\sqrt{ab} \ge \min(a, b)$. However, because removal costs determine the dynamic removal sequence and therefore alter subsequent structural neighbor pairings in an iterative simplification algorithm, this local inequality alone does not establish global set containment for the full iterative hierarchy. The 100% containment of Min in Geo ($61/61$ at $\ge 15\%$ and $22/22$ at $\ge 25\%$) is an empirical observation for these tested macro thresholds, not a proven universal theorem for every arbitrary threshold $\theta$.
 
 ### 5.3 Disagreement Scale Diagnostics
 
@@ -238,7 +240,7 @@ In the dense 66.5–69.0k interval:
 ## 7. Representative QA Visual Charts
 
 Seven canonical 4H SVG plots have been generated in `plots/`:
-1. `b1_comp_01_clear_large_turn.svg`: March 2020 reversal (bars 1074–1164) showing macro invariant classification.
+1. `b1_comp_01_clear_large_turn.svg`: March 2020 reversal (bars 1074–1164) showing macro turning point classification (STRONG confidence).
 2. `b1_comp_02_small_local_fluctuation.svg`: Bars 7280–7330 showing sub-1% local noise consolidated or assigned WEAK status.
 3. `b1_comp_03_ambiguous_middle_scale.svg`: Bars 8400–8480 showing intermediate rotations where evidence views diverge.
 4. `b1_comp_04_dual_mediated.svg`: Bars 6065–6115 demonstrating dual candles acting as structural separators.

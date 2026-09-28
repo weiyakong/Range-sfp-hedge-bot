@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib.util
 import math
 from pathlib import Path
+import subprocess
 import sys
 import unittest
 
@@ -354,6 +355,64 @@ class TestStage2IB1Comparison(unittest.TestCase):
             self.assertGreater(p_file.stat().st_size, 0)
             self.assertGreater(c_file.stat().st_size, 0)
 
+    # Test 26: methodology wording discipline
+    def test_26_methodology_wording_discipline(self):
+        repo_root = Path(__file__).resolve().parents[3]
+        doc_path = repo_root / "docs" / "research" / "stage2i_b1_reference_contract_comparison.md"
+        self.assertTrue(doc_path.exists(), f"Missing {doc_path}")
+        content = doc_path.read_text(encoding="utf-8")
+
+        # 1. Report does NOT state B1 is selected in B2
+        self.assertNotIn("deferred to Stage 2I-B2", content)
+        self.assertNotIn("chosen before Stage 2I-B2", content)
+
+        # 2. Report explicitly states B1 contract is selected/refined BEFORE B2 is launched
+        self.assertIn("must be selected/refined before Stage 2I-B2 is launched", content)
+
+        # 3. No global theorem "Min ⊆ Geo for every θ"
+        self.assertNotIn("proves that the coarse macro structure of the Min hierarchy is a mathematical subset", content)
+        self.assertNotIn("strictly contained within the Geometric-cost macro structure for any given scale threshold", content)
+
+        # 4. Exact empirical containment verified
+        self.assertIn("61/61 at $\\ge 15\\%$", content)
+        self.assertIn("22/22 at $\\ge 25\\%$", content)
+        overlap_table = pq.read_table(ARTIFACT_DIR / "coarse_structure_overlap.parquet")
+        rows = {r["threshold_pct"]: r for r in overlap_table.to_pylist()}
+        self.assertEqual(rows[15]["min_hierarchy_count"], 61)
+        self.assertEqual(rows[15]["geo_hierarchy_count"], 104)
+        self.assertEqual(rows[15]["intersection_count"], 61)
+        self.assertEqual(rows[25]["min_hierarchy_count"], 22)
+        self.assertEqual(rows[25]["geo_hierarchy_count"], 35)
+        self.assertEqual(rows[25]["intersection_count"], 22)
+
+        # 5. Volatility-normalized metric is NOT called invariant
+        self.assertNotIn("remains remarkably invariant across regimes: 2.10x, 2.00x, 1.87x", content)
+        self.assertIn("substantially reduces volatility-regime drift", content)
+
+        # 6. Ordinal boundaries: "not detected / not supported", not universally refuted
+        self.assertIn("NOT DETECTED / NOT SUPPORTED IN TESTED DIAGNOSTICS", content)
+        self.assertNotIn("UNIVERSALLY REFUTED", content)
+
+        # 7. Single representation: "no tested representation dominated", not universally refuted
+        self.assertIn("NO TESTED SINGLE REPRESENTATION DOMINATED", content)
+        self.assertNotIn("single representation is universally impossible", content.lower())
+
+        # 8. Layered representation remains candidate, not canonical
+        self.assertIn("COMPATIBLE CANDIDATE ARCHITECTURE (NO CANONICAL SELECTION)", content)
+        self.assertNotIn("layered representation is the canonical architecture", content.lower())
+
+        # 9. PA_STRUCTURE_CANONICAL.md is untouched
+        canonical_path = repo_root / "docs" / "research" / "pa_structure" / "PA_STRUCTURE_CANONICAL.md"
+        self.assertTrue(canonical_path.exists())
+        # Canonical spec has not been modified in worktree
+        cmd = subprocess.run(["git", "diff", "HEAD", "--", str(canonical_path)], capture_output=True, text=True, cwd=repo_root)
+        self.assertEqual(cmd.stdout.strip(), "")
+
+        # 10. Stage B2 directory is absent
+        b2_dir = Path(__file__).resolve().parents[1] / "stage2i_b2_predictiveness"
+        self.assertFalse(b2_dir.exists(), "Stage 2I-B2 directory must NOT exist")
+
 
 if __name__ == "__main__":
     unittest.main()
+

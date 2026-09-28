@@ -1359,7 +1359,7 @@ def run_pipeline(
             "containment_min_in_geo": c_min_in_geo,
             "containment_geo_in_min": c_geo_in_min,
             "exact_mathematical_subset": c_min_in_geo == 1.0,
-            "finding_notes": f"Min hierarchy is 100% contained in Geo hierarchy at scale >={int(thresh*100)}%; Geo retains {len(s_geo) - inter} additional pivots (Jaccard = {jacc:.2%}).",
+            "finding_notes": f"At scale >={int(thresh*100)}%, Min hierarchy (N={len(s_min)}) is empirically 100% contained in Geo hierarchy (N={len(s_geo)}); Geo retains {len(s_geo) - inter} additional pivots (Jaccard = {jacc:.2%}). Local inequality sqrt(a*b) >= min(a,b) alone does not establish global set containment for the full iterative hierarchy.",
         })
 
     # 13C. Disagreement Scale Diagnostics Artifact (Audited Section 8)
@@ -1435,14 +1435,14 @@ def run_pipeline(
             "claim_statement": "Coarse macro pivots >=15% are 100% invariant across hierarchy formulations",
             "original_status": "Hardcoded as 1.0 (100% identical sets)",
             "audited_verdict": "QUALIFIED_EMPIRICALLY",
-            "audited_correction": f"Min hierarchy (N=61) is 100% contained in Geo hierarchy (N=104), but Geo contains 43 additional pivots at >=15%. Jaccard similarity is 58.65%.",
+            "audited_correction": f"Min hierarchy (N=61) is 100% contained in Geo hierarchy (N=104) at >=15%, but Geo contains 43 additional pivots. Jaccard similarity is 58.65%. Local inequality does not establish a universal global containment theorem.",
         },
         {
             "claim_id": "CLM-07-PREFERRED-CONTRACT-SELECTION",
             "claim_statement": "CONF-MAJORITY-T20 is the preferred reference representation",
             "original_status": "Selected as preferred winner",
             "audited_verdict": "REJECTED_BY_SCOPE",
-            "audited_correction": "Stage 2I-B1 is purely exploratory. No preferred winner or canonical contract may be chosen before Stage 2I-B2.",
+            "audited_correction": "Stage 2I-B1 is purely exploratory. No preferred sensitivity variant is selected by this comparison study. The final B1 reference contract remains OPEN pending user review, and must be selected/refined before Stage 2I-B2 is launched.",
         },
         {
             "claim_id": "CLM-08-CENSORED-SHARE-DOUBLE-COUNT",
@@ -1532,7 +1532,7 @@ def run_pipeline(
     svg1 = _svg_chart(
         candles, events, chart_info_map, 1074, 1164,
         "Representative Case 1 — Clear Large Turn / Major Structural Reversal",
-        "Bars 1074-1164: March 2020 crash and explosive turn (macro invariants exhibit STRONG confidence)",
+        "Bars 1074-1164: March 2020 crash and explosive turn (macro turning point exhibits STRONG confidence)",
     )
     atomic_text(plots_dir / "b1_comp_01_clear_large_turn.svg", svg1)
 
@@ -1716,8 +1716,8 @@ def run_pipeline(
             "macro_threshold_15pct_jaccard": jaccard_min_geo_15,
             "macro_threshold_25pct_min_in_geo_containment": 1.0,
             "macro_threshold_25pct_jaccard": jaccard_min_geo_25,
-            "is_exact_mathematical_subset": True,
-            "stability_description": "Min hierarchy pivots are 100% contained in Geo hierarchy, but Geo retains additional pivots at the same threshold due to arithmetic-geometric inequality.",
+            "empirical_full_containment_at_tested_thresholds": True,
+            "stability_description": "At the tested macro thresholds (>=15% and >=25%), Min hierarchy pivots are empirically 100% contained in Geo hierarchy. While local triplet costs satisfy sqrt(a*b) >= min(a,b), this local property alone does not establish global set containment for the full iterative hierarchy.",
         },
         "2026_calibration_counts": {
             "interval_59_0_to_60_5k": sum(1 for r in calibration_rows if r["calibration_interval"] == "59.0-60.5k"),
