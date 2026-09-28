@@ -182,6 +182,13 @@ Never silently choose the intrabar path that improves performance.
 
 If strategy profitability materially depends on unresolved intrabar ordering, 1m OHLCV is insufficient for a definitive conclusion.
 
+For Backtester V2, the approved policy is stricter: simulate both continuous
+OHLC paths (`O→H→L→C` and `O→L→H→C`), re-evaluate cross-margin liquidation
+after every exposure-changing event, retain the worst admissible strategy
+outcome, and persist materially different path outcomes as
+`AMBIGUOUS_INTRABAR`. A passive fill has bar-time resolution only; an exact
+timestamp must not be inferred from the candle open.
+
 ---
 
 ## 9. Fees, funding, spread, and slippage
@@ -297,6 +304,15 @@ Every material backtest must preserve:
 - whether any protected period had been inspected previously.
 
 Failed and rejected experiments must also remain in the research record.
+
+Material Backtester V2 runs must be atomically published with a checksum
+manifest. The record includes full engine configuration, strategy identity and
+source type, data-manifest fingerprint and tested range, Git commit and dirty
+state, executed-code checksums, pending/rejected orders, and intrabar ambiguity
+logs. Liquidation trigger and modeled execution prices are separate fields.
+Absent historically verified Mark Price, funding, maintenance tiers, or
+liquidation execution evidence must produce `NOT VERIFIED` with explicit
+missing-input issues rather than a claim of exchange-accurate execution.
 
 ---
 
