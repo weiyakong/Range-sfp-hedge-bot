@@ -397,22 +397,137 @@ class TestStage2IB1Comparison(unittest.TestCase):
         self.assertIn("NO TESTED SINGLE REPRESENTATION DOMINATED", content)
         self.assertNotIn("single representation is universally impossible", content.lower())
 
-        # 8. Layered representation remains candidate, not canonical
-        self.assertIn("COMPATIBLE CANDIDATE ARCHITECTURE (NO CANONICAL SELECTION)", content)
+        # 8. Layered representation is now the canonical B1 contract (user decision recorded)
+        self.assertIn("COMPATIBLE CANDIDATE ARCHITECTURE", content)
+        self.assertIn("USER-SELECTED AS CANONICAL B1 CONTRACT", content)
         self.assertNotIn("layered representation is the canonical architecture", content.lower())
 
-        # 9. PA_STRUCTURE_CANONICAL.md is untouched
+        # 9. PA_STRUCTURE_CANONICAL.md exists and records the layered contract decision
         canonical_path = repo_root / "docs" / "research" / "pa_structure" / "PA_STRUCTURE_CANONICAL.md"
         self.assertTrue(canonical_path.exists())
-        # Canonical spec has not been modified in worktree
-        cmd = subprocess.run(["git", "diff", "HEAD", "--", str(canonical_path)], capture_output=True, text=True, cwd=repo_root)
-        self.assertEqual(cmd.stdout.strip(), "")
+        canonical_content = canonical_path.read_text(encoding="utf-8")
+        self.assertIn("FIXED (LAYERED)", canonical_content)
+        self.assertIn("7.8", canonical_content)
 
         # 10. Stage B2 directory is absent
         b2_dir = Path(__file__).resolve().parents[1] / "stage2i_b2_predictiveness"
         self.assertFalse(b2_dir.exists(), "Stage 2I-B2 directory must NOT exist")
 
+    # Test 27: B1 layered contract is fixed with correct 4-layer structure
+    def test_27_b1_layered_contract_fixed(self):
+        repo_root = Path(__file__).resolve().parents[3]
+        canonical_path = repo_root / "docs" / "research" / "pa_structure" / "PA_STRUCTURE_CANONICAL.md"
+        self.assertTrue(canonical_path.exists(), f"Missing {canonical_path}")
+        content = canonical_path.read_text(encoding="utf-8")
+
+        # 1. Canonical B1 contract is LAYERED
+        self.assertIn("FIXED (LAYERED)", content)
+        self.assertIn("7.8", content)
+
+        # 2. Canonical enumerates exactly 4 logical layers by heading
+        self.assertIn("Layer 1 — Structural Components", content)
+        self.assertIn("Layer 2 — Continuous Ordering", content)
+        self.assertIn("Layer 3 — Structural Survival Scale", content)
+        self.assertIn("Layer 4 — Cross-View Agreement States", content)
+
+        # 3. Continuous layer includes CONT-RANK, CONT-CONSENSUS-MEAN, CONT-CONSENSUS-MEDIAN
+        self.assertIn("reference__rank_consensus_mean", content)
+        self.assertIn("reference__rank_consensus_median", content)
+        self.assertIn("reference__rank_prominence_min", content)
+
+        # 4. Survival layer = ORD-SURVIVAL (canonical field name)
+        self.assertIn("reference__ord_survival_scale", content)
+        # ORD-Q3/Q4/Q5 not in canonical contract
+        self.assertNotIn("ORD-Q3/Q4/Q5 are part of the canonical", content.lower())
+
+        # 5. Agreement layer includes all 8 variants: 10/20/25/30 × unanimous/majority
+        for tail in ("t10", "t20", "t25", "t30"):
+            self.assertIn(f"reference__conf_unanimous_{tail}", content)
+            self.assertIn(f"reference__conf_majority_{tail}", content)
+
+        # 6. No preferred tail
+        self.assertNotIn("preferred tail", content.lower())
+        self.assertNotIn("preferred tail size", content.lower())
+
+        # 7. Q3/Q4/Q5 are diagnostic only, not canonical contract
+        self.assertIn("ORD-Q3, ORD-Q4, ORD-Q5", content)
+        self.assertIn("NOT part of the canonical layered B1 contract", content)
+
+        # 8. Unresolved states preserved (None, not 0/False)
+        self.assertIn("UNRESOLVED", content)
+        self.assertIn("None", content)
+
+        # 9. B1 retrospective / B2 causal separation preserved
+        self.assertIn("must never be used as B2 predictor inputs or live inference features", content)
+
+        # 10. Stage B2 directory is absent
+        b2_dir = Path(__file__).resolve().parents[1] / "stage2i_b2_predictiveness"
+        self.assertFalse(b2_dir.exists(), "Stage 2I-B2 directory must NOT exist")
+
+        # Verify artifact join structure: all 4 layer artifacts exist
+        for artifact_name in (
+            "reference_continuous.parquet",
+            "reference_ordinal.parquet",
+            "reference_confidence.parquet",
+            "master_event_reference.parquet",
+        ):
+            self.assertTrue((ARTIFACT_DIR / artifact_name).exists(), f"Missing {artifact_name}")
+
+        # Verify Layer 1 fields exist in reference_continuous.parquet
+        cont_table = pq.read_table(ARTIFACT_DIR / "reference_continuous.parquet")
+        cont_schema_names = set(cont_table.schema.names)
+        for field in (
+            "reference__prominence_min_log",
+            "reference__prominence_geo_log",
+            "reference__prominence_balance",
+            "reference__prominence_vol_norm",
+            "reference__hierarchy_min_scale",
+            "reference__hierarchy_geo_scale",
+        ):
+            self.assertIn(field, cont_schema_names, f"Missing Layer 1 field: {field}")
+
+        # Verify Layer 2 fields exist
+        for field in (
+            "reference__rank_prominence_min",
+            "reference__rank_hierarchy_min",
+            "reference__rank_consensus_mean",
+            "reference__rank_consensus_median",
+        ):
+            self.assertIn(field, cont_schema_names, f"Missing Layer 2 field: {field}")
+
+        # Verify Layer 3 field exists in reference_ordinal.parquet
+        ord_table = pq.read_table(ARTIFACT_DIR / "reference_ordinal.parquet")
+        self.assertIn("reference__ord_survival_scale", set(ord_table.schema.names))
+
+        # Verify Layer 4 fields exist in reference_confidence.parquet
+        conf_table = pq.read_table(ARTIFACT_DIR / "reference_confidence.parquet")
+        conf_schema_names = set(conf_table.schema.names)
+        for tail in ("t10", "t20", "t25", "t30"):
+            for rule in ("unanimous", "majority"):
+                field = f"reference__conf_{rule}_{tail}"
+                self.assertIn(field, conf_schema_names, f"Missing Layer 4 field: {field}")
+
+        # Verify unresolved events carry UNRESOLVED state (spot-check Layer 4 on non-resolved rows)
+        conf_rows = conf_table.to_pylist()
+        unresolved_rows = [r for r in conf_rows if not r["representation_resolved"]]
+        self.assertGreater(len(unresolved_rows), 0, "Expected unresolved rows in confidence artifact")
+        sample = unresolved_rows[0]
+        for tail in ("t10", "t20", "t25", "t30"):
+            for rule in ("unanimous", "majority"):
+                field = f"reference__conf_{rule}_{tail}"
+                self.assertEqual(sample[field], "UNRESOLVED", f"Unresolved row should have UNRESOLVED in {field}")
+
+        # Verify master population size
+        master_table = pq.read_table(ARTIFACT_DIR / "master_event_reference.parquet")
+        self.assertEqual(master_table.num_rows, 4450)
+
+        # Verify all 4 artifacts share same number of rows
+        self.assertEqual(cont_table.num_rows, 4450)
+        self.assertEqual(ord_table.num_rows, 4450)
+        self.assertEqual(conf_table.num_rows, 4450)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

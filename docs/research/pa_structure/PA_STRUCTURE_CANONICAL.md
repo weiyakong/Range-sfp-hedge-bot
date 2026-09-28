@@ -461,9 +461,9 @@ Verified audit findings:
 
 **FIXED B1 research/reference decision:** adopt the conservative B + C preservation policy described in §7.2. This decision governs candidate preservation and prepass semantics only. It does not yet choose the full B1 independent-reaction target contract.
 
-Remaining OPEN questions:
+Remaining OPEN questions (after sensitivity audit):
 
-1. continuous versus ordinal versus confidence-weighted versus partial-tail reference contract;
+1. ~~continuous versus ordinal versus confidence-weighted versus partial-tail reference contract~~ — **RESOLVED: user selected LAYERED contract; see §7.8.**
 2. minimum versus geometric hierarchy emphasis;
 3. whether local-volatility normalization belongs in the reference or remains sensitivity-only;
 4. whether to redesign or exclude the asymmetric retracement arm from consensus;
@@ -471,7 +471,147 @@ Remaining OPEN questions:
 6. boundary-censoring semantics in a future reference;
 7. an explicit ambiguity policy before any B2 target is fixed.
 
-This study does not promote B1 semantics from OPEN to FIXED. Stage 2I-B2 must not start against an implicit target; the B1 contract still requires explicit review/selection or a follow-up refinement study.
+This study does not promote B1 semantics from OPEN to FIXED for all questions. Question 1 above has been explicitly resolved by user decision; see §7.8. Stage 2I-B2 must not start against an implicit target; questions 2–7 remain OPEN.
+
+---
+
+### 7.8 B1 reference contract — user-approved decision: LAYERED
+
+**Status: FIXED by explicit user decision.**
+
+Decision commit: see commit message `docs: Stage 2I-B1 fix layered reference contract` on branch `archive/btc-macro-nautilus-2026-09-03`.
+
+**Decision:** The Stage 2I-B1 retrospective reference contract is LAYERED.
+
+**Rationale (user-stated):** At the research stage, the maximum amount of already-computed retrospective structural information must be preserved per pivot for later analysis rather than discarding any dimension prematurely.
+
+This is an information-preservation decision, not an empirical proof that a layered representation is superior to alternatives. No alternative is declared inferior.
+
+**What the layered contract means:**
+
+For each B1 pivot event, the reference contract simultaneously exposes all of the following already-computed retrospective outputs, joined by `event_id`:
+
+#### Layer 1 — Structural Components (CONT-COMPONENTS)
+
+**Status: FIXED.**
+
+Source artifact: `reference_continuous.parquet` (artifact root: `stage2i_b1_reference_contract_comparison/`).
+
+Fields retained in canonical contract:
+
+| Field name | Description |
+|---|---|
+| `reference__prominence_min_log` | Two-sided retrospective prominence, minimum of left/right excursion (log scale) |
+| `reference__prominence_geo_log` | Two-sided retrospective prominence, geometric mean of left/right excursion (log scale) |
+| `reference__prominence_balance` | Balance ratio: `min / geo` — relative symmetry of the two-sided excursion |
+| `reference__prominence_vol_norm` | Prominence normalized by local TR-42 volatility estimate |
+| `reference__hierarchy_min_scale` | Removal scale under minimum-cost iterative simplification |
+| `reference__hierarchy_geo_scale` | Removal scale under geometric-mean-cost iterative simplification |
+
+These are the raw retrospective structural coordinates of a pivot. They are not reduced to a single score. Downstream consumers may use any combination or projection.
+
+Unresolved/censored events carry `None` for all Layer 1 fields. No `0` or placeholder is substituted.
+
+#### Layer 2 — Continuous Ordering (CONT-RANK and CONT-CONSENSUS)
+
+**Status: FIXED.**
+
+Source artifact: `reference_continuous.parquet`.
+
+Fields retained in canonical contract:
+
+| Field name | Description |
+|---|---|
+| `reference__rank_prominence_min` | Percentile rank of `prominence_min_log` across the resolved population |
+| `reference__rank_hierarchy_min` | Percentile rank of `hierarchy_min_scale` across the resolved population |
+| `reference__rank_consensus_mean` | Unweighted mean of multiple retrospective view ranks — scale-free consensus |
+| `reference__rank_consensus_median` | Unweighted median of multiple retrospective view ranks — outlier-resistant consensus |
+
+None of these ranks is declared the "true strength" of a pivot. They are distinct retrospective structural rankings. `CONT-CONSENSUS-MEAN` and `CONT-CONSENSUS-MEDIAN` are not selected as preferred over the other; both are preserved.
+
+Unresolved/censored events carry `None` for all Layer 2 fields.
+
+#### Layer 3 — Structural Survival Scale (ORD-SURVIVAL)
+
+**Status: FIXED.**
+
+Source artifact: `reference_ordinal.parquet`.
+
+Field retained in canonical contract:
+
+| Field name | Description |
+|---|---|
+| `reference__ord_survival_scale` | Integer tier 0–10: the log-excursion threshold (0.5%–25%) up to which this pivot survived hierarchical simplification |
+
+Tier 9 = survived ≥ 15%; Tier 10 = survived ≥ 25%. These are the empirically stable macro anchor tiers.
+
+This field must NOT be used to apply semantic labels such as `micro`, `noise`, `non-structural`, `important`, or `unimportant`. A low survival tier indicates early removal under the retrospective simplification algorithm. Its downstream semantic interpretation requires a separate, explicitly approved contract.
+
+**ORD-Q3, ORD-Q4, ORD-Q5:** These quantile discretizations remain as exploratory research diagnostics in the artifact (`reference__ord_q3_band`, `reference__ord_q4_band`, `reference__ord_q5_band` in `reference_ordinal.parquet`). They are NOT part of the canonical layered B1 contract because they impose arbitrary equal-frequency boundaries on an unbroken distribution.
+
+Unresolved/censored events carry `None` for the Layer 3 field.
+
+#### Layer 4 — Cross-View Agreement States (CONF)
+
+**Status: FIXED.**
+
+Source artifact: `reference_confidence.parquet`.
+
+All eight tested agreement-state views are preserved in the canonical contract:
+
+| Field name | Rule | Tail size |
+|---|---|---|
+| `reference__conf_unanimous_t10` | Unanimous (all 3 retrospective views) | 10% each side |
+| `reference__conf_majority_t10` | Majority (≥ 2 of 3 retrospective views) | 10% each side |
+| `reference__conf_unanimous_t20` | Unanimous | 20% each side |
+| `reference__conf_majority_t20` | Majority | 20% each side |
+| `reference__conf_unanimous_t25` | Unanimous | 25% each side |
+| `reference__conf_majority_t25` | Majority | 25% each side |
+| `reference__conf_unanimous_t30` | Unanimous | 30% each side |
+| `reference__conf_majority_t30` | Majority | 30% each side |
+
+Permitted state values per field: `STRONG`, `WEAK`, `AMBIGUOUS`, `UNRESOLVED`.
+
+No tail size or rule is selected as preferred. All 8 views are equally canonical reference views.
+
+`STRONG` and `WEAK` denote agreement-based retrospective tail state only. They do NOT mean:
+- ground-truth structural importance;
+- probability that the pivot is a genuine structural event;
+- correctness;
+- trading signal.
+
+`AMBIGUOUS` events are preserved explicitly. They are NOT promoted to `STRONG` or `WEAK` by default. `UNRESOLVED` events (censored/non-resolved) carry `UNRESOLVED` in all agreement fields.
+
+#### Canonical contract: artifact join
+
+The four layers are physically located in three artifacts, all joinable by `event_id`:
+
+| Layer | Artifact | Key field |
+|---|---|---|
+| 1 + 2 (Components + Continuous Rank) | `reference_continuous.parquet` | `event_id` |
+| 3 (Structural Survival) | `reference_ordinal.parquet` | `event_id` |
+| 4 (Agreement States) | `reference_confidence.parquet` | `event_id` |
+
+Population anchor: `master_event_reference.parquet` (4,450 rows, all pivots, `event_id` as primary key).
+
+No new merged artifact is created. The logical contract joins by `event_id` across existing artifacts.
+
+#### Invariants preserved by the layered contract
+
+- Master population: 4,450 raw pivot events. Zero events dropped.
+- `dual_unordered` events (300): `None` for all layer fields. `UNRESOLVED` in agreement fields.
+- `technical_same_type_exclusion` events (865): `None` for all layer fields. `UNRESOLVED` in agreement fields.
+- `dual_separator_boundary` events (416): `None` for all layer fields. `UNRESOLVED` in agreement fields.
+- `dataset_left_edge_censored` + `dataset_right_edge_censored` (2): `None` for all layer fields. `UNRESOLVED` in agreement fields.
+- `ordinary_resolved_sequence_event` events (2,867): all four layers populated.
+
+No `0`, `False`, `micro`, `weak`, or other fictional value is substituted for `None` in unresolved events.
+
+#### B1 retrospective / B2 causal separation — unchanged
+
+The layered B1 contract is entirely retrospective. All fields in all four layers use post-event information (full realized path around/after pivots). They must never be used as B2 predictor inputs or live inference features.
+
+B2 is NOT launched as part of this decision. The B2 causal recognition design remains OPEN and must be researched separately.
 
 ---
 
@@ -684,7 +824,7 @@ Methodological ambiguity must be surfaced as OPEN rather than silently resolved 
 
 ## 15. Current canonical state
 
-As of the Stage 2I-B1 candidate-preservation decision:
+As of the Stage 2I-B1 layered-contract decision (§7.8):
 
 | Layer | Status | Canonical meaning |
 |---|---|---|
@@ -695,8 +835,8 @@ As of the Stage 2I-B1 candidate-preservation decision:
 | Stage 2I-B architecture | FIXED | Dual-layer: B1 retrospective reference + B2 causal recognition |
 | B1 retrospective research | COMPLETE EVIDENCE | A/B/C multiscale artifacts and factual report completed |
 | B1 candidate-preservation / same-type prepass policy | FIXED | Conservative B + C: dual-aware barrier; excluded same-type pivots preserved and not semantically scale-zero |
-| B1 independent-reaction reference semantics | OPEN | Continuous/ordinal/confidence/partial-tail contract still requires explicit selection |
-| B2 causal recognition semantics | OPEN | Must be researched after B1 reference is examined |
+| B1 independent-reaction reference semantics | FIXED (LAYERED) | User-approved: LAYERED 4-layer retrospective contract; see §7.8 |
+| B2 causal recognition semantics | OPEN | Must be researched after B1 reference is fixed; B1 layered contract is now the target |
 | Dual-candle B1 prepass treatment | FIXED | Unordered on 4H and acts as a barrier for same-type consolidation; no fabricated intrabar order |
 | Reaction-zone formation | OPEN | Stage 2I-C research |
 | Zone width | OPEN | Must not be assumed fixed yet |
@@ -705,4 +845,5 @@ As of the Stage 2I-B1 candidate-preservation decision:
 | Fib / VP / SFP / OB overlays | OPEN / LATER | Separate feature families |
 | Legacy `structural_levels.csv` | DEPRECATED | Must not be used as authority |
 
-The next step is explicit review/selection or refinement of the completed B1 evidence. No Stage 2I-B2 causal recognizer should be treated as canonical until the B1 target/reference has been explicitly fixed or revised.
+The B1 retrospective reference contract is now fixed as LAYERED (see §7.8). Stage 2I-B2 causal recognition research may now be designed, to be evaluated against the fixed B1 layered reference. B2 must remain strictly causal and must not use any B1 post-event field as a predictor input.
+

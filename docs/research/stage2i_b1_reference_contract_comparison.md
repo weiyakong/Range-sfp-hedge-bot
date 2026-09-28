@@ -9,11 +9,12 @@ This study compares alternative representations of retrospective price-action st
 - **Starting HEAD:** `5896cbae620d0662c2a7952ddf3cc51c6240c0cf`
 - **Data Root:** `/Users/yeshevika/Documents/Codex/Range-sfp-hedge-bot-data`
 - **Generated Artifact Root:** `/Users/yeshevika/Documents/Codex/Range-sfp-hedge-bot-data/research/stage2i_b1_reference_contract_comparison/`
-- **Methodological Status:** **RESEARCH COMPLETE / CANONICAL REFERENCE CONTRACT REMAINS OPEN**.
+- **Methodological Status:** **RESEARCH COMPLETE / CANONICAL REFERENCE CONTRACT FIXED AS LAYERED.**
+  - Canonical B1 reference contract is **LAYERED** — user-approved decision recorded in `PA_STRUCTURE_CANONICAL.md §7.8`.
   - Stage 2I-B2 is **NOT** launched.
-  - Canonical B1 reference contract is **NOT** chosen in this study.
-  - `PA_STRUCTURE_CANONICAL.md` is strictly **UNMODIFIED**.
+  - `PA_STRUCTURE_CANONICAL.md` has been updated to record the layered contract decision.
   - A methodological patch audit was applied to eliminate ungrounded claims (zero false tail assertions, independent families terminology, unverified disagreement bounds, semantic micro labeling, longitudinal stability overstatements, hardcoded macro overlap metrics, preferred contract selection, and boundary censoring double counts).
+
 
 ---
 
@@ -165,14 +166,14 @@ No tested single representation dominated all evaluated criteria:
 This finding reflects the trade-offs observed across the tested formulations; it does not assert a universal impossibility theorem for all single representations.
 
 ### 14. Does the evidence support a layered representation?
-**COMPATIBLE CANDIDATE ARCHITECTURE (NO CANONICAL SELECTION).**
+**COMPATIBLE CANDIDATE ARCHITECTURE — USER-SELECTED AS CANONICAL B1 CONTRACT.**
 The observed trade-offs are compatible with a layered representation as a candidate architecture for user review:
 1. **Foundation Layer (Continuous Components):** Retains the full multi-dimensional structural geometry (`CONT-COMPONENTS`: prominence min/geo/balance, hierarchy min/geo, local volatility normalization).
 2. **Standardized Comparison Layer (Continuous Rank):** Provides normalized percentile ranks (`CONT-RANK` / `CONT-CONSENSUS`) for scale-free ranking.
 3. **Discrete Structural Tier View (ORD-SURVIVAL):** Translates continuous scale into actionable physical log survival tiers without arbitrary equal-frequency distortion.
 4. **Agreement Concordance Filter (Confidence Tails):** Provides explicit strong/weak concordance subsets for downstream consumers requiring high agreement across retrospective views, while preserving ambiguous and unresolved candidates.
 
-*Note:* A layered representation remains a plausible candidate for user review, but is not selected as canonical or final architecture. No preferred sensitivity variant is selected by this comparison study. The final B1 reference contract remains OPEN pending user review, and must be selected or refined before Stage 2I-B2 is launched. Confidence represents cross-view concordance, not objective certainty.
+*Decision note:* The user has explicitly selected the layered representation as the canonical B1 retrospective reference contract. This is an information-preservation decision: at the research stage, maximum already-computed structural information is retained per pivot rather than discarding any dimension prematurely. This selection is not a claim that the layered representation is empirically superior to alternatives, and no alternative is declared inferior. The decision is recorded in `PA_STRUCTURE_CANONICAL.md §7.8`. Confidence represents cross-view concordance, not objective certainty. No preferred tail size is selected. ORD-Q3/Q4/Q5 remain research diagnostics only and are not part of the canonical layered contract. Stage 2I-B2 is NOT launched.
 
 ---
 
