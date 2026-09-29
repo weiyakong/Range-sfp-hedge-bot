@@ -28,3 +28,20 @@ npm run smoke:local
 ## External API calls
 
 Real exchange smoke tests are a separate step and require explicit authorization for that task.
+
+## MCP adapter
+
+The project-owned MCP entrypoint is:
+
+```bash
+node ./src/mcp-server.js
+```
+
+It exposes exactly three tools:
+
+- `ccxt_capabilities` — local capability matrix, no exchange network call.
+- `ccxt_find_usdt_perpetuals` — public market discovery for Binance, Bybit, or OKX.
+- `ccxt_public_call` — one allowlisted public CCXT unified method.
+
+The MCP adapter rejects credential-like fields and has no private/trading tool surface.
+Codex and Antigravity should both point to this same entrypoint rather than to raw CCXT.

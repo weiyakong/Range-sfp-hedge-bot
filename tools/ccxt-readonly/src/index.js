@@ -61,3 +61,27 @@ export function capabilityMatrix() {
     return [exchangeId, Object.fromEntries([...ALLOWED_OPERATIONS].map((operation) => [operation, Boolean(exchange.has?.[operation])]))];
   }));
 }
+
+export async function findUsdtPerpetualMarkets(exchangeId, base = 'BTC') {
+  const exchange = buildExchange(exchangeId);
+  try {
+    const markets = await exchange.loadMarkets();
+    return Object.values(markets)
+      .filter((market) => market?.base === String(base).toUpperCase())
+      .filter((market) => market?.quote === 'USDT' && market?.settle === 'USDT')
+      .filter((market) => market?.swap === true && market?.active !== false)
+      .map((market) => ({
+        exchangeId,
+        symbol: market.symbol,
+        id: market.id,
+        base: market.base,
+        quote: market.quote,
+        settle: market.settle,
+        swap: market.swap,
+        active: market.active,
+      }))
+      .sort((a, b) => a.symbol.localeCompare(b.symbol));
+  } finally {
+    if (typeof exchange.close === 'function') await exchange.close();
+  }
+}
