@@ -1,0 +1,14 @@
+{
+  "name": "@range-sfp/ccxt-readonly",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Project-owned read-only CCXT gateway for public Binance, Bybit, and OKX market data.",
+  "scripts": {
+    "test": "node --test",
+    "smoke:local": "node ./src/cli.js capabilities"
+  },
+  "dependencies": {
+    "ccxt": "4.5.84"
+  }
+}
