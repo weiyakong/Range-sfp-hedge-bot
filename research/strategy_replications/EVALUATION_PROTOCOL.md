@@ -3,8 +3,8 @@
 **Schema:** `EVALUATION_PROTOCOL_V1`  
 **Version:**  
 **Frozen UTC:**  
-**Git commit:**  
-**SHA-256:**  
+**Structured protocol:** validated `EVALUATION_PROTOCOL_V1` JSON
+**Identity:** version and exact-byte SHA-256 are stored by external receipts
 
 # 1. Purpose
 
@@ -55,6 +55,9 @@ Adaptation creates a separate version.
 
 # 3. Common Historical Window Protocol
 
+This protocol is the sole authoritative owner of the common window. It must be
+frozen before any outcome-bearing historical run on evaluation data.
+
 **Common start UTC:**  
 **Common end UTC:**  
 
@@ -86,9 +89,16 @@ Unless a source-faithful requirement overrides it and is explicitly classified:
 **Funding policy:**  
 **Liquidation policy:**  
 
-Any exception must be recorded in the Strategy Spec.
+Each assumption has its own origin. Any source-faithful exception is recorded in
+the Strategy Spec with evidence and an explicit comparability downgrade where
+required.
 
 # 5. Common Comparison Metrics
+
+The structured protocol freezes formula, units, denominator, source artifact,
+and applicability for each metric. Sharpe and Sortino additionally freeze the
+return-series methodology. Time exposure uses the explicitly selected supported
+definition `ANY_POSITION_ACTIVE_DURING_BAR_FRACTION` or protocol freeze fails.
 
 Mandatory for every comparable candidate where mathematically applicable:
 
@@ -165,7 +175,9 @@ rather than inventing one.
 
 # 9. Ranking Metrics
 
-Define before individual strategy comparison.
+Define before individual strategy comparison. Structured `ranking.method` must
+be `ORDERED`, `WEIGHTED`, or `NO_SCALAR`; `UNSET` blocks freeze. Weights are
+never invented by the validator.
 
 Primary comparison dimensions:
 
@@ -233,7 +245,10 @@ Every adaptation receives a new version and appears in Candidate Registry.
 
 # 14. Protected Final Validation
 
-If later optimization/adaptation is performed, define a protected validation stage before optimization begins.
+A protected validation policy is required for candidate selection even when no
+individual strategy is optimized. Freeze it before the first outcome-bearing
+result that can influence selection. Adaptation remains subject to the same or a
+newly protected stage.
 
 **Protected period/data rule:**  
 
@@ -241,7 +256,8 @@ The protected period must not be used to choose adaptation parameters.
 
 # 15. Program Lineage
 
-Every assessed run must identify:
+Every assessed run identifies these values in V2 metadata and an external run
+receipt. Frozen protocol/spec files are not edited with post-run facts:
 
 - Candidate Registry version/hash;
 - Evaluation Protocol version/hash;

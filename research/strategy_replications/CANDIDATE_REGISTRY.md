@@ -3,8 +3,8 @@
 **Registry schema:** `CANDIDATE_REGISTRY_V1`  
 **Registry version:**  
 **Frozen UTC:**  
-**Git commit:**  
-**SHA-256:**  
+**Structured registry:** validated `CANDIDATE_REGISTRY_V1` JSON
+**Identity:** version and exact-byte SHA-256 are stored by external receipts
 
 # Purpose
 
@@ -21,6 +21,10 @@ Strategies must not disappear from the registry because they:
 - were later adapted.
 
 The registry exists to control survivorship and selection bias.
+
+A stable Candidate ID and `IDENTIFIED` intake timestamp must be created before
+substantive source review, strategy formalization, or any historical testing.
+Production preflight rejects an unregistered candidate.
 
 # Candidate Universe
 
@@ -44,7 +48,9 @@ Allowed statuses:
 
 # Variant Registry
 
-Every tested or materially considered variant must remain visible.
+Every tested or materially considered variant must remain visible. The
+structured registry also requires parent ID, creation time, exact change,
+parameter changes/search space, spec hash, and historical results already seen.
 
 | Variant ID | Candidate ID | Version | Type | Created before/after result | Status |
 |---|---|---|---|---|---|
@@ -76,13 +82,8 @@ Blocked or failed candidates remain part of the historical research record.
 
 # Program Counts
 
-**Candidates identified:**  
-**Specs started:**  
-**Blocked before backtest:**  
-**Backtested:**  
-**Adapted:**  
-**Rejected after backtest:**  
-**Still active:**  
+Counts are computed from structured candidate/variant rows. Manually entered
+totals are non-authoritative.
 
 # Change Ledger
 

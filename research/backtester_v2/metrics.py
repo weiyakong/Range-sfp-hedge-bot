@@ -29,6 +29,7 @@ def summarize(result: BacktestResult, initial_cash: float) -> Dict[str, object]:
     liquidation_fees = sum(t.liquidation_fee for t in trades)
     liquidation_trades = [t for t in trades if t.exit_reason == "liquidation"]
     liquidation_events = len({t.exit_time for t in liquidation_trades})
+    total_bars = len(result.bar_exposure_curve)
     return {
         "trades": len(trades),
         "net_pnl": total_net,
@@ -43,6 +44,16 @@ def summarize(result: BacktestResult, initial_cash: float) -> Dict[str, object]:
         ),
         "fees": closed_fees + result.open_position_entry_fee,
         "funding": closed_funding + result.open_position_funding,
+        "slippage_cost": (
+            sum(t.slippage_cost for t in trades)
+            + sum(p.entry_slippage_cost for p in result.open_positions.values())
+        ),
+        "time_exposure_pct": (
+            sum(exposed for _, exposed in result.bar_exposure_curve)
+            / total_bars * 100.0
+            if total_bars else None
+        ),
+        "time_exposure_definition": "ANY_POSITION_ACTIVE_DURING_BAR_FRACTION",
         "liquidation_fees": liquidation_fees,
         "expectancy_closed_trade": (realized_net / len(trades)) if trades else None,
         "final_cash": result.final_cash,

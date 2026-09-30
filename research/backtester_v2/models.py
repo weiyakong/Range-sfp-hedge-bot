@@ -108,6 +108,9 @@ class Position:
     entry_time_exact: Optional[int]
     fill_time_resolution: FillTimeResolution
     entry_price: float
+    entry_reference_price: float
+    entry_fill_classification: str
+    entry_slippage_cost: float
     entry_bar_index: int
     stop_loss: Optional[float]
     take_profit: Optional[float]
@@ -127,6 +130,9 @@ class PositionSnapshot:
     entry_time_exact: Optional[int]
     fill_time_resolution: FillTimeResolution
     entry_price: float
+    entry_reference_price: float
+    entry_fill_classification: str
+    entry_slippage_cost: float
     stop_loss: Optional[float]
     take_profit: Optional[float]
     max_hold_bars: Optional[int]
@@ -197,6 +203,13 @@ class Trade:
     exit_time: int
     entry_price: float
     exit_price: float
+    entry_reference_price: float
+    exit_reference_price: float
+    entry_fill_classification: str
+    exit_fill_classification: str
+    entry_slippage_cost: float
+    exit_slippage_cost: float
+    slippage_cost: float
     gross_pnl: float
     fees: float
     funding: float
@@ -229,6 +242,7 @@ class BacktestResult:
     trades: List[Trade]
     equity_curve: List[Tuple[int, float]]
     intrabar_equity_curve: List[Tuple[int, float]]
+    bar_exposure_curve: List[Tuple[int, bool]]
     open_positions: Dict[Side, Position]
     pending_orders: Dict[Side, PendingOrder]
     rejected_orders: List[RejectedOrder]
@@ -251,3 +265,24 @@ class BacktestResult:
     @property
     def open_short_position(self) -> Optional[Position]:
         return self.open_positions.get("short")
+
+
+@dataclass(frozen=True)
+class ReplicationLineage:
+    candidate_id: str
+    variant_id: str
+    registry_version: str
+    registry_sha256: str
+    protocol_version: str
+    protocol_sha256: str
+    strategy_spec_sha256: str
+    fidelity_classification: Literal[
+        "PURE_REPLICATION", "TRANSFER_REPLICATION", "ADAPTED"
+    ]
+    comparability_class: Literal[
+        "DIRECTLY_COMPARABLE",
+        "COMPARABLE_WITH_DECLARED_EXECUTION_EXCEPTION",
+        "NOT_DIRECTLY_COMPARABLE",
+    ]
+    capability_manifest_version: str
+    freeze_receipt_sha256: str

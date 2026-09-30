@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "evaluation_protocol.schema.json",
+  "title": "Evaluation Protocol V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "protocol_version", "status", "candidate_universe",
+    "historical_window", "execution_assumptions", "eligibility",
+    "ranking", "metrics", "time_exposure_definition",
+    "protected_validation", "multiple_testing"
+  ],
+  "properties": {
+    "schema_version": {"const": "EVALUATION_PROTOCOL_V1"},
+    "protocol_version": {"type": "string", "minLength": 1},
+    "status": {"enum": ["DRAFT", "FROZEN"]},
+    "candidate_universe": {"type": "object"},
+    "historical_window": {"type": "object"},
+    "execution_assumptions": {"type": "object"},
+    "eligibility": {"type": "object"},
+    "ranking": {"type": "object"},
+    "metrics": {"type": "array", "items": {"type": "object"}},
+    "time_exposure_definition": {"enum": ["UNSET", "ANY_POSITION_ACTIVE_DURING_BAR_FRACTION"]},
+    "protected_validation": {"type": "object"},
+    "multiple_testing": {"type": "object"}
+  }
+}

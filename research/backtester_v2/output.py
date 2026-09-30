@@ -12,7 +12,13 @@ from pathlib import Path
 from typing import Dict, Iterable, Optional
 
 from .metrics import summarize
-from .models import BacktestConfig, BacktestResult, SourceType, Trade
+from .models import (
+    BacktestConfig,
+    BacktestResult,
+    ReplicationLineage,
+    SourceType,
+    Trade,
+)
 
 
 def _sha256(path: Path) -> str:
@@ -46,6 +52,11 @@ def build_run_metadata(
     tested_end: int,
     row_count: int,
     code_paths: Optional[Iterable[Path]] = None,
+    replication_lineage: Optional[ReplicationLineage] = None,
+    strategy_code_path: Optional[Path] = None,
+    capability_manifest_path: Optional[Path] = None,
+    freeze_receipt_path: Optional[Path] = None,
+    production_research: bool = False,
 ) -> Dict[str, object]:
     if source_type not in {"external_replication", "external_adaptation", "internal"}:
         raise ValueError(f"unsupported strategy source_type: {source_type}")
@@ -53,6 +64,18 @@ def build_run_metadata(
         raise ValueError("external strategies require source_reference")
     if row_count < 0 or tested_end < tested_start:
         raise ValueError("invalid tested interval or row_count")
+    if production_research and source_type in {"external_replication", "external_adaptation"}:
+        missing = [
+            name for name, value in (
+                ("replication_lineage", replication_lineage),
+                ("strategy_code_path", strategy_code_path),
+                ("capability_manifest_path", capability_manifest_path),
+                ("freeze_receipt_path", freeze_receipt_path),
+                ("manifest_path", manifest_path),
+            ) if value is None
+        ]
+        if missing:
+            raise ValueError(f"production external run missing lineage: {', '.join(missing)}")
     default_paths = (
         Path(__file__).with_name(name)
         for name in ("engine.py", "models.py", "metrics.py", "output.py")
@@ -63,7 +86,7 @@ def build_run_metadata(
         for path in selected_paths
     }
     manifest_resolved = manifest_path.resolve() if manifest_path is not None else None
-    return {
+    metadata: Dict[str, object] = {
         "run_id": str(uuid.uuid4()),
         "run_timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "qa_status": "PENDING_ENGINE_RESULT",
@@ -93,6 +116,27 @@ def build_run_metadata(
             "file_sha256": checksums,
         },
     }
+    if replication_lineage is not None:
+        if strategy_code_path is None or capability_manifest_path is None or freeze_receipt_path is None:
+            raise ValueError("replication lineage requires strategy code, capability manifest, and freeze receipt paths")
+        strategy_resolved = strategy_code_path.resolve()
+        capability_resolved = capability_manifest_path.resolve()
+        receipt_resolved = freeze_receipt_path.resolve()
+        for path in (strategy_resolved, capability_resolved, receipt_resolved):
+            if not path.is_file():
+                raise ValueError(f"lineage file does not exist: {path}")
+        metadata["replication_lineage"] = {
+            **asdict(replication_lineage),
+            "strategy_code_sha256": _sha256(strategy_resolved),
+            "capability_manifest_sha256": _sha256(capability_resolved),
+            "freeze_receipt_sha256": _sha256(receipt_resolved),
+            "data_manifest_sha256": (
+                _sha256(manifest_resolved) if manifest_resolved is not None else None
+            ),
+            "backtester_commit": metadata["code"]["git_commit"],
+            "config_sha256": None,
+        }
+    return metadata
 
 
 def _write_csv(path: Path, fieldnames: Iterable[str], rows: Iterable[dict]) -> None:
@@ -135,6 +179,11 @@ def write_results(
             temporary / "intrabar_equity.csv", ("open_time", "worst_equity"),
             ({"open_time": timestamp, "worst_equity": equity}
              for timestamp, equity in result.intrabar_equity_curve),
+        )
+        _write_csv(
+            temporary / "bar_exposure.csv", ("open_time", "any_position_active"),
+            ({"open_time": timestamp, "any_position_active": exposed}
+             for timestamp, exposed in result.bar_exposure_curve),
         )
         _write_csv(
             temporary / "intrabar_ambiguities.csv",
@@ -182,6 +231,10 @@ def write_results(
         }
         _write_json(temporary / "exposure.json", exposure)
         run_metadata = dict(metadata)
+        if "replication_lineage" in run_metadata:
+            lineage = dict(run_metadata["replication_lineage"])
+            lineage["config_sha256"] = _sha256(temporary / "config.json")
+            run_metadata["replication_lineage"] = lineage
         run_metadata["qa_status"] = result.qa_status
         run_metadata["qa_issues"] = list(result.qa_issues)
         _write_json(temporary / "run_metadata.json", run_metadata)

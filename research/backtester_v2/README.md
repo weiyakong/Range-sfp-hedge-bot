@@ -76,6 +76,10 @@ price; it is not represented as a historical Binance clearing fill.
 - `mark_to_market`: preserves open exposure and reports final equity including unrealized PnL;
 - `force_close`: closes at final close under the configured taker/slippage model;
 - metrics include open-position entry fee and funding;
+- each fill preserves its pre-slippage reference price, actual price, fill
+  classification, and adverse slippage cost without changing execution logic;
+- `time_exposure_pct` is the fraction of processed bars during which at least
+  one position was active at any point; hedge legs count once;
 - drawdown is reported separately as
   `close_to_close_max_drawdown_pct` and
   `intrabar_worst_max_drawdown_pct`;
@@ -89,6 +93,12 @@ refuses to overwrite an existing non-empty run directory. A complete artifact
 set contains trades, close and intrabar equity, metrics, full config, exposure
 and pending orders, rejected orders, intrabar ambiguities, run metadata, and a
 checksum manifest.
+
+External-strategy production runs may attach `ReplicationLineage` to
+`build_run_metadata`. With `production_research=True`, candidate/variant,
+strategy code, freeze receipt, capability manifest, and data manifest identities
+are mandatory. The strategy-replication preflight and post-run receipt validators
+provide the hard research gate.
 
 Use `build_run_metadata` for material runs. It records strategy identity and
 source type, parameters/reference, canonical manifest path and checksum, data

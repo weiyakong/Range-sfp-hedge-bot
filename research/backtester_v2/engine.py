@@ -50,6 +50,7 @@ class BacktestEngine:
         trades: List[Trade] = []
         equity_curve: List[Tuple[int, float]] = []
         intrabar_equity_curve: List[Tuple[int, float]] = []
+        bar_exposure_curve: List[Tuple[int, bool]] = []
         rejected_orders: List[RejectedOrder] = []
         ambiguities: List[IntrabarAmbiguity] = []
         last_time: Optional[int] = None
@@ -59,6 +60,8 @@ class BacktestEngine:
             self._validate_bar(bar, last_time)
             last_time = bar.open_time
             last_bar = bar
+            positions_before_bar = bool(state.positions)
+            trades_before_bar = len(trades)
 
             self._apply_funding(state, bar)
             liquidated = self._check_liquidation_at_open(state, trades, bar)
@@ -79,17 +82,22 @@ class BacktestEngine:
             equity = self._equity_at_close(state, bar)
             equity_curve.append((bar.open_time, equity))
             intrabar_equity_curve.append((bar.open_time, min(equity, intrabar_worst)))
+            bar_exposure_curve.append((
+                bar.open_time,
+                positions_before_bar or bool(state.positions) or len(trades) > trades_before_bar,
+            ))
             intents = strategy.on_bar(bar, self._strategy_state(state, equity))
             self._accept_strategy_intents(state, intents, bar.open_time)
 
         return self._finalize(
             state, trades, equity_curve, intrabar_equity_curve,
-            rejected_orders, ambiguities, last_bar,
+            bar_exposure_curve, rejected_orders, ambiguities, last_bar,
         )
     def _finalize(
         self, state: EngineState, trades: List[Trade],
         equity_curve: List[Tuple[int, float]],
         intrabar_equity_curve: List[Tuple[int, float]],
+        bar_exposure_curve: List[Tuple[int, bool]],
         rejected_orders: List[RejectedOrder],
         ambiguities: List[IntrabarAmbiguity],
         last_bar: Optional[Bar],
@@ -98,6 +106,7 @@ class BacktestEngine:
             return BacktestResult(
                 final_cash=state.cash, final_equity=state.cash, trades=trades,
                 equity_curve=[], intrabar_equity_curve=[], open_positions={},
+                bar_exposure_curve=[],
                 pending_orders=dict(state.pending_orders),
                 rejected_orders=rejected_orders,
                 intrabar_ambiguities=ambiguities,
@@ -129,6 +138,7 @@ class BacktestEngine:
             final_cash=state.cash, final_equity=final_equity, trades=trades,
             equity_curve=equity_curve,
             intrabar_equity_curve=intrabar_equity_curve,
+            bar_exposure_curve=bar_exposure_curve,
             open_positions=dict(state.positions),
             pending_orders=dict(state.pending_orders),
             rejected_orders=rejected_orders,
@@ -190,8 +200,12 @@ class BacktestEngine:
             order = pending.intent
             self._validate_order(order)
             fill: Optional[float] = None
+            reference_price: Optional[float] = None
+            fill_classification: Optional[str] = None
             if order.order_type == "market":
+                reference_price = bar.open
                 fill = self._apply_slippage(bar.open, side, True)
+                fill_classification = "MARKET_TAKER"
             else:
                 assert order.limit_price is not None
                 marketable = (
@@ -205,7 +219,9 @@ class BacktestEngine:
                         else candidate >= order.limit_price
                     )
                     if within_cap:
+                        reference_price = bar.open
                         fill = candidate
+                        fill_classification = "MARKETABLE_LIMIT_TAKER"
                     elif order.time_in_force == "IOC":
                         del state.pending_orders[side]
                 elif order.time_in_force == "IOC":
@@ -224,6 +240,8 @@ class BacktestEngine:
             self._open_position(
                 state, order, fill, bar.open_time, bar_index,
                 taker=True, passive=False,
+                reference_price=reference_price if reference_price is not None else fill,
+                fill_classification=fill_classification or "MARKET_TAKER",
             )
 
     def _has_entry_capacity(
@@ -261,6 +279,7 @@ class BacktestEngine:
     def _open_position(
         self, state: EngineState, order: OrderIntent, fill_price: float,
         fill_time: int, bar_index: int, taker: bool, passive: bool,
+        reference_price: float, fill_classification: str,
     ) -> None:
         side = order.side
         if side is None:
@@ -276,6 +295,11 @@ class BacktestEngine:
             entry_time_exact=None if passive else fill_time,
             fill_time_resolution="bar" if passive else "exact",
             entry_price=fill_price, entry_bar_index=bar_index,
+            entry_reference_price=reference_price,
+            entry_fill_classification=fill_classification,
+            entry_slippage_cost=self._slippage_cost(
+                side, order.qty, reference_price, fill_price, is_entry=True,
+            ),
             stop_loss=order.stop_loss, take_profit=order.take_profit,
             max_hold_bars=order.max_hold_bars, entry_fee=entry_fee,
         )
@@ -459,7 +483,8 @@ class BacktestEngine:
                         del state.pending_orders[side]
                         self._open_position(
                             state, order, price, bar.open_time, bar_index,
-                            taker=False, passive=True,
+                            taker=False, passive=True, reference_price=price,
+                            fill_classification="PASSIVE_LIMIT_MAKER",
                         )
                 else:
                     assert side is not None
@@ -582,6 +607,9 @@ class BacktestEngine:
             self._apply_slippage(raw_price, side, False) if taker else raw_price
         )
         gross = self._gross_pnl(position, exit_price)
+        exit_slippage_cost = self._slippage_cost(
+            side, position.qty, raw_price, exit_price, is_entry=False,
+        )
         fee_rate = self.config.taker_fee_rate if taker else self.config.maker_fee_rate
         exit_fee = abs(exit_price * position.qty) * fee_rate
         total_fees = position.entry_fee + exit_fee
@@ -594,6 +622,17 @@ class BacktestEngine:
             fill_time_resolution=position.fill_time_resolution,
             exit_time=exit_time,
             entry_price=position.entry_price, exit_price=exit_price,
+            entry_reference_price=position.entry_reference_price,
+            exit_reference_price=raw_price,
+            entry_fill_classification=position.entry_fill_classification,
+            exit_fill_classification=(
+                "STOP_MARKET_TAKER" if reason.startswith("stop_loss")
+                else "MARKET_EXIT_TAKER" if taker
+                else "PROTECTIVE_LIMIT_MAKER"
+            ),
+            entry_slippage_cost=position.entry_slippage_cost,
+            exit_slippage_cost=exit_slippage_cost,
+            slippage_cost=position.entry_slippage_cost + exit_slippage_cost,
             gross_pnl=gross, fees=total_fees,
             funding=position.funding_paid, liquidation_fee=0.0,
             net_pnl=net, exit_reason=reason,
@@ -625,6 +664,13 @@ class BacktestEngine:
                 fill_time_resolution=position.fill_time_resolution,
                 exit_time=exit_time,
                 entry_price=position.entry_price, exit_price=execution_price,
+                entry_reference_price=position.entry_reference_price,
+                exit_reference_price=execution_price,
+                entry_fill_classification=position.entry_fill_classification,
+                exit_fill_classification="LIQUIDATION_MODEL",
+                entry_slippage_cost=position.entry_slippage_cost,
+                exit_slippage_cost=0.0,
+                slippage_cost=position.entry_slippage_cost,
                 gross_pnl=gross, fees=position.entry_fee,
                 funding=position.funding_paid, liquidation_fee=liq_fee,
                 net_pnl=net, exit_reason="liquidation",
@@ -729,6 +775,9 @@ class BacktestEngine:
                 entry_time_exact=p.entry_time_exact,
                 fill_time_resolution=p.fill_time_resolution,
                 entry_price=p.entry_price, stop_loss=p.stop_loss,
+                entry_reference_price=p.entry_reference_price,
+                entry_fill_classification=p.entry_fill_classification,
+                entry_slippage_cost=p.entry_slippage_cost,
                 take_profit=p.take_profit, max_hold_bars=p.max_hold_bars,
             )
 
@@ -803,6 +852,17 @@ class BacktestEngine:
         if side == "long":
             return price * (1 + rate) if is_entry else price * (1 - rate)
         return price * (1 - rate) if is_entry else price * (1 + rate)
+
+    @staticmethod
+    def _slippage_cost(
+        side: Side, qty: float, reference_price: float, actual_price: float,
+        is_entry: bool,
+    ) -> float:
+        if side == "long":
+            adverse_delta = actual_price - reference_price if is_entry else reference_price - actual_price
+        else:
+            adverse_delta = reference_price - actual_price if is_entry else actual_price - reference_price
+        return adverse_delta * qty
 
     @staticmethod
     def _gross_pnl(position: Position, exit_price: Optional[float]) -> float:

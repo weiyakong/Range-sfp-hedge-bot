@@ -14,10 +14,13 @@
 **Spec created UTC:**  
 **Spec frozen UTC:**  
 
-**Spec Git commit:**  
-**Spec SHA-256:**  
+**Structured sidecar:** validated `STRATEGY_SPEC_V1` JSON
+**Freeze receipt:** external immutable `FREEZE_RECEIPT_V1` JSON
 
 No empty value, `TBD`, placeholder or unresolved machine-critical field is permitted when Status = `FROZEN`.
+
+Markdown status alone has no machine authority. A production run requires a
+validator-issued freeze receipt whose hashes still match exact artifact bytes.
 
 ---
 
@@ -46,6 +49,10 @@ Choose one:
 
 **Market relation:**  
 
+The structured sidecar separately records timeframe, session, and product-type
+relations. A spot-to-perpetual, timeframe, or session transfer cannot be hidden
+inside `SAME_MARKET`.
+
 ## 2.3 Parameter fidelity
 
 Choose one:
@@ -69,7 +76,8 @@ Choose one:
 
 **Execution fidelity:**  
 
-`PROXY` must be explicitly justified and may change replication classification.
+`PROXY` must be explicitly justified and always computes `ADAPTED`; it can never
+compute `PURE_REPLICATION`.
 
 ## 2.5 Sizing fidelity
 
@@ -92,7 +100,11 @@ Choose:
 
 **Summary classification:**  
 
-`PURE_REPLICATION` is allowed only when no material axis contains an adaptation incompatible with the original strategy contract.
+Summary classification is computed by the validator from all axes and parameter
+origins; it is not an independent researcher choice. Material adaptation or a
+proxy computes `ADAPTED`. Scope/venue/research overlays compute
+`TRANSFER_REPLICATION`. Only a source-faithful same-scope combination computes
+`PURE_REPLICATION`.
 
 ---
 
@@ -209,7 +221,10 @@ Every material difference from Original Strategy Scope must be reflected in Fide
 
 # 7. Predeclared Historical Window
 
-Must be frozen before first full historical result.
+The Evaluation Protocol is authoritative for the common window. It must be
+frozen before any outcome-bearing run on real evaluation data. Synthetic,
+causality, unit, and explicitly non-outcome smoke fixtures are the only
+pre-freeze runs.
 
 **Start UTC:**  
 **End UTC:**  
@@ -599,9 +614,10 @@ Freeze before historical run.
 **Limit fill policy:**  
 **End-of-data policy:**  
 
-Every assumption must record:
-
-**Origin:** `SOURCE / EXCHANGE / COMMON_RESEARCH_PROTOCOL / STRATEGY_SPECIFIC_ASSUMPTION`
+Common assumptions belong to the Evaluation Protocol. Every strategy-specific
+exception records its own origin, source evidence, rationale, and comparability
+consequence. A favorable execution exception cannot remain
+`DIRECTLY_COMPARABLE`.
 
 ---
 
@@ -707,15 +723,19 @@ Origin:
 
 `POST_RESULT_ADAPTATION` cannot occur inside frozen replication version.
 
+Every `SOURCE_RANGE` row must also freeze source range, selected value,
+selection method/rationale, selection UTC, and
+`selected_before_historical_results = true`.
+
 ---
 
 # 29. Rule Traceability Matrix
 
 Every material source rule must connect to executable behavior and a test.
 
-| Rule ID | Source evidence | Interpretation | Executable predicate/state transition | Test ID |
-|---|---|---|---|---|
-| R01 | | | | |
+| Rule ID | Source evidence | Interpretation | Executable predicate/state transition | Test ID | Code path/symbol | Implementation SHA/version |
+|---|---|---|---|---|---|---|
+| R01 | | | | | | |
 
 No material source rule may disappear between source and code.
 
@@ -779,6 +799,10 @@ If the source contains worked examples/charts:
 |---|---|---|---|
 | G01 | | | |
 
+If the source has no worked examples, record
+`NOT_APPLICABLE_NO_SOURCE_EXAMPLES`. Positive, negative, boundary, and causality
+tests remain mandatory.
+
 Tests validate rules, not profitability.
 
 ---
@@ -802,7 +826,7 @@ They must be declared before seeing this strategy's full historical result.
 
 # 33. Automated Freeze Gate
 
-`FROZEN` must be rejected if any of these exist:
+`FROZEN` must be rejected by the structured validator if any of these exist:
 
 - machine-critical empty fields;
 - `TBD`;
@@ -824,19 +848,15 @@ They must be declared before seeing this strategy's full historical result.
 - missing golden/causality tests;
 - failed synthetic tests.
 
-After validation:
-
-**SPEC STATUS:** `FROZEN`
-
-**Frozen UTC:**  
-**Spec Git commit:**  
-**Spec SHA-256:**  
+After validation, `validate_freeze` writes an external immutable receipt. Typing
+`FROZEN` in Markdown or JSON without that receipt does not authorize a run.
 
 ---
 
 # 34. Run Lineage
 
-Every run must identify:
+Do not fill run facts into the frozen spec. Every run stores these identities in
+`run_metadata.json` and an external `RUN_RECEIPT_V1`:
 
 **Run ID:**  
 
@@ -862,7 +882,7 @@ Required lineage:
 
 # 35. First Historical Run
 
-Fill only after freeze.
+Record only in the immutable run receipt; never edit the frozen spec.
 
 **Run ID:**  
 **Actual start UTC:**  
@@ -878,7 +898,8 @@ If NO, run is not the predeclared replication run.
 
 # 36. Post-result Change Ledger
 
-Any material change after seeing results must remain visible.
+Any material change after seeing results must remain visible in a separate
+append-only ledger or a new spec version; never edit the frozen spec.
 
 | Change ID | Previous version | Change | Reason | New version |
 |---|---|---|---|---|

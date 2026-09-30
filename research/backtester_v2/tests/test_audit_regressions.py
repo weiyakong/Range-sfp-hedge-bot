@@ -249,6 +249,48 @@ class FillMarginAndLimitRegressionTests(unittest.TestCase):
         )
         self.assertFalse(result.open_positions)
 
+    def test_slippage_bookkeeping_does_not_change_execution_or_pnl(self):
+        bars = [
+            Bar(0,100,100,100,100,1),
+            Bar(MINUTE,100,100,100,100,1),
+            Bar(2*MINUTE,110,110,110,110,1),
+        ]
+        result = BacktestEngine(BacktestConfig(slippage_rate=0.01)).run(
+            bars,
+            ScriptedStrategy([
+                [OrderIntent.market("long", 1)],
+                [OrderIntent.exit_market("long")],
+            ]),
+        )
+        trade = result.trades[0]
+        self.assertAlmostEqual(trade.entry_reference_price, 100.0)
+        self.assertAlmostEqual(trade.entry_price, 101.0)
+        self.assertAlmostEqual(trade.exit_reference_price, 110.0)
+        self.assertAlmostEqual(trade.exit_price, 108.9)
+        self.assertAlmostEqual(trade.entry_slippage_cost, 1.0)
+        self.assertAlmostEqual(trade.exit_slippage_cost, 1.1)
+        self.assertAlmostEqual(trade.slippage_cost, 2.1)
+        self.assertAlmostEqual(trade.gross_pnl, 7.9)
+        self.assertAlmostEqual(trade.net_pnl, 7.9)
+
+    def test_passive_fill_has_zero_slippage_cost(self):
+        bars = [Bar(0,105,105,105,105,1), Bar(MINUTE,105,106,99,101,1)]
+        result = BacktestEngine(
+            BacktestConfig(slippage_rate=0.01, limit_fill_policy="touch")
+        ).run(
+            bars,
+            ScriptedStrategy([[
+                OrderIntent.limit("long", 1, 100, "GTC")
+            ]]),
+        )
+        self.assertAlmostEqual(result.open_long_position.entry_reference_price, 100.0)
+        self.assertAlmostEqual(result.open_long_position.entry_price, 100.0)
+        self.assertAlmostEqual(result.open_long_position.entry_slippage_cost, 0.0)
+        self.assertEqual(
+            result.open_long_position.entry_fill_classification,
+            "PASSIVE_LIMIT_MAKER",
+        )
+
 
 class ValidationAndRiskMetricRegressionTests(unittest.TestCase):
     def test_invalid_enum_values_are_rejected(self):
@@ -393,6 +435,30 @@ class ValidationAndRiskMetricRegressionTests(unittest.TestCase):
             "LEVERAGED_RUN_WITHOUT_LIQUIDATION_MODEL", result.qa_issues
         )
 
+    def test_bar_participation_exposure_has_explicit_definition(self):
+        bars = [
+            Bar(0,100,100,100,100,1),
+            Bar(MINUTE,100,100,100,100,1),
+            Bar(2*MINUTE,100,100,100,100,1),
+        ]
+        result = BacktestEngine(BacktestConfig()).run(
+            bars,
+            ScriptedStrategy([
+                [OrderIntent.market("long", 1)],
+                [OrderIntent.exit_market("long")],
+            ]),
+        )
+        metrics = summarize(result, 10_000)
+        self.assertEqual(
+            result.bar_exposure_curve,
+            [(0, False), (MINUTE, True), (2 * MINUTE, True)],
+        )
+        self.assertAlmostEqual(metrics["time_exposure_pct"], 200 / 3)
+        self.assertEqual(
+            metrics["time_exposure_definition"],
+            "ANY_POSITION_ACTIVE_DURING_BAR_FRACTION",
+        )
+
 
 class StateAndOutputRegressionTests(unittest.TestCase):
     def test_pending_state_preserves_submission_and_fill_resolution(self):
@@ -425,6 +491,7 @@ class StateAndOutputRegressionTests(unittest.TestCase):
             expected = {
                 "trades.csv", "equity.csv", "intrabar_equity.csv",
                 "metrics.json", "config.json", "exposure.json",
+                "bar_exposure.csv",
                 "intrabar_ambiguities.csv", "rejected_orders.csv",
                 "run_metadata.json", "manifest.json",
             }

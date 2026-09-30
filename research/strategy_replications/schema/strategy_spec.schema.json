@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "strategy_spec.schema.json",
+  "title": "Strategy Replication Spec V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "strategy_id", "strategy_version", "candidate_id",
+    "variant_id", "status", "created_at_utc", "fidelity", "parameters",
+    "proxy", "data_manifest", "data_inputs", "implementation",
+    "required_capabilities", "ambiguities", "state_model", "exit_precedence",
+    "tests", "traceability", "source_evidence", "protocol_exceptions",
+    "comparability_class", "outcome_bearing_historical_run_seen"
+  ],
+  "properties": {
+    "schema_version": {"const": "STRATEGY_SPEC_V1"},
+    "strategy_id": {"type": "string", "minLength": 1},
+    "strategy_version": {"type": "string", "minLength": 1},
+    "candidate_id": {"type": "string", "minLength": 1},
+    "variant_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["DRAFT", "BLOCKED", "FROZEN", "TESTED"]},
+    "created_at_utc": {"type": "string", "format": "date-time"},
+    "fidelity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule", "market", "timeframe", "session", "product", "execution", "sizing", "declared_summary"],
+      "properties": {
+        "rule": {"enum": ["VERBATIM", "FORMALIZED_INTERPRETATION", "ADAPTED"]},
+        "market": {"enum": ["SAME_MARKET", "TARGET_MARKET_TRANSFER"]},
+        "timeframe": {"enum": ["SAME_TIMEFRAME", "TIMEFRAME_TRANSFER"]},
+        "session": {"enum": ["SAME_SESSION", "SESSION_TRANSFER"]},
+        "product": {"enum": ["SAME_PRODUCT_TYPE", "PRODUCT_TRANSFER"]},
+        "execution": {"enum": ["SOURCE_SPECIFIED", "TARGET_VENUE_MAPPING", "RESEARCH_ASSUMPTION", "PROXY", "ADAPTED"]},
+        "sizing": {"enum": ["SOURCE_DEFINED", "STANDARDIZED_RESEARCH_OVERLAY", "ASSUMED", "ADAPTED"]},
+        "declared_summary": {"enum": ["PURE_REPLICATION", "TRANSFER_REPLICATION", "ADAPTED"]}
+      }
+    },
+    "parameters": {"type": "array", "items": {"type": "object"}},
+    "proxy": {"type": "object"},
+    "data_manifest": {"type": "object"},
+    "data_inputs": {"type": "array", "items": {"type": "object"}},
+    "implementation": {"type": "object"},
+    "required_capabilities": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "ambiguities": {"type": "array", "items": {"type": "object"}},
+    "state_model": {"type": "object"},
+    "exit_precedence": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "tests": {"type": "object"},
+    "traceability": {"type": "array", "items": {"type": "object"}},
+    "source_evidence": {"type": "object"},
+    "protocol_exceptions": {"type": "array", "items": {"type": "object"}},
+    "comparability_class": {"enum": ["DIRECTLY_COMPARABLE", "COMPARABLE_WITH_DECLARED_EXECUTION_EXCEPTION", "NOT_DIRECTLY_COMPARABLE"]},
+    "outcome_bearing_historical_run_seen": {"type": "boolean"}
+  }
+}

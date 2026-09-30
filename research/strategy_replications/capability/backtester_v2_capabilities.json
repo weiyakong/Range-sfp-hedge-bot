@@ -1,0 +1,49 @@
+{
+  "schema_version": "BACKTESTER_CAPABILITIES_V1",
+  "manifest_version": "BACKTESTER_V2_EXECUTION_CONTRACT_1",
+  "audited_base_commit": "2b096ebf52928248ad2e608be685bef37a7d6887",
+  "execution_engine_path": "research/backtester_v2/engine.py",
+  "execution_engine_sha256": "89ea14aac538b797923fc5cae66029372a244e8628e1439aadf32a3f2d54f98a",
+  "engine_event_order": [
+    "FUNDING_AT_BAR_TIMESTAMP",
+    "LIQUIDATION_AT_OPEN",
+    "SCHEDULED_SIGNAL_EXIT_THEN_TIME_EXIT_AT_OPEN",
+    "GAP_STOP_BEFORE_GAP_TAKE_PROFIT",
+    "OPEN_EXECUTABLE_ENTRIES",
+    "POST_ENTRY_LIQUIDATION_AT_OPEN",
+    "DUAL_PATH_INTRABAR_EVENTS_WITH_LIQUIDATION_AND_STOP_BEFORE_PASSIVE_FILL_BEFORE_TAKE_PROFIT",
+    "STRATEGY_CALLBACK_AFTER_FULL_BAR_PROCESSING"
+  ],
+  "capabilities": {
+    "market_entry": {"supported": true},
+    "next_bar_market_execution": {"supported": true},
+    "passive_limit_entry": {"supported": true},
+    "marketable_limit_entry": {"supported": true},
+    "limit_fill_touch": {"supported": true},
+    "limit_fill_strict_through": {"supported": true},
+    "gtc": {"supported": true},
+    "ioc": {"supported": true},
+    "cancel_pending_per_side": {"supported": true},
+    "maximum_one_pending_order_per_side": {"supported": true, "limit": 1},
+    "simultaneous_long_short": {"supported": true, "long_legs": 1, "short_legs": 1},
+    "cross_margin": {"supported": true},
+    "one_static_stop_loss_per_position": {"supported": true, "limit": 1},
+    "one_static_take_profit_per_position": {"supported": true, "limit": 1},
+    "conservative_dual_ohlc_path": {
+      "supported": true,
+      "paths": ["OPEN_HIGH_LOW_CLOSE", "OPEN_LOW_HIGH_CLOSE"]
+    },
+    "supplied_funding_input": {"supported": true},
+    "mark_price_liquidation_with_supplied_data": {"supported": true},
+    "stop_entry": {"supported": false, "block_reason": "OrderType supports market and limit only"},
+    "same_side_pyramiding": {"supported": false, "block_reason": "Maximum one position per side"},
+    "partial_exits": {"supported": false},
+    "multiple_take_profit": {"supported": false},
+    "trailing_stop": {"supported": false},
+    "multiple_same_side_pending_orders": {"supported": false},
+    "dynamic_order_amendment": {"supported": false},
+    "same_bar_strategy_callback_reentry": {"supported": false},
+    "native_limit_exit": {"supported": false},
+    "exact_queue_partial_fill_microstructure": {"supported": false}
+  }
+}
