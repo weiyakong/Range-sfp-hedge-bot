@@ -289,7 +289,11 @@ class ProductionPathAttackRegressions(unittest.TestCase):
             self.assertFalse(validate_production_preflight(**kwargs).ok)
             kwargs["tested_start"] = 1_577_836_800_000
             kwargs["tested_end"] = 1_609_459_200_000
-            dirty = validate_production_preflight(**kwargs)
+            with patch(
+                "research.strategy_replications.validation.core._material_dirty_paths",
+                return_value=["research/backtester_v2/engine.py"],
+            ):
+                dirty = validate_production_preflight(**kwargs)
             self.assertFalse(dirty.ok)
             self.assertTrue(any("repo.dirty" in error for error in dirty.errors))
             wrong_config = BacktestConfig(taker_fee_rate=0.001)
