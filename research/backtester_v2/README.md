@@ -94,21 +94,25 @@ set contains trades, close and intrabar equity, metrics, full config, exposure
 and pending orders, rejected orders, intrabar ambiguities, run metadata, and a
 checksum manifest.
 
-External-strategy production runs may attach `ReplicationLineage` to
-`build_run_metadata`. With `production_research=True`, candidate/variant,
-strategy code, freeze receipt, capability manifest, and data manifest identities
-are mandatory. The strategy-replication preflight and post-run receipt validators
-provide the hard research gate.
+All runs require explicit `run_purpose` and `run_stage`. External-strategy
+production runs attach `ReplicationLineage` and a validator-issued
+`VerifiedPreflightContext` to `build_run_metadata`; the same context is required
+again by `write_results`. Candidate/variant, strategy code, executed tests,
+freeze receipt, canonical capability manifest, data manifest, actual window,
+and semantically matched config identities are mandatory. The output API is
+fail-closed: a production-purpose run without preflight cannot be published.
 
 Use `build_run_metadata` for material runs. It records strategy identity and
 source type, parameters/reference, canonical manifest path and checksum, data
 scope, unique run identity/time, Git commit/dirty state, and checksums of the
 executed backtester files.
 
-Synthetic engine fixtures may exercise leverage and liquidation, but a real
-leveraged run is automatically `NOT VERIFIED` when it lacks the applicable
-verified historical Mark Price, funding, maintenance-tier, or liquidation
-execution inputs. Missing inputs are listed in `qa_issues`.
+Synthetic engine fixtures may exercise leverage and liquidation. Engine-local
+`VERIFIED`/`NOT VERIFIED` remains available for compatibility, but output
+metadata separates engine integrity, data fidelity, methodology preflight,
+execution fidelity, and causality assurance. A non-production output is always
+aggregate-labeled `NON_PRODUCTION`; engine status alone never proves production
+research compliance. Missing engine inputs remain listed in `qa_issues`.
 ## Validation commands
 
 Run all V2 tests:

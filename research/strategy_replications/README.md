@@ -11,12 +11,15 @@ Machine authority is split as follows:
 - Strategy Spec JSON: source evidence, fidelity, rules, parameters, data
   allowlist, state decisions, tests, and strategy-specific exceptions.
 - Capability manifest: the exact supported V2 execution contract.
+- Test-result manifest: identities and results of actually executed strategy tests.
 - Run config: effective values used by V2.
-- Freeze/run receipts: immutable hashes and post-run lineage.
+- Freeze/run/protected-use receipts and ledgers: immutable identities, collision
+  detection, and post-run lineage.
 
-Schemas are in `schema/`. Domain invariants are enforced by the standard-library
-validators in `validation/`; no arbitrary Markdown parsing or third-party schema
-dependency is required.
+The standard-library Python validators in `validation/core.py` are the one
+authoritative structural and semantic contract. The former non-executed JSON
+Schema sketches were removed so there is no second, divergent contract. No
+arbitrary Markdown parsing or third-party schema dependency is required.
 
 ## Freeze
 
@@ -33,6 +36,8 @@ python3 -m research.strategy_replications.validation.validate_freeze \
 
 The command reports every detected defect and writes a receipt only on PASS.
 Receipt files are immutable: existing files are never overwritten.
+Strategy code is mandatory at freeze. The receipt index prevents reuse of the
+same candidate/variant/version/parameter identity.
 
 ## Production preflight
 
@@ -42,11 +47,51 @@ python3 -m research.strategy_replications.validation.validate_production_run \
   --protocol path/to/protocol.json \
   --capability research/strategy_replications/capability/backtester_v2_capabilities.json \
   --data-manifest path/to/data-manifest.json \
-  --strategy-code path/to/strategy.py \
+  --strategy-code path/to/strategy.py --test-manifest path/to/test-results.json \
+  --config path/to/effective-config.json \
+  --tested-start 1577836800000 --tested-end 1609459200000 \
+  --run-stage COMPARISON \
   --receipt path/to/freeze_receipt.json --repo-root .
 ```
 
-Declaring `FROZEN` without a valid receipt never passes this gate.
+Declaring `FROZEN` without a valid receipt never passes this gate. Production
+code must obtain a `VerifiedPreflightContext` with
+`create_production_preflight_context`; both `build_run_metadata` and
+`write_results` require the authentic context. An old-style external output call
+cannot publish a production run.
+
+## Fail-closed production flow
+
+`candidate intake → protocol → spec → freeze → preflight → run → post-run validation → run receipt`
+
+- intake blocks unknown/reused identities and broken registry predecessor chains;
+- freeze blocks invalid specs, code/data/capability drift, and parameter reuse;
+- preflight binds the frozen window and semantically derived effective config to
+  the actual `BacktestConfig`, real Git repository, strategy code, and executed
+  test manifest;
+- output publication rechecks the opaque preflight context, window, config, and
+  Git identity;
+- post-run validation requires the exact complete output set, verifies every
+  checksum and required metric, and recomputes Git/code/data identities;
+- run-receipt creation rejects run-ID collisions and records comparison or
+  protected use in the append-only ledger.
+
+Every run has explicit `run_purpose` and `run_stage`. Non-production
+`TEST`/`SMOKE`/`SYNTHETIC` outputs remain possible but are labeled
+`NON_PRODUCTION` and cannot be mistaken for production research.
+
+## QA dimensions
+
+Production eligibility is based on separate fields:
+
+- `engine_integrity`: whether V2's applicable engine checks passed;
+- `data_fidelity`: canonical/declared identity verification status;
+- `methodology_preflight`: whether the frozen research contract passed;
+- `execution_fidelity`: source-faithful, target mapping, or proxy;
+- `causality_assurance`: executed-test evidence or human review required.
+
+The legacy aggregate `qa_status` is retained only for compatibility. It is not
+evidence of canonical data, source fidelity, or absence of look-ahead.
 
 ## Hashing and immutability
 
@@ -56,12 +101,21 @@ The output manifest similarly excludes itself; its exact-byte SHA-256 is stored
 in the external run receipt. Frozen specs are never edited with run facts or
 change history.
 
-## Data access limitation
+## Technically enforced
 
-V1 enforces an explicit strategy input declaration against the spec allowlist.
-It does not statically analyze arbitrary Python or prevent direct filesystem
-access by malicious strategy code. Production runners must expose inputs through
-the declared interface and invoke preflight before execution.
+Exact file identities, real Git HEAD/branch/origin, material dirty state,
+canonical capability path and controlled IDs, window/config equality, data
+manifest consistency, required test-result identities, trace path/symbol/hash
+existence, complete outputs, metrics, receipt uniqueness, registry continuity,
+and protected-use logging are machine checked.
+
+## Human/code-review trust boundary
+
+The layer does not prove semantic equivalence to prose, discover an honestly
+omitted candidate, statically prove arbitrary Python causal, or prevent
+malicious code from reading undeclared files. Source review, code review,
+semantic causality review, and candidate-universe completeness remain human
+responsibilities. `HUMAN_REVIEW_REQUIRED` states this boundary explicitly.
 
 ## Status mapping
 

@@ -12,6 +12,16 @@ MarginMode = Literal["cross"]
 FillTimeResolution = Literal["exact", "bar"]
 LiquidationExecutionModel = Literal["mark_trigger_approximation"]
 SourceType = Literal["external_replication", "external_adaptation", "internal"]
+RunPurpose = Literal["PRODUCTION_RESEARCH", "TEST", "SMOKE", "SYNTHETIC"]
+RunStage = Literal[
+    "DEVELOPMENT", "COMPARISON", "PROTECTED_VALIDATION",
+    "ADAPTATION_VALIDATION", "SYNTHETIC", "SMOKE",
+]
+PRODUCTION_OUTPUT_ARTIFACTS = frozenset({
+    "trades.csv", "equity.csv", "intrabar_equity.csv", "bar_exposure.csv",
+    "intrabar_ambiguities.csv", "rejected_orders.csv", "metrics.json",
+    "config.json", "exposure.json", "run_metadata.json",
+})
 
 
 @dataclass(frozen=True)

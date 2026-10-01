@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Dict, Tuple
+from unittest.mock import patch
 
 from research.backtester_v2.engine import BacktestEngine
 from research.backtester_v2.models import (
@@ -17,6 +19,7 @@ from research.backtester_v2.output import build_run_metadata, write_results
 from research.strategy_replications.validation.core import (
     compute_fidelity_summary,
     create_freeze_receipt,
+    create_production_preflight_context,
     create_run_receipt,
     derived_registry_counts,
     load_json,
@@ -28,6 +31,7 @@ from research.strategy_replications.validation.core import (
     validate_freeze_receipt,
     validate_production_preflight,
     validate_run_lineage,
+    validate_run_receipt,
     validate_strategy_spec,
 )
 
@@ -49,6 +53,7 @@ def metric(name: str) -> Dict[str, object]:
     item: Dict[str, object] = {
         "name": name,
         "formula": f"frozen formula for {name}",
+        "formula_version": f"BACKTESTER_V2_METRICS_2:{name}",
         "units": "ratio",
         "denominator": "frozen denominator",
         "source_artifact": "metrics.json or equity.csv",
@@ -67,18 +72,28 @@ def valid_protocol() -> Dict[str, object]:
         "average_holding_time", "ambiguity_rate", "yearly_return", "sharpe",
         "sortino", "recovery_factor", "time_underwater",
     ]
-    assumptions = {
-        name: {"value": "frozen common value", "origin": "COMMON_RESEARCH_PROTOCOL"}
-        for name in (
-            "maker_fee", "taker_fee", "slippage", "passive_limit_policy",
-            "marketable_limit_policy", "funding_treatment", "liquidation_model",
-            "end_of_data_policy",
-        )
+    values = {
+        "maker_fee": 0.0, "taker_fee": 0.0, "slippage": 0.0,
+        "passive_limit_policy": "strict_through",
+        "marketable_limit_policy": "OPEN_TAKER_WITH_LIMIT_CAP",
+        "funding_treatment": "provided",
+        "liquidation_model": "mark_trigger_approximation",
+        "end_of_data_policy": "mark_to_market", "margin_mode": "cross",
+        "leverage": 1.0, "liquidation_enabled": False,
+        "liquidation_fee": 0.0, "intrabar_policy": "worst_case",
     }
+    assumptions = {
+        name: {"value": value, "origin": "COMMON_RESEARCH_PROTOCOL"}
+        for name, value in values.items()
+    }
+    finalist_hash = hashlib.sha256(
+        json.dumps(["C001-V1"], separators=(",", ":"), sort_keys=True).encode()
+    ).hexdigest()
     return {
         "schema_version": "EVALUATION_PROTOCOL_V1",
         "protocol_version": "EP-1",
         "status": "FROZEN",
+        "created_at_utc": "2019-12-30T00:00:00Z",
         "candidate_universe": {
             "registry_version": "REG-1",
             "frozen_before_candidate_results": True,
@@ -102,7 +117,7 @@ def valid_protocol() -> Dict[str, object]:
             "synthetic_causality_tests_pass": True,
             "lineage_complete": True,
             "historical_window_frozen": True,
-            "allowed_v2_qa_statuses": ["VERIFIED"],
+            "allowed_engine_integrity_statuses": ["PASS"],
         },
         "ranking": {
             "method": "NO_SCALAR",
@@ -114,6 +129,11 @@ def valid_protocol() -> Dict[str, object]:
             "policy_frozen_before_first_selection_result": True,
             "data_excluded_from_initial_selection_and_formalization": True,
             "finalist_evaluation_rule": "Evaluate all predeclared finalists once on the protected partition",
+            "dataset_manifest_sha256": HASH_A,
+            "finalist_set_sha256": finalist_hash,
+            "selection_protocol_sha256": HASH_A,
+            "finalist_variant_ids": ["C001-V1"],
+            "window": {"start_utc": "2022-01-01T00:00:00Z", "end_utc": "2023-01-01T00:00:00Z"},
         },
         "multiple_testing": {
             "disclose_candidate_count": True,
@@ -208,10 +228,15 @@ def valid_spec(data_manifest_hash: str) -> Dict[str, object]:
 
 
 def valid_registry(spec_hash: str) -> Dict[str, object]:
+    parameter_hash = hashlib.sha256(json.dumps(
+        valid_spec(HASH_A)["parameters"], sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
     return {
         "schema_version": "CANDIDATE_REGISTRY_V1",
         "registry_version": "REG-1",
         "status": "FROZEN",
+        "created_at_utc": "2026-01-04T00:00:00Z",
+        "predecessor": None,
         "universe_definition": "All candidates identified by the frozen search protocol",
         "intake_required_before_substantive_review": True,
         "candidates": [
@@ -233,6 +258,8 @@ def valid_registry(spec_hash: str) -> Dict[str, object]:
                 "created_at_utc": "2026-01-02T00:00:00Z", "type": "PURE_REPLICATION",
                 "exact_change": "Initial source-faithful formalization", "parameter_changes": [],
                 "search_space": {}, "spec_sha256": spec_hash,
+                "parameter_identity_sha256": parameter_hash,
+                "fidelity_classification": "PURE_REPLICATION",
                 "historical_results_observed_before_creation": [], "status": "FROZEN",
             }
         ],
@@ -247,14 +274,31 @@ def fixture_files(root: Path) -> Tuple[Path, Path, Path, Path, Path, Path]:
     data = root / "data_manifest.json"
     data.write_text('{"dataset":"fixture"}\n', encoding="utf-8")
     strategy = root / "strategy.py"
-    strategy.write_text("class MaCrossStrategy:\n    pass\n", encoding="utf-8")
+    strategy.write_text("class MaCrossStrategy:\n    def on_bar(self, bar, state):\n        return []\n", encoding="utf-8")
     spec_path = root / "spec.json"
-    write_json(spec_path, valid_spec(sha256_file(data)))
+    spec_payload = valid_spec(sha256_file(data))
+    spec_payload["traceability"][0]["code_path"] = "strategy.py"
+    spec_payload["traceability"][0]["implementation_sha256"] = sha256_file(strategy)
+    write_json(spec_path, spec_payload)
     registry_path = root / "registry.json"
     write_json(registry_path, valid_registry(sha256_file(spec_path)))
     protocol_path = root / "protocol.json"
     write_json(protocol_path, valid_protocol())
     receipt_path = root / "freeze_receipt.json"
+    suite = root / "strategy_tests.py"
+    suite.write_text("# executed fixture suite\n", encoding="utf-8")
+    write_json(root / "test_manifest.json", {
+        "schema_version": "STRATEGY_TEST_RESULTS_V1",
+        "executed_at_utc": "2026-01-03T00:00:00Z",
+        "strategy_spec_sha256": sha256_file(spec_path),
+        "strategy_code_sha256": sha256_file(strategy),
+        "test_suite_path": "strategy_tests.py",
+        "test_suite_sha256": sha256_file(suite),
+        "results": [
+            {"test_id": test_id, "test_identifier": f"fixture.{test_id}", "result": "PASS"}
+            for test_id in spec_payload["tests"]["test_ids"]
+        ],
+    })
     return spec_path, registry_path, protocol_path, data, strategy, receipt_path
 
 
@@ -469,51 +513,87 @@ class PositiveEnforcementTests(unittest.TestCase):
                 strategy_spec_sha256=sha256_file(spec),
                 fidelity_classification=compute_fidelity_summary(spec_payload),
                 comparability_class="DIRECTLY_COMPARABLE",
-                capability_manifest_version="BACKTESTER_V2_EXECUTION_CONTRACT_1",
+                capability_manifest_version="BACKTESTER_V2_EXECUTION_CONTRACT_2",
                 freeze_receipt_sha256=sha256_file(freeze_receipt),
             )
-            metadata = build_run_metadata(
-                repo_root=REPO_ROOT, strategy_name="MA crossover",
-                strategy_version="V1", source_type="external_replication",
-                strategy_parameters={"fast": 10, "slow": 20},
-                source_reference="Fixture source", manifest_path=data,
-                symbol="BTCUSDT", market="USDT-M perpetual futures",
-                timeframe="1m", tested_start=0, tested_end=60_000,
-                row_count=2, replication_lineage=lineage,
-                strategy_code_path=strategy,
-                capability_manifest_path=CAPABILITY_PATH,
-                freeze_receipt_path=freeze_receipt,
-                production_research=True,
-            )
-            result = BacktestEngine(BacktestConfig()).run(
-                [Bar(0, 100, 100, 100, 100, 1), Bar(60_000, 100, 100, 100, 100, 1)],
-                NoopStrategy(),
-            )
-            output = root / "run"
-            write_results(output, result, BacktestConfig(), metadata)
+            start = 1_577_836_800_000
+            end = 1_609_459_200_000
+            config = BacktestConfig()
+            with patch("research.strategy_replications.validation.core._material_dirty_paths", return_value=[]), patch("research.backtester_v2.output._material_dirty_paths", return_value=[]):
+                preflight_report, context = create_production_preflight_context(
+                    receipt_path=freeze_receipt, spec_path=spec,
+                    registry_path=registry, protocol_path=protocol,
+                    capability_path=CAPABILITY_PATH, data_manifest_path=data,
+                    strategy_code_path=strategy, repo_root=REPO_ROOT,
+                    actual_config=config, tested_start=start, tested_end=end,
+                    run_stage="COMPARISON", test_manifest_path=root / "test_manifest.json",
+                )
+                self.assertTrue(preflight_report.ok, preflight_report.render())
+                self.assertIsNotNone(context)
+                metadata = build_run_metadata(
+                    repo_root=REPO_ROOT, strategy_name="MA crossover",
+                    strategy_version="V1", source_type="external_replication",
+                    run_purpose="PRODUCTION_RESEARCH", run_stage="COMPARISON",
+                    strategy_parameters={"fast": 10, "slow": 20},
+                    source_reference="Fixture source", manifest_path=data,
+                    symbol="BTCUSDT", market="USDT-M perpetual futures",
+                    timeframe="1m", tested_start=start, tested_end=end,
+                    row_count=2, replication_lineage=lineage,
+                    strategy_code_path=strategy,
+                    capability_manifest_path=CAPABILITY_PATH,
+                    freeze_receipt_path=freeze_receipt,
+                    preflight_context=context,
+                )
+                result = BacktestEngine(config).run(
+                    [Bar(start, 100, 100, 100, 100, 1), Bar(end, 100, 100, 100, 100, 1)],
+                    NoopStrategy(),
+                )
+                output = root / "run"
+                write_results(output, result, config, metadata, preflight_context=context)
             run_receipt = root / "run_receipt.json"
-            run_report, created = create_run_receipt(
-                output_dir=output, freeze_receipt_path=freeze_receipt,
-                spec_path=spec, registry_path=registry, protocol_path=protocol,
-                capability_path=CAPABILITY_PATH, data_manifest_path=data,
-                strategy_code_path=strategy, receipt_path=run_receipt,
-            )
+            with patch("research.strategy_replications.validation.core._material_dirty_paths", return_value=[]):
+                run_report, created = create_run_receipt(
+                    output_dir=output, freeze_receipt_path=freeze_receipt,
+                    spec_path=spec, registry_path=registry, protocol_path=protocol,
+                    capability_path=CAPABILITY_PATH, data_manifest_path=data,
+                    strategy_code_path=strategy, receipt_path=run_receipt,
+                    repo_root=REPO_ROOT,
+                )
             self.assertTrue(run_report.ok, run_report.render())
             self.assertIsNotNone(created)
             self.assertEqual(created["candidate_id"], spec_payload["candidate_id"])
             self.assertEqual(created["registry"]["version"], registry_payload["registry_version"])
             self.assertEqual(created["protocol"]["version"], protocol_payload["protocol_version"])
+            with patch("research.strategy_replications.validation.core._material_dirty_paths", return_value=[]):
+                revalidated = validate_run_receipt(
+                    run_receipt, output_dir=output,
+                    freeze_receipt_path=freeze_receipt, spec_path=spec,
+                    registry_path=registry, protocol_path=protocol,
+                    capability_path=CAPABILITY_PATH, data_manifest_path=data,
+                    strategy_code_path=strategy, repo_root=REPO_ROOT,
+                )
+                duplicate_report, duplicate = create_run_receipt(
+                    output_dir=output, freeze_receipt_path=freeze_receipt,
+                    spec_path=spec, registry_path=registry, protocol_path=protocol,
+                    capability_path=CAPABILITY_PATH, data_manifest_path=data,
+                    strategy_code_path=strategy, receipt_path=root / "duplicate_run_receipt.json",
+                    repo_root=REPO_ROOT,
+                )
+            self.assertTrue(revalidated.ok, revalidated.render())
+            self.assertFalse(duplicate_report.ok)
+            self.assertIsNone(duplicate)
 
             metadata_path = output / "run_metadata.json"
             metadata_payload = load_json(metadata_path)
             metadata_payload["replication_lineage"]["candidate_id"] = "WRONG"
             write_json(metadata_path, metadata_payload)
-            mismatch = validate_run_lineage(
-                output_dir=output, freeze_receipt_path=freeze_receipt,
-                spec_path=spec, registry_path=registry, protocol_path=protocol,
-                capability_path=CAPABILITY_PATH, data_manifest_path=data,
-                strategy_code_path=strategy,
-            )
+            with patch("research.strategy_replications.validation.core._material_dirty_paths", return_value=[]):
+                mismatch = validate_run_lineage(
+                    output_dir=output, freeze_receipt_path=freeze_receipt,
+                    spec_path=spec, registry_path=registry, protocol_path=protocol,
+                    capability_path=CAPABILITY_PATH, data_manifest_path=data,
+                    strategy_code_path=strategy, repo_root=REPO_ROOT,
+                )
             self.assertFalse(mismatch.ok)
 
 

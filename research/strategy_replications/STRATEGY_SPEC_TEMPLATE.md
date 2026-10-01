@@ -77,7 +77,9 @@ Choose one:
 **Execution fidelity:**  
 
 `PROXY` must be explicitly justified and always computes `ADAPTED`; it can never
-compute `PURE_REPLICATION`.
+compute `PURE_REPLICATION`. `fidelity.execution=PROXY` and `proxy.used=true`
+are bidirectional requirements; classification consequence is the controlled
+value `ADAPTED`.
 
 ## 2.5 Sizing fidelity
 
@@ -132,6 +134,10 @@ For a frozen replication:
 - no changing assessment criteria after results.
 
 Any material post-result change requires a new version.
+
+For every `SOURCE_RANGE`, minimum/maximum and selected value are finite numeric,
+minimum is not greater than maximum, the selected value is in range, and the
+selection method/rationale/timestamp prove selection before outcome-bearing use.
 
 ---
 
@@ -282,6 +288,9 @@ and availability:
 `missing ≠ zero`
 
 Required missing data block freeze unless a proxy is explicitly declared and the Fidelity Classification is updated.
+
+`NOT_USED` inputs use omitted or `null` dataset metadata; fake `N/A` dataset
+identities are not required.
 
 ---
 

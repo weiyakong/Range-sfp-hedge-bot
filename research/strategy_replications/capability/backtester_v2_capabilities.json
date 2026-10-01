@@ -1,9 +1,14 @@
 {
   "schema_version": "BACKTESTER_CAPABILITIES_V1",
-  "manifest_version": "BACKTESTER_V2_EXECUTION_CONTRACT_1",
+  "manifest_version": "BACKTESTER_V2_EXECUTION_CONTRACT_2",
   "audited_base_commit": "2b096ebf52928248ad2e608be685bef37a7d6887",
   "execution_engine_path": "research/backtester_v2/engine.py",
   "execution_engine_sha256": "89ea14aac538b797923fc5cae66029372a244e8628e1439aadf32a3f2d54f98a",
+  "execution_critical_sha256": {
+    "research/backtester_v2/engine.py": "89ea14aac538b797923fc5cae66029372a244e8628e1439aadf32a3f2d54f98a",
+    "research/backtester_v2/metrics.py": "616b0abf1d561420239ab566f48cefd9d1cb945389f40fc527d00d46549ce644",
+    "research/backtester_v2/models.py": "7a0109d305450309d008116c9556b99ba97c36d2aec28f68242d729e672e83e7"
+  },
   "engine_event_order": [
     "FUNDING_AT_BAR_TIMESTAMP",
     "LIQUIDATION_AT_OPEN",

@@ -4,6 +4,7 @@ from .core import (
     ValidationReport,
     compute_fidelity_summary,
     create_freeze_receipt,
+    create_production_preflight_context,
     create_run_receipt,
     derived_registry_counts,
     validate_candidate_registry,
@@ -13,6 +14,7 @@ from .core import (
     validate_freeze_inputs,
     validate_production_preflight,
     validate_run_lineage,
+    validate_run_receipt,
     validate_strategy_spec,
 )
 
@@ -20,6 +22,7 @@ __all__ = [
     "ValidationReport",
     "compute_fidelity_summary",
     "create_freeze_receipt",
+    "create_production_preflight_context",
     "create_run_receipt",
     "derived_registry_counts",
     "validate_candidate_registry",
@@ -29,5 +32,6 @@ __all__ = [
     "validate_freeze_inputs",
     "validate_production_preflight",
     "validate_run_lineage",
+    "validate_run_receipt",
     "validate_strategy_spec",
 ]

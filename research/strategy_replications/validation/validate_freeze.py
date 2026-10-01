@@ -16,7 +16,8 @@ def main() -> int:
     parser.add_argument("--data-manifest", type=Path, required=True)
     parser.add_argument("--repo-root", type=Path, required=True)
     parser.add_argument("--receipt-out", type=Path, required=True)
-    parser.add_argument("--strategy-code", type=Path)
+    parser.add_argument("--strategy-code", type=Path, required=True)
+    parser.add_argument("--previous-registry", type=Path)
     args = parser.parse_args()
     try:
         report, _ = create_freeze_receipt(
@@ -24,6 +25,7 @@ def main() -> int:
             protocol_path=args.protocol, capability_path=args.capability,
             data_manifest_path=args.data_manifest, repo_root=args.repo_root,
             receipt_path=args.receipt_out, strategy_code_path=args.strategy_code,
+            previous_registry_path=args.previous_registry,
         )
         return finish(report)
     except (OSError, ValueError) as exc:

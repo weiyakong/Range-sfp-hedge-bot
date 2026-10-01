@@ -2,6 +2,7 @@
 
 **Schema:** `EVALUATION_PROTOCOL_V1`  
 **Version:**  
+**Created UTC:**
 **Frozen UTC:**  
 **Structured protocol:** validated `EVALUATION_PROTOCOL_V1` JSON
 **Identity:** version and exact-byte SHA-256 are stored by external receipts
@@ -88,6 +89,8 @@ Unless a source-faithful requirement overrides it and is explicitly classified:
 **Limit fill policy:**  
 **Funding policy:**  
 **Liquidation policy:**  
+**Leverage and margin policy:**
+**Intrabar policy:**
 
 Each assumption has its own origin. Any source-faithful exception is recorded in
 the Strategy Spec with evidence and an explicit comparability downgrade where
@@ -251,6 +254,11 @@ result that can influence selection. Adaptation remains subject to the same or a
 newly protected stage.
 
 **Protected period/data rule:**  
+
+The structured protocol freezes the protected dataset-manifest hash, exact
+window, finalist IDs plus finalist-set hash, and selection-protocol hash.
+Protected use is allowed only at `PROTECTED_VALIDATION`; every use is appended
+to the research-use ledger and a repeated trial cannot receive a clean receipt.
 
 The protected period must not be used to choose adaptation parameters.
 

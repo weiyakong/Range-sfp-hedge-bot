@@ -55,6 +55,8 @@ def audit_metadata():
         strategy_name="audit_fixture",
         strategy_version="1",
         source_type="internal",
+        run_purpose="TEST",
+        run_stage="DEVELOPMENT",
         strategy_parameters={"x": 1},
         source_reference=None,
         manifest_path=None,

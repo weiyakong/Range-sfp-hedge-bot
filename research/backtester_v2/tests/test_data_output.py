@@ -59,6 +59,8 @@ class OutputTests(unittest.TestCase):
             strategy_name="output_fixture",
             strategy_version="1",
             source_type="internal",
+            run_purpose="TEST",
+            run_stage="DEVELOPMENT",
             strategy_parameters={},
             source_reference=None,
             manifest_path=None,

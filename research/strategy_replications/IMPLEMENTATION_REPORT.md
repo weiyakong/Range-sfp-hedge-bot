@@ -33,3 +33,34 @@ sidecars and receipts are authoritative for machine checks.
   PASS.
 - Canonical-data smoke run: PASS with V2 QA status `VERIFIED`.
 - No market data was downloaded or modified.
+
+## Adversarial-audit remediation
+
+Starting remediation baseline: `d12c22d1fba8f412ba8fbdecfe6f5edc538940cb`
+on `backtester-v2`, equal to `origin/backtester-v2`, with a clean worktree.
+
+The remediation closes the confirmed production bypasses without changing V2
+execution semantics:
+
+1. production metadata construction and atomic output publication both require
+   an authentic `VerifiedPreflightContext`; run purpose/stage are explicit;
+2. frozen protocol values are converted into one expected effective config and
+   compared semantically with actual `BacktestConfig`, while actual timestamps
+   must equal the frozen stage-specific window;
+3. production accepts only the canonical capability manifest from the real
+   expected Git repository and verifies the controlled module set;
+4. lineage requires the exact writer-derived output set, rejects empty/incomplete
+   or unexpected manifests, and recomputes Git, code, strategy, data, config,
+   metric, and output identities;
+5. registry predecessor continuity, parameter/spec identity, receipt indexes,
+   research-use history, and one-use protected validation are enforced;
+6. SOURCE_RANGE, proxy, state graph, cross-document chronology/source/fidelity,
+   ranking, fees, test manifests, and trace path/symbol/hash contracts are strict;
+7. QA is split into engine integrity, data fidelity, methodology preflight,
+   execution fidelity, and causality assurance;
+8. Python validators are the sole authoritative structural contract; inactive
+   JSON Schema sketches were removed.
+
+The technical boundary remains deliberately honest: executed tests and code
+identity do not formally prove semantic equivalence or absence of look-ahead in
+arbitrary Python. Those require source/code/causality review.

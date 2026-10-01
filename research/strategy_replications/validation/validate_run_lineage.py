@@ -11,6 +11,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Validate production run lineage and optionally issue a run receipt")
     for name in ("output-dir", "freeze-receipt", "spec", "registry", "protocol", "capability", "data-manifest", "strategy-code"):
         parser.add_argument(f"--{name}", type=Path, required=True)
+    parser.add_argument("--repo-root", type=Path, required=True)
     parser.add_argument("--receipt-out", type=Path)
     args = parser.parse_args()
     try:
@@ -23,6 +24,7 @@ def main() -> int:
             "capability_path": args.capability,
             "data_manifest_path": args.data_manifest,
             "strategy_code_path": args.strategy_code,
+            "repo_root": args.repo_root,
         }
         if args.receipt_out:
             report, _ = create_run_receipt(receipt_path=args.receipt_out, **kwargs)

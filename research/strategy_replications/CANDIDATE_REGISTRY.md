@@ -2,6 +2,8 @@
 
 **Registry schema:** `CANDIDATE_REGISTRY_V1`  
 **Registry version:**  
+**Created UTC:**
+**Predecessor version / exact-byte SHA-256 (or null for root):**
 **Frozen UTC:**  
 **Structured registry:** validated `CANDIDATE_REGISTRY_V1` JSON
 **Identity:** version and exact-byte SHA-256 are stored by external receipts
@@ -50,7 +52,8 @@ Allowed statuses:
 
 Every tested or materially considered variant must remain visible. The
 structured registry also requires parent ID, creation time, exact change,
-parameter changes/search space, spec hash, and historical results already seen.
+parameter changes/search space, spec hash, canonical parameter-identity hash,
+computed fidelity class, and historical results already seen.
 
 | Variant ID | Candidate ID | Version | Type | Created before/after result | Status |
 |---|---|---|---|---|---|
@@ -91,4 +94,7 @@ totals are non-authoritative.
 |---|---|---|---|
 | | | | |
 
-Never silently delete a candidate or variant from a previous registry version.
+Every non-root version supplies its predecessor document for validation. Never
+silently delete a candidate or variant from a previous registry version. A
+candidate/variant/version identity cannot be reused for different parameters or
+spec bytes.
