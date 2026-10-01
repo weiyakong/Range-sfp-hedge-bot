@@ -1,13 +1,18 @@
 {
   "schema_version": "BACKTESTER_CAPABILITIES_V1",
-  "manifest_version": "BACKTESTER_V2_EXECUTION_CONTRACT_2",
+  "manifest_version": "BACKTESTER_V2_EXECUTION_CONTRACT_3",
   "audited_base_commit": "2b096ebf52928248ad2e608be685bef37a7d6887",
   "execution_engine_path": "research/backtester_v2/engine.py",
   "execution_engine_sha256": "89ea14aac538b797923fc5cae66029372a244e8628e1439aadf32a3f2d54f98a",
   "execution_critical_sha256": {
     "research/backtester_v2/engine.py": "89ea14aac538b797923fc5cae66029372a244e8628e1439aadf32a3f2d54f98a",
+    "research/backtester_v2/data.py": "e64ec7fdbcfeeca61a75b25adff46310da4cef4491eb23571fa15f3e7ed1cd1a",
     "research/backtester_v2/metrics.py": "616b0abf1d561420239ab566f48cefd9d1cb945389f40fc527d00d46549ce644",
-    "research/backtester_v2/models.py": "7a0109d305450309d008116c9556b99ba97c36d2aec28f68242d729e672e83e7"
+    "research/backtester_v2/models.py": "7a0109d305450309d008116c9556b99ba97c36d2aec28f68242d729e672e83e7",
+    "research/backtester_v2/output.py": "f2f59ebe2f0231ac72817f90e8a2a9abeee6484e889c629092e316de97c66ecf",
+    "research/strategy_replications/production_runner.py": "6e4048e68d201648883109ff28822949c7f7350b489c8c9e777784b1146ccac7",
+    "research/strategy_replications/run_production_v2.py": "8f0a129523e9a4eb3a9a8d69a1385fba6391f45df328bec82d063d1dea4d63e5",
+    "research/strategy_replications/validation/core.py": "7eb1adf6f9edc04898ef0815cc32fc20fb8660df49c726b76a7f3e67d4908ead"
   },
   "engine_event_order": [
     "FUNDING_AT_BAR_TIMESTAMP",

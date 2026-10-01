@@ -27,3 +27,6 @@ venv/
 .env
 .env.*
 !.env.example
+
+# Local Strategy Replication V2 transactional state
+.strategy-replication/

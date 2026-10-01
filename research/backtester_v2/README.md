@@ -94,13 +94,14 @@ set contains trades, close and intrabar equity, metrics, full config, exposure
 and pending orders, rejected orders, intrabar ambiguities, run metadata, and a
 checksum manifest.
 
-All runs require explicit `run_purpose` and `run_stage`. External-strategy
-production runs attach `ReplicationLineage` and a validator-issued
-`VerifiedPreflightContext` to `build_run_metadata`; the same context is required
-again by `write_results`. Candidate/variant, strategy code, executed tests,
-freeze receipt, canonical capability manifest, data manifest, actual window,
-and semantically matched config identities are mandatory. The output API is
-fail-closed: a production-purpose run without preflight cannot be published.
+All runs require explicit `run_purpose` and `run_stage`. Low-level output APIs
+retain legacy preflight checks, but they cannot issue an authoritative V1 run
+receipt. External-strategy production authority requires
+`research.strategy_replications.production_runner.run_production_research`.
+That runner owns the actual bars, locked strategy construction, cloned config,
+engine invocation, semantic output validation, transactional state registration,
+and `RUN_RECEIPT_V2` issue. A caller-supplied `BacktestResult` therefore cannot
+be promoted to an authoritative production run.
 
 Use `build_run_metadata` for material runs. It records strategy identity and
 source type, parameters/reference, canonical manifest path and checksum, data

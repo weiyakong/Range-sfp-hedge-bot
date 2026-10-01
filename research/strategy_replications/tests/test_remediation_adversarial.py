@@ -371,7 +371,7 @@ class ProductionPathAttackRegressions(unittest.TestCase):
                 protocol_sha256=sha256_file(protocol), strategy_spec_sha256=sha256_file(spec),
                 fidelity_classification=compute_fidelity_summary(load_json(spec)),
                 comparability_class="DIRECTLY_COMPARABLE",
-                capability_manifest_version="BACKTESTER_V2_EXECUTION_CONTRACT_2",
+                capability_manifest_version="BACKTESTER_V2_EXECUTION_CONTRACT_3",
                 freeze_receipt_sha256=sha256_file(freeze_receipt),
             )
             with patch("research.backtester_v2.output._material_dirty_paths", return_value=[]):
@@ -452,7 +452,7 @@ class ProductionPathAttackRegressions(unittest.TestCase):
                 protocol_sha256=sha256_file(protocol_path), strategy_spec_sha256=sha256_file(spec),
                 fidelity_classification="PURE_REPLICATION",
                 comparability_class="DIRECTLY_COMPARABLE",
-                capability_manifest_version="BACKTESTER_V2_EXECUTION_CONTRACT_2",
+                capability_manifest_version="BACKTESTER_V2_EXECUTION_CONTRACT_3",
                 freeze_receipt_sha256=sha256_file(freeze_receipt),
             )
             result = BacktestEngine(config).run(
@@ -482,13 +482,9 @@ class ProductionPathAttackRegressions(unittest.TestCase):
                         strategy_code_path=strategy, receipt_path=root / f"protected-{index}-receipt.json",
                         repo_root=REPO_ROOT,
                     )
-                if index == 1:
-                    self.assertTrue(receipt_report.ok, receipt_report.render())
-                    self.assertIsNotNone(created)
-                else:
-                    self.assertFalse(receipt_report.ok)
-                    self.assertIsNone(created)
-                    self.assertTrue(any("repeated protected" in error for error in receipt_report.errors))
+                self.assertFalse(receipt_report.ok)
+                self.assertIsNone(created)
+                self.assertTrue(any("RUN_RECEIPT_V1 issuance is disabled" in error for error in receipt_report.errors))
 
     def test_regression_map_contains_every_must_fix_attack(self) -> None:
         covered = {

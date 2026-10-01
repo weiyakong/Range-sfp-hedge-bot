@@ -16,6 +16,41 @@ Machine authority is split as follows:
 - Freeze/run/protected-use receipts and ledgers: immutable identities, collision
   detection, and post-run lineage.
 
+## Authoritative production path (V2)
+
+`run_production_research()` in `production_runner.py` is the only authoritative
+production path. It does not accept a caller-supplied `BacktestResult`, strategy
+object, run ID, preflight context, state database, or receipt/index path. It:
+
+1. loads the locked strategy symbol and frozen parameters;
+2. verifies the suite hash frozen in the strategy spec, executes that unittest
+   suite, and records structured process evidence;
+3. derives the actual window and row count from the bars passed to V2;
+4. requires the manifest's exact bar-stream hash/count/window to match those bars;
+5. requires the full canonical `BacktestConfig` hash to match
+   `strategy_spec.execution_config_sha256`;
+6. runs `BacktestEngine` itself;
+7. writes a canonical `result.json` and execution attestation;
+8. rereads and cross-checks every CSV/JSON output against that result;
+9. transactionally registers the run and protected use in the fixed project
+   store `.strategy-replication/enforcement-v2.sqlite3`;
+10. issues `RUN_RECEIPT_V2` only after all checks pass.
+
+The CLI is `python3 -m research.strategy_replications.run_production_v2`.
+Its local bars file must be JSON/JSONL and its data manifest must contain a
+`production_contract` with `symbol`, `market`, `timeframe`,
+`timestamp_semantics`, `bars_sha256`, `row_count`, `tested_start`, and
+`tested_end`. `bars_sha256` is the SHA-256 of newline-delimited, canonical JSON
+for each ordered `Bar` dataclass field. Use `canonical_bars_sha256()` to produce
+it. No market data is downloaded by the runner.
+
+The frozen strategy spec must also contain `tests.suite_sha256` and
+`execution_config_sha256`. These bind the approved executable tests and every
+`BacktestConfig` field, including fields not represented by the common protocol.
+
+`RUN_RECEIPT_V1` issuance and validation are disabled. V1 artifacts remain
+historical evidence only and are explicitly not execution-attested authority.
+
 The standard-library Python validators in `validation/core.py` are the one
 authoritative structural and semantic contract. The former non-executed JSON
 Schema sketches were removed so there is no second, divergent contract. No
@@ -39,7 +74,7 @@ Receipt files are immutable: existing files are never overwritten.
 Strategy code is mandatory at freeze. The receipt index prevents reuse of the
 same candidate/variant/version/parameter identity.
 
-## Production preflight
+## Legacy standalone preflight
 
 ```bash
 python3 -m research.strategy_replications.validation.validate_production_run \
@@ -54,15 +89,13 @@ python3 -m research.strategy_replications.validation.validate_production_run \
   --receipt path/to/freeze_receipt.json --repo-root .
 ```
 
-Declaring `FROZEN` without a valid receipt never passes this gate. Production
-code must obtain a `VerifiedPreflightContext` with
-`create_production_preflight_context`; both `build_run_metadata` and
-`write_results` require the authentic context. An old-style external output call
-cannot publish a production run.
+Declaring `FROZEN` without a valid receipt never passes this diagnostic gate.
+The standalone preflight cannot issue an authoritative production receipt;
+production authority requires the atomic V2 runner.
 
 ## Fail-closed production flow
 
-`candidate intake → protocol → spec → freeze → preflight → run → post-run validation → run receipt`
+`candidate intake → protocol → spec → freeze → runner-owned tests → preflight → runner-owned execution → semantic validation → transactional registration → V2 receipt`
 
 - intake blocks unknown/reused identities and broken registry predecessor chains;
 - freeze blocks invalid specs, code/data/capability drift, and parameter reuse;
@@ -72,9 +105,11 @@ cannot publish a production run.
 - output publication rechecks the opaque preflight context, window, config, and
   Git identity;
 - post-run validation requires the exact complete output set, verifies every
-  checksum and required metric, and recomputes Git/code/data identities;
-- run-receipt creation rejects run-ID collisions and records comparison or
-  protected use in the append-only ledger.
+  checksum and required metric, and recomputes Git/code/data/test identities;
+- receipt revalidation opens canonical state read-only and rejects drift in any
+  upstream file, execution-critical file, Git commit, or exact bar contract;
+- V2 receipt creation uses database uniqueness constraints for run IDs, frozen
+  variant identities, and protected uses; the database path is not caller-controlled.
 
 Every run has explicit `run_purpose` and `run_stage`. Non-production
 `TEST`/`SMOKE`/`SYNTHETIC` outputs remain possible but are labeled

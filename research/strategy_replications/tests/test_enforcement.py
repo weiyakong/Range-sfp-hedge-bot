@@ -5,6 +5,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, Tuple
 from unittest.mock import patch
@@ -42,6 +43,9 @@ CAPABILITY_PATH = (
     / "research/strategy_replications/capability/backtester_v2_capabilities.json"
 )
 HASH_A = "a" * 64
+DEFAULT_CONFIG_SHA256 = hashlib.sha256(json.dumps(
+    asdict(BacktestConfig()), sort_keys=True, separators=(",", ":"), allow_nan=False,
+).encode("utf-8")).hexdigest()
 
 
 class NoopStrategy:
@@ -204,6 +208,7 @@ def valid_spec(data_manifest_hash: str) -> Dict[str, object]:
             "synthetic": {"positive": "PASS", "negative": "PASS", "boundary": "PASS", "causality": "PASS"},
             "golden_examples": "NOT_APPLICABLE_NO_SOURCE_EXAMPLES",
             "test_ids": ["test_ma_positive", "test_ma_negative", "test_ma_boundary", "test_ma_causality"],
+            "suite_sha256": HASH_A,
         },
         "traceability": [
             {
@@ -224,6 +229,7 @@ def valid_spec(data_manifest_hash: str) -> Dict[str, object]:
         "protocol_exceptions": [],
         "comparability_class": "DIRECTLY_COMPARABLE",
         "outcome_bearing_historical_run_seen": False,
+        "execution_config_sha256": DEFAULT_CONFIG_SHA256,
     }
 
 
@@ -275,8 +281,11 @@ def fixture_files(root: Path) -> Tuple[Path, Path, Path, Path, Path, Path]:
     data.write_text('{"dataset":"fixture"}\n', encoding="utf-8")
     strategy = root / "strategy.py"
     strategy.write_text("class MaCrossStrategy:\n    def on_bar(self, bar, state):\n        return []\n", encoding="utf-8")
+    suite = root / "strategy_tests.py"
+    suite.write_text("# executed fixture suite\n", encoding="utf-8")
     spec_path = root / "spec.json"
     spec_payload = valid_spec(sha256_file(data))
+    spec_payload["tests"]["suite_sha256"] = sha256_file(suite)
     spec_payload["traceability"][0]["code_path"] = "strategy.py"
     spec_payload["traceability"][0]["implementation_sha256"] = sha256_file(strategy)
     write_json(spec_path, spec_payload)
@@ -285,8 +294,6 @@ def fixture_files(root: Path) -> Tuple[Path, Path, Path, Path, Path, Path]:
     protocol_path = root / "protocol.json"
     write_json(protocol_path, valid_protocol())
     receipt_path = root / "freeze_receipt.json"
-    suite = root / "strategy_tests.py"
-    suite.write_text("# executed fixture suite\n", encoding="utf-8")
     write_json(root / "test_manifest.json", {
         "schema_version": "STRATEGY_TEST_RESULTS_V1",
         "executed_at_utc": "2026-01-03T00:00:00Z",
@@ -513,7 +520,7 @@ class PositiveEnforcementTests(unittest.TestCase):
                 strategy_spec_sha256=sha256_file(spec),
                 fidelity_classification=compute_fidelity_summary(spec_payload),
                 comparability_class="DIRECTLY_COMPARABLE",
-                capability_manifest_version="BACKTESTER_V2_EXECUTION_CONTRACT_2",
+                capability_manifest_version="BACKTESTER_V2_EXECUTION_CONTRACT_3",
                 freeze_receipt_sha256=sha256_file(freeze_receipt),
             )
             start = 1_577_836_800_000
@@ -559,11 +566,9 @@ class PositiveEnforcementTests(unittest.TestCase):
                     strategy_code_path=strategy, receipt_path=run_receipt,
                     repo_root=REPO_ROOT,
                 )
-            self.assertTrue(run_report.ok, run_report.render())
-            self.assertIsNotNone(created)
-            self.assertEqual(created["candidate_id"], spec_payload["candidate_id"])
-            self.assertEqual(created["registry"]["version"], registry_payload["registry_version"])
-            self.assertEqual(created["protocol"]["version"], protocol_payload["protocol_version"])
+            self.assertFalse(run_report.ok)
+            self.assertIsNone(created)
+            self.assertTrue(any("RUN_RECEIPT_V1 issuance is disabled" in item for item in run_report.errors))
             with patch("research.strategy_replications.validation.core._material_dirty_paths", return_value=[]):
                 revalidated = validate_run_receipt(
                     run_receipt, output_dir=output,
@@ -579,7 +584,8 @@ class PositiveEnforcementTests(unittest.TestCase):
                     strategy_code_path=strategy, receipt_path=root / "duplicate_run_receipt.json",
                     repo_root=REPO_ROOT,
                 )
-            self.assertTrue(revalidated.ok, revalidated.render())
+            self.assertFalse(revalidated.ok)
+            self.assertTrue(any("not execution-attested" in item for item in revalidated.errors))
             self.assertFalse(duplicate_report.ok)
             self.assertIsNone(duplicate)
 

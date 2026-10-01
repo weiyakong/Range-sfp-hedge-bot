@@ -1,5 +1,9 @@
 # Strategy Replication Enforcement V1 — Remediation QA
 
+> Historical V1 remediation record. A later independent review found that V1
+> did not bind caller-supplied results to actual execution. See
+> `REMEDIATION_V2_REPORT.md`; V1 receipts are no longer authoritative.
+
 Baseline: `d12c22d1fba8f412ba8fbdecfe6f5edc538940cb` on `backtester-v2`.
 
 ## Finding closure

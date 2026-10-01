@@ -177,6 +177,7 @@ def build_run_metadata(
     if preflight_context is not None:
         metadata["production_gate"] = {
             "status": "PASS",
+            "run_stage": preflight_context.run_stage,
             "git_commit": preflight_context.git_commit,
             "expected_start": preflight_context.expected_start,
             "expected_end": preflight_context.expected_end,

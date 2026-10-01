@@ -10,7 +10,7 @@ import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Mapping, Optional, Set, Tuple
 
 from research.backtester_v2.models import PRODUCTION_OUTPUT_ARTIFACTS
 
@@ -65,7 +65,7 @@ CANONICAL_CAPABILITY_RELATIVE_PATH = Path(
     "research/strategy_replications/capability/backtester_v2_capabilities.json"
 )
 CANONICAL_REPOSITORY_NAME = "Range-sfp-hedge-bot"
-EXPECTED_CAPABILITY_VERSION = "BACKTESTER_V2_EXECUTION_CONTRACT_2"
+EXPECTED_CAPABILITY_VERSION = "BACKTESTER_V2_EXECUTION_CONTRACT_3"
 AUDITED_BASE_COMMIT = "2b096ebf52928248ad2e608be685bef37a7d6887"
 CONTROLLED_CAPABILITIES = {
     "market_entry", "next_bar_market_execution", "passive_limit_entry",
@@ -83,6 +83,11 @@ EXECUTION_CRITICAL_PATHS = (
     "research/backtester_v2/models.py",
     "research/backtester_v2/engine.py",
     "research/backtester_v2/metrics.py",
+    "research/backtester_v2/output.py",
+    "research/backtester_v2/data.py",
+    "research/strategy_replications/production_runner.py",
+    "research/strategy_replications/run_production_v2.py",
+    "research/strategy_replications/validation/core.py",
 )
 MANDATORY_OUTPUT_ARTIFACTS = set(PRODUCTION_OUTPUT_ARTIFACTS)
 METRIC_OUTPUT_KEYS = {
@@ -102,6 +107,16 @@ METRIC_OUTPUT_KEYS = {
     "sortino": "sortino",
     "recovery_factor": "recovery_factor",
     "time_underwater": "time_underwater",
+}
+CONTROLLED_EXIT_PRECEDENCE = {
+    "LIQUIDATION_ENGINE_CONTROLLED", "STOP_LOSS_ENGINE_CONTROLLED",
+    "TAKE_PROFIT_ENGINE_CONTROLLED", "TIME_EXIT_ENGINE_CONTROLLED",
+    "STRATEGY_EXIT_NEXT_OPEN", "END_OF_DATA_ENGINE_CONTROLLED",
+}
+METRIC_SOURCE_ARTIFACTS = {
+    "metrics.json", "trades.csv", "equity.csv", "intrabar_equity.csv",
+    "bar_exposure.csv", "intrabar_ambiguities.csv", "rejected_orders.csv",
+    "exposure.json",
 }
 
 
@@ -384,11 +399,13 @@ def validate_strategy_spec(
         "required_capabilities", "ambiguities", "state_model", "exit_precedence",
         "tests", "traceability", "source_evidence", "protocol_exceptions",
         "comparability_class", "outcome_bearing_historical_run_seen",
+        "execution_config_sha256",
     }, "spec", report)
     if spec.get("schema_version") != "STRATEGY_SPEC_V1":
         report.error("schema_version", "must equal STRATEGY_SPEC_V1")
     for key in ("strategy_id", "strategy_version", "candidate_id", "variant_id"):
         _require_text(spec, key, "spec", report)
+    _require_hash(spec, "execution_config_sha256", "spec", report)
     _require_enum(spec, "status", SPEC_STATUSES, "spec", report)
     _parse_utc(spec.get("created_at_utc"), "spec.created_at_utc", report)
 
@@ -396,6 +413,10 @@ def validate_strategy_spec(
     if not isinstance(fidelity, dict):
         report.error("spec.fidelity", "object is required")
         fidelity = {}
+    _reject_unexpected(fidelity, {
+        "rule", "market", "timeframe", "session", "product", "execution",
+        "sizing", "declared_summary",
+    }, "spec.fidelity", report)
     _require_enum(fidelity, "rule", {"VERBATIM", "FORMALIZED_INTERPRETATION", "ADAPTED"}, "spec.fidelity", report)
     _require_enum(fidelity, "market", {"SAME_MARKET", "TARGET_MARKET_TRANSFER"}, "spec.fidelity", report)
     _require_enum(fidelity, "timeframe", {"SAME_TIMEFRAME", "TIMEFRAME_TRANSFER"}, "spec.fidelity", report)
@@ -412,6 +433,10 @@ def validate_strategy_spec(
     parameter_ids: List[str] = []
     for index, parameter in enumerate(parameters):
         path = f"spec.parameters[{index}]"
+        _reject_unexpected(parameter, {
+            "parameter_id", "value", "units", "origin", "source_range",
+            "selection",
+        }, path, report)
         parameter_id = _require_text(parameter, "parameter_id", path, report)
         if parameter_id:
             parameter_ids.append(parameter_id)
@@ -425,6 +450,7 @@ def validate_strategy_spec(
             if not isinstance(source_range, dict):
                 report.error(f"{path}.source_range", "object is required for SOURCE_RANGE")
             else:
+                _reject_unexpected(source_range, {"minimum", "maximum"}, f"{path}.source_range", report)
                 minimum = source_range.get("minimum")
                 maximum = source_range.get("maximum")
                 if (
@@ -446,6 +472,10 @@ def validate_strategy_spec(
             if not isinstance(selection, dict):
                 report.error(f"{path}.selection", "selection contract is required for SOURCE_RANGE")
             else:
+                _reject_unexpected(selection, {
+                    "method", "rationale", "selected_at_utc",
+                    "selected_before_historical_results",
+                }, f"{path}.selection", report)
                 _require_text(selection, "method", f"{path}.selection", report)
                 _require_text(selection, "rationale", f"{path}.selection", report)
                 _parse_utc(selection.get("selected_at_utc"), f"{path}.selection.selected_at_utc", report)
@@ -462,6 +492,10 @@ def validate_strategy_spec(
     if not isinstance(proxy, dict):
         report.error("spec.proxy", "object is required")
         proxy = {}
+    _reject_unexpected(proxy, {
+        "used", "original_behavior", "replacement_behavior", "rationale",
+        "impact", "classification_consequence",
+    }, "spec.proxy", report)
     proxy_used = _require_bool(proxy, "used", "spec.proxy", report)
     if proxy_used:
         for key in ("original_behavior", "replacement_behavior", "rationale", "impact", "classification_consequence"):
@@ -479,6 +513,7 @@ def validate_strategy_spec(
     if not isinstance(data_manifest, dict):
         report.error("spec.data_manifest", "object is required")
     else:
+        _reject_unexpected(data_manifest, {"manifest_id", "sha256"}, "spec.data_manifest", report)
         _require_text(data_manifest, "manifest_id", "spec.data_manifest", report)
         _require_hash(data_manifest, "sha256", "spec.data_manifest", report)
 
@@ -486,6 +521,11 @@ def validate_strategy_spec(
     input_by_id: Dict[str, Mapping[str, object]] = {}
     for index, data_input in enumerate(data_inputs):
         path = f"spec.data_inputs[{index}]"
+        _reject_unexpected(data_input, {
+            "field_id", "requirement", "availability", "dataset_id", "source_id",
+            "frequency", "timestamp_semantics", "units", "available_at_semantics",
+            "manifest_sha256",
+        }, path, report)
         field_id = _require_text(data_input, "field_id", path, report)
         requirement = _require_enum(data_input, "requirement", {"REQUIRED", "OPTIONAL", "FORBIDDEN", "NOT_USED"}, path, report)
         availability = _require_enum(data_input, "availability", {"AVAILABLE", "NOT_AVAILABLE"}, path, report)
@@ -511,6 +551,7 @@ def validate_strategy_spec(
     if not isinstance(implementation, dict):
         report.error("spec.implementation", "object is required")
         implementation = {}
+    _reject_unexpected(implementation, {"input_ids"}, "spec.implementation", report)
     implementation_inputs = _unique_texts(implementation.get("input_ids"), "spec.implementation.input_ids", report)
     for field_id in implementation_inputs:
         declaration = input_by_id.get(field_id)
@@ -542,6 +583,9 @@ def validate_strategy_spec(
     ambiguities = _objects(spec.get("ambiguities"), "spec.ambiguities", report)
     for index, ambiguity in enumerate(ambiguities):
         path = f"spec.ambiguities[{index}]"
+        _reject_unexpected(ambiguity, {
+            "ambiguity_id", "material", "resolution", "materiality_rationale",
+        }, path, report)
         _require_text(ambiguity, "ambiguity_id", path, report)
         material = _require_bool(ambiguity, "material", path, report)
         resolution = _require_enum(ambiguity, "resolution", {"UNRESOLVED", "SOURCE_CLARIFIED", "PREDECLARED_INTERPRETATION", "NOT_REQUIRED"}, path, report)
@@ -553,6 +597,9 @@ def validate_strategy_spec(
     if not isinstance(state_model, dict):
         report.error("spec.state_model", "object is required")
     else:
+        _reject_unexpected(state_model, {
+            "reachable_states", "signals_events", "reachable_pairs", "decisions",
+        }, "spec.state_model", report)
         states = set(_unique_texts(state_model.get("reachable_states"), "spec.state_model.reachable_states", report))
         signals = set(_unique_texts(state_model.get("signals_events"), "spec.state_model.signals_events", report))
         pairs = _objects(state_model.get("reachable_pairs"), "spec.state_model.reachable_pairs", report)
@@ -562,7 +609,9 @@ def validate_strategy_spec(
         if pairs and not decisions:
             report.error("spec.state_model.decisions", "non-empty decision mapping is required")
         required_pairs: Set[Tuple[str, str]] = set()
+        pair_list: List[Tuple[str, str]] = []
         for index, pair in enumerate(pairs):
+            _reject_unexpected(pair, {"state", "signal"}, f"spec.state_model.reachable_pairs[{index}]", report)
             state = _require_text(pair, "state", f"spec.state_model.reachable_pairs[{index}]", report)
             signal = _require_text(pair, "signal", f"spec.state_model.reachable_pairs[{index}]", report)
             if state and state not in states:
@@ -571,13 +620,21 @@ def validate_strategy_spec(
                 report.error(f"spec.state_model.reachable_pairs[{index}].signal", "signal/event is not declared")
             if state and signal:
                 required_pairs.add((state, signal))
+                pair_list.append((state, signal))
+        if len(pair_list) != len(set(pair_list)):
+            report.error("spec.state_model.reachable_pairs", "duplicate reachable pair")
         mapped_pairs: Set[Tuple[str, str]] = set()
+        decision_pairs: List[Tuple[str, str]] = []
         for index, decision in enumerate(decisions):
+            _reject_unexpected(decision, {"state", "signal", "action"}, f"spec.state_model.decisions[{index}]", report)
             state = _require_text(decision, "state", f"spec.state_model.decisions[{index}]", report)
             signal = _require_text(decision, "signal", f"spec.state_model.decisions[{index}]", report)
             _require_text(decision, "action", f"spec.state_model.decisions[{index}]", report)
             if state and signal:
                 mapped_pairs.add((state, signal))
+                decision_pairs.append((state, signal))
+        if len(decision_pairs) != len(set(decision_pairs)):
+            report.error("spec.state_model.decisions", "each reachable pair must have exactly one decision")
         missing_pairs = required_pairs - mapped_pairs
         if missing_pairs:
             report.error("spec.state_model.decisions", f"missing reachable state/signal decisions: {sorted(missing_pairs)}")
@@ -586,6 +643,9 @@ def validate_strategy_spec(
             report.error("spec.state_model.decisions", f"decisions not declared reachable: {sorted(extra_pairs)}")
 
     exit_precedence = _unique_texts(spec.get("exit_precedence"), "spec.exit_precedence", report)
+    unknown_precedence = set(exit_precedence) - CONTROLLED_EXIT_PRECEDENCE
+    if unknown_precedence:
+        report.error("spec.exit_precedence", f"unknown precedence tokens: {sorted(unknown_precedence)}")
     precedence_positions = {name: index for index, name in enumerate(exit_precedence)}
     for earlier, later in (
         ("LIQUIDATION_ENGINE_CONTROLLED", "STRATEGY_EXIT_NEXT_OPEN"),
@@ -597,15 +657,21 @@ def validate_strategy_spec(
     if not isinstance(tests, dict):
         report.error("spec.tests", "object is required")
     else:
+        _reject_unexpected(
+            tests, {"synthetic", "golden_examples", "test_ids", "suite_sha256"},
+            "spec.tests", report,
+        )
         synthetic = tests.get("synthetic")
         if not isinstance(synthetic, dict):
             report.error("spec.tests.synthetic", "object is required")
         else:
+            _reject_unexpected(synthetic, {"positive", "negative", "boundary", "causality"}, "spec.tests.synthetic", report)
             for test_type in ("positive", "negative", "boundary", "causality"):
                 if synthetic.get(test_type) != "PASS":
                     report.error(f"spec.tests.synthetic.{test_type}", "must equal PASS")
         _require_enum(tests, "golden_examples", {"PASS", "NOT_APPLICABLE_NO_SOURCE_EXAMPLES"}, "spec.tests", report)
         _unique_texts(tests.get("test_ids"), "spec.tests.test_ids", report)
+        _require_hash(tests, "suite_sha256", "spec.tests", report)
 
     traceability = _objects(spec.get("traceability"), "spec.traceability", report)
     if not traceability:
@@ -613,6 +679,11 @@ def validate_strategy_spec(
     rule_ids: List[str] = []
     for index, trace in enumerate(traceability):
         path = f"spec.traceability[{index}]"
+        _reject_unexpected(trace, {
+            "rule_id", "source_evidence", "interpretation", "executable_rule",
+            "test_id", "code_path", "code_symbol", "implementation_version",
+            "implementation_sha256",
+        }, path, report)
         for key in ("rule_id", "source_evidence", "interpretation", "executable_rule", "test_id", "code_path", "code_symbol", "implementation_version"):
             _require_text(trace, key, path, report)
         implementation_hash = trace.get("implementation_sha256")
@@ -627,14 +698,25 @@ def validate_strategy_spec(
     if not isinstance(source, dict):
         report.error("spec.source_evidence", "object is required")
     else:
+        _reject_unexpected(source, {
+            "primary_source_id", "reference", "edition_version", "exact_locator",
+            "knowledge_cutoff_date", "evidence_sha256",
+        }, "spec.source_evidence", report)
         for key in ("primary_source_id", "reference", "edition_version", "exact_locator", "knowledge_cutoff_date"):
             _require_text(source, key, "spec.source_evidence", report)
         _require_hash(source, "evidence_sha256", "spec.source_evidence", report)
 
     comparability = _require_enum(spec, "comparability_class", COMPARABILITY_CLASSES, "spec", report)
     exceptions = _objects(spec.get("protocol_exceptions"), "spec.protocol_exceptions", report)
+    exception_ids: List[str] = []
+    controlled_exception_fields: List[str] = []
     for index, exception in enumerate(exceptions):
         path = f"spec.protocol_exceptions[{index}]"
+        _reject_unexpected(exception, {
+            "exception_id", "type", "rationale", "source_evidence",
+            "comparability_consequence", "approved", "controlled_field",
+            "effective_value", "effective_window",
+        }, path, report)
         exception_type = _require_enum(exception, "type", {"HISTORICAL_WINDOW", "EXECUTION", "OTHER"}, path, report)
         for key in ("exception_id", "rationale", "source_evidence", "comparability_consequence"):
             _require_text(exception, key, path, report)
@@ -646,7 +728,11 @@ def validate_strategy_spec(
             controlled = _require_enum(exception, "controlled_field", EXECUTION_ASSUMPTIONS, path, report)
             if controlled and "effective_value" not in exception:
                 report.error(f"{path}.effective_value", "approved effective value is required")
+            if controlled:
+                controlled_exception_fields.append(controlled)
         if exception_type == "HISTORICAL_WINDOW":
+            if comparability != "NOT_DIRECTLY_COMPARABLE":
+                report.error(path, "historical-window exception requires NOT_DIRECTLY_COMPARABLE")
             effective_window = exception.get("effective_window")
             if not isinstance(effective_window, dict):
                 report.error(f"{path}.effective_window", "approved effective window is required")
@@ -655,6 +741,12 @@ def validate_strategy_spec(
                 end = _parse_utc(effective_window.get("end_utc"), f"{path}.effective_window.end_utc", report)
                 if start and end and start >= end:
                     report.error(f"{path}.effective_window", "start must precede end")
+        if _is_text(exception.get("exception_id")):
+            exception_ids.append(str(exception["exception_id"]))
+    if len(exception_ids) != len(set(exception_ids)):
+        report.error("spec.protocol_exceptions", "exception_id values must be unique")
+    if len(controlled_exception_fields) != len(set(controlled_exception_fields)):
+        report.error("spec.protocol_exceptions", "conflicting exceptions for one controlled field")
     if spec.get("outcome_bearing_historical_run_seen") is not False:
         report.error("spec.outcome_bearing_historical_run_seen", "must be false at freeze")
     return report
@@ -775,20 +867,50 @@ def validate_candidate_registry(
             variant_ids.add(variant_id)
             valid_parents.add(variant_id)
     if predecessor is not None:
-        old_candidates = {
-            item.get("candidate_id") for item in predecessor.get("candidates", [])
-            if isinstance(item, dict)
+        old_candidate_records = {
+            item.get("candidate_id"): item for item in predecessor.get("candidates", [])
+            if isinstance(item, dict) and _is_text(item.get("candidate_id"))
         }
-        old_variants = {
-            item.get("variant_id") for item in predecessor.get("variants", [])
-            if isinstance(item, dict)
+        new_candidate_records = {
+            item.get("candidate_id"): item for item in candidates
+            if _is_text(item.get("candidate_id"))
         }
-        missing_candidates = old_candidates - candidate_ids
-        missing_variants = old_variants - variant_ids
+        old_variant_records = {
+            item.get("variant_id"): item for item in predecessor.get("variants", [])
+            if isinstance(item, dict) and _is_text(item.get("variant_id"))
+        }
+        new_variant_records = {
+            item.get("variant_id"): item for item in variants
+            if _is_text(item.get("variant_id"))
+        }
+        missing_candidates = set(old_candidate_records) - candidate_ids
+        missing_variants = set(old_variant_records) - variant_ids
         if missing_candidates:
             report.error("registry.candidates", f"predecessor candidates removed: {sorted(missing_candidates)}")
         if missing_variants:
             report.error("registry.variants", f"predecessor variants removed: {sorted(missing_variants)}")
+        candidate_immutable = {
+            "candidate_id", "strategy_name", "primary_source_id",
+            "primary_source_reference", "intake_timestamp_utc", "inclusion_reason",
+        }
+        for identity in set(old_candidate_records) & set(new_candidate_records):
+            old = old_candidate_records[identity]
+            new = new_candidate_records[identity]
+            changed = sorted(key for key in candidate_immutable if old.get(key) != new.get(key))
+            if changed:
+                report.error(f"registry.candidates.{identity}", f"immutable predecessor fields changed: {changed}")
+            old_history = old.get("status_history")
+            new_history = new.get("status_history")
+            if isinstance(old_history, list) and isinstance(new_history, list) and new_history[:len(old_history)] != old_history:
+                report.error(f"registry.candidates.{identity}.status_history", "predecessor history must be an unchanged prefix")
+        variant_mutable = {"status"}
+        for identity in set(old_variant_records) & set(new_variant_records):
+            old = old_variant_records[identity]
+            new = new_variant_records[identity]
+            keys = (set(old) | set(new)) - variant_mutable
+            changed = sorted(key for key in keys if old.get(key) != new.get(key))
+            if changed:
+                report.error(f"registry.variants.{identity}", f"immutable predecessor fields changed: {changed}")
     return report
 
 
@@ -812,7 +934,7 @@ def validate_evaluation_protocol(protocol: Mapping[str, object]) -> ValidationRe
         "schema_version", "protocol_version", "status", "created_at_utc",
         "candidate_universe", "historical_window", "execution_assumptions",
         "eligibility", "ranking", "metrics", "time_exposure_definition",
-        "protected_validation", "multiple_testing",
+        "protected_validation", "multiple_testing", "strategy_exception_policy",
     }, "protocol", report)
     if protocol.get("schema_version") != "EVALUATION_PROTOCOL_V1":
         report.error("schema_version", "must equal EVALUATION_PROTOCOL_V1")
@@ -823,6 +945,9 @@ def validate_evaluation_protocol(protocol: Mapping[str, object]) -> ValidationRe
     if not isinstance(universe, dict):
         report.error("protocol.candidate_universe", "object is required")
     else:
+        _reject_unexpected(universe, {
+            "registry_version", "frozen_before_candidate_results",
+        }, "protocol.candidate_universe", report)
         _require_text(universe, "registry_version", "protocol.candidate_universe", report)
         if universe.get("frozen_before_candidate_results") is not True:
             report.error("protocol.candidate_universe.frozen_before_candidate_results", "must be true")
@@ -830,6 +955,10 @@ def validate_evaluation_protocol(protocol: Mapping[str, object]) -> ValidationRe
     if not isinstance(window, dict):
         report.error("protocol.historical_window", "object is required")
     else:
+        _reject_unexpected(window, {
+            "start_utc", "end_utc", "timezone", "role",
+            "frozen_before_any_outcome_bearing_run",
+        }, "protocol.historical_window", report)
         start = _parse_utc(window.get("start_utc"), "protocol.historical_window.start_utc", report)
         end = _parse_utc(window.get("end_utc"), "protocol.historical_window.end_utc", report)
         if start and end and start >= end:
@@ -852,6 +981,7 @@ def validate_evaluation_protocol(protocol: Mapping[str, object]) -> ValidationRe
             if not isinstance(assumption, dict):
                 report.error(f"protocol.execution_assumptions.{name}", "object is required")
                 continue
+            _reject_unexpected(assumption, {"value", "origin"}, f"protocol.execution_assumptions.{name}", report)
             if "value" not in assumption:
                 report.error(f"protocol.execution_assumptions.{name}.value", "value is required")
             _require_enum(assumption, "origin", EXECUTION_ORIGINS, f"protocol.execution_assumptions.{name}", report)
@@ -891,7 +1021,10 @@ def validate_evaluation_protocol(protocol: Mapping[str, object]) -> ValidationRe
         if method == "UNSET":
             report.error("protocol.ranking.method", "UNSET blocks protocol freeze")
         elif method == "ORDERED":
-            _unique_texts(ranking.get("ordered_metrics"), "protocol.ranking.ordered_metrics", report)
+            ordered = _unique_texts(ranking.get("ordered_metrics"), "protocol.ranking.ordered_metrics", report)
+            unknown = set(ordered) - REQUIRED_METRICS
+            if unknown:
+                report.error("protocol.ranking.ordered_metrics", f"unknown metric IDs: {sorted(unknown)}")
             _require_text(ranking, "tie_break_rule", "protocol.ranking", report)
         elif method == "WEIGHTED":
             weights = ranking.get("weights")
@@ -902,6 +1035,10 @@ def validate_evaluation_protocol(protocol: Mapping[str, object]) -> ValidationRe
                 or abs(sum(float(value) for value in weights.values()) - 1.0) > 1e-12
             ):
                 report.error("protocol.ranking.weights", "finite non-negative numeric weights must sum to 1")
+            else:
+                unknown = set(weights) - REQUIRED_METRICS
+                if unknown:
+                    report.error("protocol.ranking.weights", f"unknown metric IDs: {sorted(unknown)}")
         elif method == "NO_SCALAR":
             _require_text(ranking, "advancement_rule", "protocol.ranking", report)
     metrics = _objects(protocol.get("metrics"), "protocol.metrics", report)
@@ -911,6 +1048,11 @@ def validate_evaluation_protocol(protocol: Mapping[str, object]) -> ValidationRe
         name = _require_text(metric, "name", path, report)
         for key in ("formula", "formula_version", "units", "denominator", "source_artifact", "applicability"):
             _require_text(metric, key, path, report)
+        source_artifact = metric.get("source_artifact")
+        if isinstance(source_artifact, str) and not any(
+            artifact in source_artifact for artifact in METRIC_SOURCE_ARTIFACTS
+        ):
+            report.error(f"{path}.source_artifact", "must reference a canonical output artifact")
         if name:
             if name in metric_names:
                 report.error(f"{path}.name", "duplicate metric ID")
@@ -956,6 +1098,29 @@ def validate_evaluation_protocol(protocol: Mapping[str, object]) -> ValidationRe
             if multiple.get(key) is not True:
                 report.error(f"protocol.multiple_testing.{key}", "must be true")
         _require_text(multiple, "selection_bias_disclosure_rule", "protocol.multiple_testing", report)
+    exception_policy = protocol.get("strategy_exception_policy")
+    if exception_policy is not None:
+        if not isinstance(exception_policy, dict):
+            report.error("protocol.strategy_exception_policy", "object is required")
+        else:
+            _reject_unexpected(exception_policy, {
+                "allowed_types", "allowed_execution_fields",
+                "historical_window_allowed",
+            }, "protocol.strategy_exception_policy", report)
+            allowed_types = _unique_texts(
+                exception_policy.get("allowed_types"),
+                "protocol.strategy_exception_policy.allowed_types", report,
+            )
+            invalid_types = set(allowed_types) - {"EXECUTION", "HISTORICAL_WINDOW", "OTHER"}
+            if invalid_types:
+                report.error("protocol.strategy_exception_policy.allowed_types", f"unknown types: {sorted(invalid_types)}")
+            allowed_fields = exception_policy.get("allowed_execution_fields")
+            if not isinstance(allowed_fields, list):
+                report.error("protocol.strategy_exception_policy.allowed_execution_fields", "array is required")
+            elif set(allowed_fields) - EXECUTION_ASSUMPTIONS:
+                report.error("protocol.strategy_exception_policy.allowed_execution_fields", "contains unknown fields")
+            if not isinstance(exception_policy.get("historical_window_allowed"), bool):
+                report.error("protocol.strategy_exception_policy.historical_window_allowed", "boolean is required")
     return report
 
 
@@ -1075,6 +1240,24 @@ def validate_freeze_inputs(
         report.error("registry.status", "must be FROZEN")
     if protocol.get("status") != "FROZEN":
         report.error("protocol.status", "must be FROZEN")
+    exceptions = spec.get("protocol_exceptions")
+    if isinstance(exceptions, list) and exceptions:
+        policy = protocol.get("strategy_exception_policy")
+        if not isinstance(policy, dict):
+            report.error("protocol.strategy_exception_policy", "explicit policy is required when strategy exceptions exist")
+        else:
+            allowed_types = set(policy.get("allowed_types", [])) if isinstance(policy.get("allowed_types"), list) else set()
+            allowed_fields = set(policy.get("allowed_execution_fields", [])) if isinstance(policy.get("allowed_execution_fields"), list) else set()
+            for index, exception in enumerate(exceptions):
+                if not isinstance(exception, dict):
+                    continue
+                exception_type = exception.get("type")
+                if exception_type not in allowed_types:
+                    report.error(f"spec.protocol_exceptions[{index}].type", "not authorized by evaluation protocol")
+                if exception_type == "EXECUTION" and exception.get("controlled_field") not in allowed_fields:
+                    report.error(f"spec.protocol_exceptions[{index}].controlled_field", "not authorized by evaluation protocol")
+                if exception_type == "HISTORICAL_WINDOW" and policy.get("historical_window_allowed") is not True:
+                    report.error(f"spec.protocol_exceptions[{index}]", "historical-window exception is not authorized")
     candidate = _find_candidate(registry, spec.get("candidate_id"))
     if candidate is None:
         report.error("registry.candidates", "candidate is absent from registry")
@@ -1326,6 +1509,10 @@ def validate_test_manifest_and_traceability(
         report.error("test_manifest.test_suite_path", "executed suite file does not exist")
     elif manifest.get("test_suite_sha256") != sha256_file(suite_path.resolve()):
         report.error("test_manifest.test_suite_sha256", "suite hash mismatch")
+    declared_tests = spec.get("tests")
+    declared_suite_hash = declared_tests.get("suite_sha256") if isinstance(declared_tests, dict) else None
+    if manifest.get("test_suite_sha256") != declared_suite_hash:
+        report.error("test_manifest.test_suite_sha256", "does not match frozen strategy spec")
     result_objects = _objects(manifest.get("results"), "test_manifest.results", report)
     results: Dict[str, Mapping[str, object]] = {}
     for index, item in enumerate(result_objects):
@@ -1338,7 +1525,6 @@ def validate_test_manifest_and_traceability(
             if test_id in results:
                 report.error(f"{path}.test_id", "duplicate test result ID")
             results[test_id] = item
-    declared_tests = spec.get("tests")
     required_ids = set(declared_tests.get("test_ids", [])) if isinstance(declared_tests, dict) and isinstance(declared_tests.get("test_ids"), list) else set()
     missing = required_ids - set(results)
     if missing:
@@ -1871,6 +2057,19 @@ def validate_run_lineage(
     gate = metadata.get("production_gate")
     if not isinstance(gate, dict) or gate.get("status") != "PASS":
         report.error("run_metadata.production_gate", "verified preflight identity is required")
+    elif gate.get("run_stage") != metadata.get("run_stage"):
+        report.error("run_metadata.production_gate.run_stage", "stage differs from verified preflight")
+    if isinstance(qa, dict):
+        spec = load_json(spec_path)
+        expected_execution_fidelity = (
+            "PROXY" if isinstance(spec.get("fidelity"), dict) and spec["fidelity"].get("execution") == "PROXY"
+            else "SOURCE_FAITHFUL" if compute_fidelity_summary(spec) == "PURE_REPLICATION"
+            else "TARGET_MAPPING"
+        )
+        if qa.get("execution_fidelity") != expected_execution_fidelity:
+            report.error("run_metadata.qa_dimensions.execution_fidelity", "does not match frozen strategy spec")
+        if qa.get("causality_assurance") != "HUMAN_REVIEW_REQUIRED":
+            report.error("run_metadata.qa_dimensions.causality_assurance", "V1 output cannot claim automated causality proof")
     metrics_path = output_dir / "metrics.json"
     if metrics_path.is_file():
         metrics = load_json(metrics_path)
@@ -1896,108 +2095,13 @@ def create_run_receipt(
     receipt_index_path: Optional[Path] = None,
     research_use_ledger_path: Optional[Path] = None,
 ) -> Tuple[ValidationReport, Optional[Dict[str, object]]]:
-    repo_root = repo_root.resolve() if repo_root is not None else capability_path.resolve().parents[3]
-    report = validate_run_lineage(
-        output_dir=output_dir, freeze_receipt_path=freeze_receipt_path,
-        spec_path=spec_path, registry_path=registry_path,
-        protocol_path=protocol_path, capability_path=capability_path,
-        data_manifest_path=data_manifest_path, strategy_code_path=strategy_code_path,
-        repo_root=repo_root,
+    report = ValidationReport()
+    report.error(
+        "run_receipt",
+        "RUN_RECEIPT_V1 issuance is disabled because it is not execution-attested; "
+        "use run_production_research() to issue RUN_RECEIPT_V2",
     )
-    if not report.ok:
-        return report, None
-    metadata = load_json(output_dir / "run_metadata.json")
-    spec = load_json(spec_path)
-    registry = load_json(registry_path)
-    protocol = load_json(protocol_path)
-    lineage = metadata["replication_lineage"]
-    assert isinstance(lineage, dict)
-    receipt: Dict[str, object] = {
-        "schema_version": "RUN_RECEIPT_V1",
-        "run_id": metadata["run_id"],
-        "candidate_id": spec["candidate_id"],
-        "variant_id": spec["variant_id"],
-        "spec_sha256": sha256_file(spec_path),
-        "registry": {"version": registry["registry_version"], "sha256": sha256_file(registry_path)},
-        "protocol": {"version": protocol["protocol_version"], "sha256": sha256_file(protocol_path)},
-        "strategy_code_sha256": sha256_file(strategy_code_path),
-        "backtester_commit": lineage["backtester_commit"],
-        "capability_manifest_sha256": sha256_file(capability_path),
-        "config_sha256": sha256_file(output_dir / "config.json"),
-        "data_manifest_sha256": sha256_file(data_manifest_path),
-        "output_manifest_sha256": sha256_file(output_dir / "manifest.json"),
-        "run_metadata_sha256": sha256_file(output_dir / "run_metadata.json"),
-        "tested_start": metadata["data"]["tested_start"],
-        "tested_end": metadata["data"]["tested_end"],
-        "run_qa_status": metadata["qa_status"],
-        "qa_dimensions": metadata["qa_dimensions"],
-        "run_purpose": metadata["run_purpose"],
-        "run_stage": metadata["run_stage"],
-        "executed_code_sha256": {
-            relative: sha256_file(repo_root / relative)
-            for relative in EXECUTION_CRITICAL_PATHS
-        },
-        "fidelity_classification": compute_fidelity_summary(spec),
-        "comparability_class": spec["comparability_class"],
-        "created_at_utc": datetime.now(timezone.utc).isoformat(),
-    }
-    index_path = receipt_index_path or receipt_path.parent / "receipt_index.json"
-    if index_path.exists():
-        existing_index = load_json(index_path)
-        for record in existing_index.get("records", []) if isinstance(existing_index.get("records"), list) else []:
-            if isinstance(record, dict) and record.get("kind") == "run" and record.get("identity") == str(metadata["run_id"]):
-                report.error("receipt_index", f"run ID collision: {metadata['run_id']}")
-                return report, None
-    ledger_path = research_use_ledger_path or receipt_path.parent / "research_use_ledger.json"
-    ledger: Dict[str, object] = {"schema_version": "RESEARCH_USE_LEDGER_V1", "records": []}
-    if ledger_path.exists():
-        ledger = load_json(ledger_path)
-        if ledger.get("schema_version") != "RESEARCH_USE_LEDGER_V1" or not isinstance(ledger.get("records"), list):
-            report.error("research_use_ledger", "invalid append-only ledger")
-            return report, None
-    records = ledger["records"]
-    assert isinstance(records, list)
-    if metadata.get("run_stage") == "PROTECTED_VALIDATION":
-        repeated = any(
-            isinstance(item, dict)
-            and item.get("candidate_id") == spec.get("candidate_id")
-            and item.get("variant_id") == spec.get("variant_id")
-            and item.get("run_stage") == "PROTECTED_VALIDATION"
-            for item in records
-        )
-        if repeated:
-            report.error("research_use_ledger", "repeated protected use prevents a clean valid receipt")
-            return report, None
-    atomic_write_json(receipt_path, receipt)
-    indexed = _register_receipt_identity(
-        index_path, kind="run", identity=str(metadata["run_id"]),
-        artifact_path=receipt_path, artifact_sha256=sha256_file(receipt_path),
-    )
-    if not indexed.ok:
-        receipt_path.unlink(missing_ok=True)
-        report.merge("receipt_index", indexed)
-        return report, None
-    records.append({
-        "run_id": metadata["run_id"], "candidate_id": spec["candidate_id"],
-        "variant_id": spec["variant_id"], "parameter_identity_sha256": _canonical_json_hash(spec.get("parameters", [])),
-        "run_stage": metadata["run_stage"], "timestamp_utc": receipt["created_at_utc"],
-        "data_manifest_sha256": sha256_file(data_manifest_path),
-        "tested_start": receipt["tested_start"], "tested_end": receipt["tested_end"],
-        "receipt_sha256": sha256_file(receipt_path),
-    })
-    fd, temporary_name = tempfile.mkstemp(prefix=f".{ledger_path.name}.", dir=ledger_path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(ledger, handle, indent=2, sort_keys=True, allow_nan=False)
-            handle.write("\n")
-        os.replace(temporary_name, ledger_path)
-    except Exception:
-        try:
-            os.unlink(temporary_name)
-        except FileNotFoundError:
-            pass
-        raise
-    return report, receipt
+    return report, None
 
 
 def validate_run_receipt(
@@ -2006,60 +2110,10 @@ def validate_run_receipt(
     capability_path: Path, data_manifest_path: Path, strategy_code_path: Path,
     repo_root: Optional[Path] = None,
 ) -> ValidationReport:
-    report = validate_run_lineage(
-        output_dir=output_dir, freeze_receipt_path=freeze_receipt_path,
-        spec_path=spec_path, registry_path=registry_path,
-        protocol_path=protocol_path, capability_path=capability_path,
-        data_manifest_path=data_manifest_path, strategy_code_path=strategy_code_path,
-        repo_root=repo_root,
+    disabled = ValidationReport()
+    disabled.error(
+        "run_receipt",
+        "RUN_RECEIPT_V1 is legacy and not execution-attested; validate RUN_RECEIPT_V2 "
+        "with validate_v2_run_receipt()",
     )
-    if not receipt_path.is_file():
-        report.error("run_receipt", "receipt is missing")
-        return report
-    receipt = load_json(receipt_path)
-    _reject_unexpected(receipt, {
-        "schema_version", "run_id", "candidate_id", "variant_id", "spec_sha256",
-        "registry", "protocol", "strategy_code_sha256", "backtester_commit",
-        "capability_manifest_sha256", "config_sha256", "data_manifest_sha256",
-        "output_manifest_sha256", "run_metadata_sha256", "tested_start",
-        "tested_end", "run_qa_status", "qa_dimensions", "run_purpose", "run_stage",
-        "executed_code_sha256", "fidelity_classification", "comparability_class",
-        "created_at_utc",
-    }, "run_receipt", report)
-    metadata = load_json(output_dir / "run_metadata.json")
-    spec = load_json(spec_path)
-    registry = load_json(registry_path)
-    protocol = load_json(protocol_path)
-    actual_repo = repo_root.resolve() if repo_root is not None else capability_path.resolve().parents[3]
-    expected: Dict[str, object] = {
-        "schema_version": "RUN_RECEIPT_V1",
-        "run_id": metadata.get("run_id"),
-        "candidate_id": spec.get("candidate_id"),
-        "variant_id": spec.get("variant_id"),
-        "spec_sha256": sha256_file(spec_path),
-        "registry": {"version": registry.get("registry_version"), "sha256": sha256_file(registry_path)},
-        "protocol": {"version": protocol.get("protocol_version"), "sha256": sha256_file(protocol_path)},
-        "strategy_code_sha256": sha256_file(strategy_code_path),
-        "backtester_commit": _git_commit(actual_repo),
-        "capability_manifest_sha256": sha256_file(capability_path),
-        "config_sha256": sha256_file(output_dir / "config.json"),
-        "data_manifest_sha256": sha256_file(data_manifest_path),
-        "output_manifest_sha256": sha256_file(output_dir / "manifest.json"),
-        "run_metadata_sha256": sha256_file(output_dir / "run_metadata.json"),
-        "tested_start": metadata.get("data", {}).get("tested_start") if isinstance(metadata.get("data"), dict) else None,
-        "tested_end": metadata.get("data", {}).get("tested_end") if isinstance(metadata.get("data"), dict) else None,
-        "run_qa_status": metadata.get("qa_status"),
-        "qa_dimensions": metadata.get("qa_dimensions"),
-        "run_purpose": metadata.get("run_purpose"),
-        "run_stage": metadata.get("run_stage"),
-        "executed_code_sha256": {relative: sha256_file(actual_repo / relative) for relative in EXECUTION_CRITICAL_PATHS},
-        "fidelity_classification": compute_fidelity_summary(spec),
-        "comparability_class": spec.get("comparability_class"),
-    }
-    for key, value in expected.items():
-        if receipt.get(key) != value:
-            report.error(f"run_receipt.{key}", "receipt no longer matches actual upstream/output identity")
-    created = _parse_utc(receipt.get("created_at_utc"), "run_receipt.created_at_utc", report)
-    if created and created > datetime.now(timezone.utc):
-        report.error("run_receipt.created_at_utc", "cannot be in the future")
-    return report
+    return disabled

@@ -1,5 +1,9 @@
 # Strategy Replication Enforcement Layer V1 — Implementation Report
 
+> Historical report. Its V1 run-receipt claims are superseded by
+> `REMEDIATION_V2_REPORT.md`. V1 receipts are not execution-attested authority;
+> production authority now requires the atomic V2 runner.
+
 ## Phase 1 design check
 
 Starting point: branch `backtester-v2`, commit
