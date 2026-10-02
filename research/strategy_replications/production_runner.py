@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import csv
 import hashlib
-import importlib.util
 import json
 import os
 import shutil
@@ -23,10 +22,10 @@ import uuid
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 from typing import Dict, Mapping, Optional, Sequence, Tuple
 
-from research.backtester_v2.engine import BacktestEngine
+from research.backtester_v2.engine import BacktestEngine, Strategy
 from research.backtester_v2.metrics import summarize
 from research.backtester_v2.models import (
     BacktestConfig,
@@ -164,7 +163,6 @@ class ProductionRunRequest:
     data_manifest_path: Path
     freeze_receipt_path: Path
     strategy_code_path: Path
-    strategy_symbol: str
     strategy_test_suite_path: Path
     bars: Sequence[Bar]
     config: BacktestConfig
@@ -287,13 +285,29 @@ def _strategy_parameters(spec: Mapping[str, object]) -> Dict[str, object]:
     return result
 
 
-def _load_strategy(path: Path, symbol: str, parameters: Mapping[str, object]):
+def _strategy_symbol(spec: Mapping[str, object]) -> str:
+    implementation = spec.get("implementation")
+    symbol = implementation.get("strategy_symbol") if isinstance(implementation, dict) else None
+    if not isinstance(symbol, str) or not symbol.strip():
+        raise ValueError("frozen strategy spec requires implementation.strategy_symbol")
+    if any(not part.isidentifier() or part.startswith("_") for part in symbol.split(".")):
+        raise ValueError("frozen strategy symbol must be a public dotted Python symbol")
+    return symbol
+
+
+def _load_strategy(
+    source: bytes, source_path: Path, symbol: str,
+    parameters: Mapping[str, object],
+) -> Strategy:
     module_name = f"_strategy_replication_{uuid.uuid4().hex}"
-    module_spec = importlib.util.spec_from_file_location(module_name, path)
-    if module_spec is None or module_spec.loader is None:
-        raise ValueError(f"cannot load locked strategy module: {path}")
-    module = importlib.util.module_from_spec(module_spec)
-    module_spec.loader.exec_module(module)
+    module = ModuleType(module_name)
+    module.__file__ = str(source_path)
+    module.__package__ = ""
+    try:
+        code = compile(source, str(source_path), "exec")
+        exec(code, module.__dict__)
+    except (SyntaxError, UnicodeDecodeError) as exc:
+        raise ValueError(f"cannot load locked strategy module: {source_path}: {exc}") from exc
     target: object = module
     for part in symbol.split("."):
         if part.startswith("_") or not hasattr(target, part):
@@ -344,7 +358,8 @@ def _data_contract(path: Path) -> Mapping[str, object]:
 
 def _run_test_suite(
     *, suite_path: Path, spec: Mapping[str, object], spec_path: Path,
-    strategy_code_path: Path, evidence_path: Path,
+    strategy_code_path: Path, strategy_code_sha256: str,
+    strategy_symbol: str, evidence_path: Path,
 ) -> Dict[str, object]:
     command = [sys.executable, "-c", TEST_RUNNER_SCRIPT, str(suite_path.parent), suite_path.name]
     completed = subprocess.run(command, capture_output=True, text=True)
@@ -387,7 +402,8 @@ def _run_test_suite(
         "command": command,
         "exit_code": completed.returncode,
         "strategy_spec_sha256": sha256_file(spec_path),
-        "strategy_code_sha256": sha256_file(strategy_code_path),
+        "strategy_code_sha256": strategy_code_sha256,
+        "strategy_symbol": strategy_symbol,
         "test_suite_path": str(suite_path.resolve()),
         "test_suite_sha256": suite_hash,
         "stdout_sha256": hashlib.sha256(completed.stdout.encode()).hexdigest(),
@@ -423,7 +439,7 @@ def _lineage(
         strategy_spec_sha256=sha256_file(paths.spec_path),
         fidelity_classification=compute_fidelity_summary(spec),
         comparability_class=str(spec["comparability_class"]),
-        capability_manifest_version="BACKTESTER_V2_EXECUTION_CONTRACT_3",
+        capability_manifest_version="BACKTESTER_V2_EXECUTION_CONTRACT_4",
         freeze_receipt_sha256=sha256_file(paths.freeze_receipt_path),
     )
 
@@ -754,6 +770,11 @@ def run_production_research(request: ProductionRunRequest) -> ProductionRunOutco
     if not bars:
         raise ValueError("production run requires at least one bar")
     upstream_files = _upstream_files(request, repo_root)
+    strategy_path = _regular_file(request.strategy_code_path, "strategy_code")
+    strategy_source = strategy_path.read_bytes()
+    strategy_source_sha256 = hashlib.sha256(strategy_source).hexdigest()
+    if strategy_source_sha256 != upstream_files["strategy_code"]["sha256"]:
+        raise ValueError("strategy code changed while its immutable snapshot was captured")
     execution_critical_hashes = _execution_critical_hashes(repo_root)
     git_commit = _git(repo_root, "rev-parse", "HEAD")
     data_contract = _data_contract(request.data_manifest_path)
@@ -762,6 +783,7 @@ def run_production_research(request: ProductionRunRequest) -> ProductionRunOutco
             raise ValueError(f"actual {field} differs from production data contract")
     config = _clone_config(request.config)
     spec = load_json(request.spec_path)
+    strategy_symbol = _strategy_symbol(spec)
     config_payload_hash = canonical_config_sha256(config)
     if spec.get("execution_config_sha256") != config_payload_hash:
         raise ValueError("actual BacktestConfig differs from frozen strategy spec")
@@ -769,7 +791,9 @@ def run_production_research(request: ProductionRunRequest) -> ProductionRunOutco
     registry = load_json(request.registry_path)
     protocol = load_json(request.protocol_path)
     parameters = _strategy_parameters(spec)
-    strategy = _load_strategy(request.strategy_code_path, request.strategy_symbol, parameters)
+    strategy = _load_strategy(
+        strategy_source, strategy_path, strategy_symbol, parameters,
+    )
     actual_start, actual_end = bars[0].open_time, bars[-1].open_time
     if any(bars[index].open_time >= bars[index + 1].open_time for index in range(len(bars) - 1)):
         raise ValueError("production bars must be strictly ordered with unique open_time")
@@ -798,6 +822,8 @@ def run_production_research(request: ProductionRunRequest) -> ProductionRunOutco
         evidence = _run_test_suite(
             suite_path=request.strategy_test_suite_path.resolve(), spec=spec,
             spec_path=request.spec_path, strategy_code_path=request.strategy_code_path,
+            strategy_code_sha256=strategy_source_sha256,
+            strategy_symbol=strategy_symbol,
             evidence_path=evidence_path,
         )
         preflight_report, context = create_production_preflight_context(
@@ -859,7 +885,7 @@ def run_production_research(request: ProductionRunRequest) -> ProductionRunOutco
             config_sha256=sha256_file(config_path),
             config_payload_sha256=config_payload_hash,
             strategy_code_sha256=sha256_file(request.strategy_code_path),
-            strategy_symbol=request.strategy_symbol,
+            strategy_symbol=strategy_symbol,
             strategy_parameters_sha256=_canonical_hash(parameters),
             engine_code_sha256=sha256_file(repo_root / "research/backtester_v2/engine.py"),
             runner_code_sha256=sha256_file(Path(__file__)),
@@ -898,6 +924,7 @@ def run_production_research(request: ProductionRunRequest) -> ProductionRunOutco
             "capability_manifest_sha256": sha256_file(repo_root / CANONICAL_CAPABILITY_RELATIVE_PATH),
             "data_manifest_sha256": data_hash,
             "strategy_code_sha256": sha256_file(request.strategy_code_path),
+            "strategy_symbol": strategy_symbol,
             "output_manifest_sha256": sha256_file(staged_output / "manifest.json"),
             "execution_attestation_sha256": sha256_file(staged_output / "execution_attestation.json"),
             "test_execution_sha256": sha256_file(staged_output / "test_execution.json"),
@@ -1017,6 +1044,29 @@ def validate_v2_run_receipt(*, output_dir: Path, repo_root: Path) -> ValidationR
         receipt_key = top_level_hashes.get(name)
         if receipt_key is not None and receipt.get(receipt_key) != identity.get("sha256"):
             report.error(f"run_receipt_v2.{receipt_key}", "does not match upstream identity")
+    frozen_strategy_symbol = None
+    spec_upstream = upstream.get("spec")
+    if isinstance(spec_upstream, dict) and isinstance(spec_upstream.get("path"), str):
+        try:
+            frozen_strategy_symbol = _strategy_symbol(load_json(Path(spec_upstream["path"])))
+        except (OSError, ValueError) as exc:
+            report.error("spec.implementation.strategy_symbol", str(exc))
+    freeze_upstream = upstream.get("freeze_receipt")
+    freeze_strategy_symbol = None
+    if isinstance(freeze_upstream, dict) and isinstance(freeze_upstream.get("path"), str):
+        try:
+            freeze_strategy_symbol = load_json(Path(freeze_upstream["path"])).get("strategy_symbol")
+        except (OSError, ValueError) as exc:
+            report.error("freeze_receipt.strategy_symbol", str(exc))
+    symbol_identities = {
+        "run_receipt_v2.strategy_symbol": receipt.get("strategy_symbol"),
+        "execution_attestation.strategy_symbol": attested.get("strategy_symbol"),
+        "test_execution.strategy_symbol": test_evidence.get("strategy_symbol"),
+        "freeze_receipt.strategy_symbol": freeze_strategy_symbol,
+    }
+    for path, actual_symbol in symbol_identities.items():
+        if actual_symbol != frozen_strategy_symbol:
+            report.error(path, "does not match frozen strategy entrypoint")
     critical = attested.get("execution_critical_sha256")
     try:
         current_critical = _execution_critical_hashes(repo_root)

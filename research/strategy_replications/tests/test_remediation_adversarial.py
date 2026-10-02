@@ -371,7 +371,7 @@ class ProductionPathAttackRegressions(unittest.TestCase):
                 protocol_sha256=sha256_file(protocol), strategy_spec_sha256=sha256_file(spec),
                 fidelity_classification=compute_fidelity_summary(load_json(spec)),
                 comparability_class="DIRECTLY_COMPARABLE",
-                capability_manifest_version="BACKTESTER_V2_EXECUTION_CONTRACT_3",
+                capability_manifest_version="BACKTESTER_V2_EXECUTION_CONTRACT_4",
                 freeze_receipt_sha256=sha256_file(freeze_receipt),
             )
             with patch("research.backtester_v2.output._material_dirty_paths", return_value=[]):
@@ -452,7 +452,7 @@ class ProductionPathAttackRegressions(unittest.TestCase):
                 protocol_sha256=sha256_file(protocol_path), strategy_spec_sha256=sha256_file(spec),
                 fidelity_classification="PURE_REPLICATION",
                 comparability_class="DIRECTLY_COMPARABLE",
-                capability_manifest_version="BACKTESTER_V2_EXECUTION_CONTRACT_3",
+                capability_manifest_version="BACKTESTER_V2_EXECUTION_CONTRACT_4",
                 freeze_receipt_sha256=sha256_file(freeze_receipt),
             )
             result = BacktestEngine(config).run(

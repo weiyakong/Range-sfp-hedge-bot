@@ -22,7 +22,9 @@ Machine authority is split as follows:
 production path. It does not accept a caller-supplied `BacktestResult`, strategy
 object, run ID, preflight context, state database, or receipt/index path. It:
 
-1. loads the locked strategy symbol and frozen parameters;
+1. reads `implementation.strategy_symbol` only from the frozen spec, captures
+   the locked strategy bytes once, and constructs that exact entrypoint with
+   frozen parameters; callers cannot choose an alternate class or function;
 2. verifies the suite hash frozen in the strategy spec, executes that unittest
    suite, and records structured process evidence;
 3. derives the actual window and row count from the bars passed to V2;
@@ -44,9 +46,13 @@ Its local bars file must be JSON/JSONL and its data manifest must contain a
 for each ordered `Bar` dataclass field. Use `canonical_bars_sha256()` to produce
 it. No market data is downloaded by the runner.
 
-The frozen strategy spec must also contain `tests.suite_sha256` and
-`execution_config_sha256`. These bind the approved executable tests and every
-`BacktestConfig` field, including fields not represented by the common protocol.
+The frozen strategy spec must also contain
+`implementation.strategy_symbol`, `tests.suite_sha256`, and
+`execution_config_sha256`. These bind the exact executable entrypoint, the
+approved executable tests, and every `BacktestConfig` field, including fields
+not represented by the common protocol. The entrypoint is repeated and
+cross-checked in the freeze receipt, executed-test evidence, execution
+attestation, and `RUN_RECEIPT_V2`.
 
 `RUN_RECEIPT_V1` issuance and validation are disabled. V1 artifacts remain
 historical evidence only and are explicitly not execution-attested authority.
@@ -98,7 +104,8 @@ production authority requires the atomic V2 runner.
 `candidate intake → protocol → spec → freeze → runner-owned tests → preflight → runner-owned execution → semantic validation → transactional registration → V2 receipt`
 
 - intake blocks unknown/reused identities and broken registry predecessor chains;
-- freeze blocks invalid specs, code/data/capability drift, and parameter reuse;
+- freeze blocks invalid specs, missing strategy entrypoints,
+  code/data/capability drift, and parameter reuse;
 - preflight binds the frozen window and semantically derived effective config to
   the actual `BacktestConfig`, real Git repository, strategy code, and executed
   test manifest;
@@ -107,7 +114,8 @@ production authority requires the atomic V2 runner.
 - post-run validation requires the exact complete output set, verifies every
   checksum and required metric, and recomputes Git/code/data/test identities;
 - receipt revalidation opens canonical state read-only and rejects drift in any
-  upstream file, execution-critical file, Git commit, or exact bar contract;
+  upstream file, execution-critical file, Git commit, exact bar contract, or
+  strategy entrypoint identity;
 - V2 receipt creation uses database uniqueness constraints for run IDs, frozen
   variant identities, and protected uses; the database path is not caller-controlled.
 

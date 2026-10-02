@@ -42,7 +42,6 @@ def main() -> int:
     ):
         parser.add_argument(f"--{name}", type=Path, required=True)
     parser.add_argument("--previous-registry", type=Path)
-    parser.add_argument("--strategy-symbol", required=True)
     parser.add_argument("--strategy-name", required=True)
     parser.add_argument("--source-reference", required=True)
     parser.add_argument(
@@ -64,7 +63,6 @@ def main() -> int:
             data_manifest_path=args.data_manifest,
             freeze_receipt_path=args.freeze_receipt,
             strategy_code_path=args.strategy_code,
-            strategy_symbol=args.strategy_symbol,
             strategy_test_suite_path=args.strategy_test_suite,
             bars=tuple(_load_bars(args.bars)), config=load_backtest_config(args.config),
             run_stage=args.run_stage, output_dir=args.output_dir,

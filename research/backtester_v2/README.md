@@ -101,7 +101,10 @@ receipt. External-strategy production authority requires
 That runner owns the actual bars, locked strategy construction, cloned config,
 engine invocation, semantic output validation, transactional state registration,
 and `RUN_RECEIPT_V2` issue. A caller-supplied `BacktestResult` therefore cannot
-be promoted to an authoritative production run.
+be promoted to an authoritative production run. The strategy entrypoint is
+read exclusively from the frozen spec, and the engine executes a captured,
+hash-verified snapshot of the locked strategy bytes rather than rereading a
+caller-selectable path or class.
 
 Use `build_run_metadata` for material runs. It records strategy identity and
 source type, parameters/reference, canonical manifest path and checksum, data

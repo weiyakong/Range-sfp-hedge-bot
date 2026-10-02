@@ -65,7 +65,7 @@ CANONICAL_CAPABILITY_RELATIVE_PATH = Path(
     "research/strategy_replications/capability/backtester_v2_capabilities.json"
 )
 CANONICAL_REPOSITORY_NAME = "Range-sfp-hedge-bot"
-EXPECTED_CAPABILITY_VERSION = "BACKTESTER_V2_EXECUTION_CONTRACT_3"
+EXPECTED_CAPABILITY_VERSION = "BACKTESTER_V2_EXECUTION_CONTRACT_4"
 AUDITED_BASE_COMMIT = "2b096ebf52928248ad2e608be685bef37a7d6887"
 CONTROLLED_CAPABILITIES = {
     "market_entry", "next_bar_market_execution", "passive_limit_entry",
@@ -551,7 +551,21 @@ def validate_strategy_spec(
     if not isinstance(implementation, dict):
         report.error("spec.implementation", "object is required")
         implementation = {}
-    _reject_unexpected(implementation, {"input_ids"}, "spec.implementation", report)
+    _reject_unexpected(
+        implementation, {"input_ids", "strategy_symbol"},
+        "spec.implementation", report,
+    )
+    strategy_symbol = _require_text(
+        implementation, "strategy_symbol", "spec.implementation", report,
+    )
+    if strategy_symbol and any(
+        not part.isidentifier() or part.startswith("_")
+        for part in strategy_symbol.split(".")
+    ):
+        report.error(
+            "spec.implementation.strategy_symbol",
+            "must be a public dotted Python symbol",
+        )
     implementation_inputs = _unique_texts(implementation.get("input_ids"), "spec.implementation.input_ids", report)
     for field_id in implementation_inputs:
         declaration = input_by_id.get(field_id)
@@ -693,6 +707,18 @@ def validate_strategy_spec(
             rule_ids.append(str(trace["rule_id"]))
     if len(rule_ids) != len(set(rule_ids)):
         report.error("spec.traceability", "rule_id values must be unique")
+    if strategy_symbol and not any(
+        isinstance(trace.get("code_symbol"), str)
+        and (
+            trace["code_symbol"] == strategy_symbol
+            or trace["code_symbol"].startswith(f"{strategy_symbol}.")
+        )
+        for trace in traceability
+    ):
+        report.error(
+            "spec.implementation.strategy_symbol",
+            "must own at least one frozen traceability code_symbol",
+        )
 
     source = spec.get("source_evidence")
     if not isinstance(source, dict):
@@ -1479,6 +1505,28 @@ def _symbol_exists(tree: ast.AST, qualified_name: str) -> bool:
     return True
 
 
+def _validate_strategy_entrypoint(
+    spec: Mapping[str, object], strategy_code_path: Path,
+) -> ValidationReport:
+    report = ValidationReport()
+    implementation = spec.get("implementation")
+    symbol = implementation.get("strategy_symbol") if isinstance(implementation, dict) else None
+    if not _is_text(symbol):
+        report.error("spec.implementation.strategy_symbol", "frozen strategy symbol is required")
+        return report
+    try:
+        tree = ast.parse(strategy_code_path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError) as exc:
+        report.error("strategy_code", f"cannot parse locked implementation: {exc}")
+        return report
+    if not _symbol_exists(tree, str(symbol)):
+        report.error(
+            "spec.implementation.strategy_symbol",
+            "frozen strategy entrypoint does not exist in locked implementation",
+        )
+    return report
+
+
 def validate_test_manifest_and_traceability(
     *, spec: Mapping[str, object], spec_path: Path, strategy_code_path: Path,
     test_manifest_path: Path,
@@ -1500,6 +1548,16 @@ def validate_test_manifest_and_traceability(
     for key, expected in identities.items():
         if manifest.get(key) != expected:
             report.error(f"test_manifest.{key}", "identity mismatch")
+    implementation = spec.get("implementation")
+    strategy_symbol = (
+        implementation.get("strategy_symbol")
+        if isinstance(implementation, dict) else None
+    )
+    if manifest.get("strategy_symbol") != strategy_symbol:
+        report.error(
+            "test_manifest.strategy_symbol",
+            "does not match frozen strategy entrypoint",
+        )
     suite_value = manifest.get("test_suite_path")
     suite_path = (
         Path(str(suite_value)) if isinstance(suite_value, str) and Path(suite_value).is_absolute()
@@ -1591,6 +1649,10 @@ def create_freeze_receipt(
         strategy_code_hash = None
     else:
         strategy_code_hash = sha256_file(strategy_code_path)
+        report.merge(
+            "strategy_entrypoint",
+            _validate_strategy_entrypoint(spec, strategy_code_path),
+        )
     if not report.ok:
         return report, None
     now = datetime.now(timezone.utc).isoformat()
@@ -1621,6 +1683,7 @@ def create_freeze_receipt(
         "backtester_commit": git_commit,
         "data_manifest_sha256": data_manifest_hash,
         "strategy_code_sha256": strategy_code_hash,
+        "strategy_symbol": spec["implementation"]["strategy_symbol"],
         "computed_fidelity_classification": compute_fidelity_summary(spec),
         "parameter_identity_sha256": _canonical_json_hash(spec.get("parameters", [])),
         "expected_effective_config": derive_expected_effective_config(protocol, spec),
@@ -1667,7 +1730,7 @@ def validate_freeze_receipt(
         "candidate_registry", "evaluation_protocol",
         "engine_capability_manifest_sha256", "engine_capability_manifest_version",
         "execution_critical_sha256", "backtester_commit", "data_manifest_sha256",
-        "strategy_code_sha256", "computed_fidelity_classification",
+        "strategy_code_sha256", "strategy_symbol", "computed_fidelity_classification",
         "parameter_identity_sha256", "expected_effective_config", "expected_window",
         "validation", "unresolved_counts",
     }, "receipt", report)
@@ -1705,6 +1768,18 @@ def validate_freeze_receipt(
         report.error("receipt.strategy_code_sha256", "locked lowercase SHA-256 is required")
     if strategy_code_path is not None and strategy_code_path.is_file() and code_hash != sha256_file(strategy_code_path):
         report.error("receipt.strategy_code_sha256", "strategy implementation changed")
+    implementation = spec.get("implementation")
+    strategy_symbol = (
+        implementation.get("strategy_symbol")
+        if isinstance(implementation, dict) else None
+    )
+    if receipt.get("strategy_symbol") != strategy_symbol:
+        report.error("receipt.strategy_symbol", "does not match frozen strategy spec")
+    if strategy_code_path is not None and strategy_code_path.is_file():
+        report.merge(
+            "strategy_entrypoint",
+            _validate_strategy_entrypoint(spec, strategy_code_path),
+        )
     frozen_at = _parse_utc(receipt.get("frozen_at_utc"), "receipt.frozen_at_utc", report)
     if frozen_at and frozen_at > datetime.now(timezone.utc):
         report.error("receipt.frozen_at_utc", "cannot be in the future")

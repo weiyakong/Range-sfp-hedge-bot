@@ -184,7 +184,10 @@ def valid_spec(data_manifest_hash: str) -> Dict[str, object]:
                 "manifest_sha256": data_manifest_hash,
             }
         ],
-        "implementation": {"input_ids": ["ohlc"]},
+        "implementation": {
+            "input_ids": ["ohlc"],
+            "strategy_symbol": "MaCrossStrategy",
+        },
         "required_capabilities": ["market_entry", "next_bar_market_execution"],
         "ambiguities": [],
         "state_model": {
@@ -299,6 +302,7 @@ def fixture_files(root: Path) -> Tuple[Path, Path, Path, Path, Path, Path]:
         "executed_at_utc": "2026-01-03T00:00:00Z",
         "strategy_spec_sha256": sha256_file(spec_path),
         "strategy_code_sha256": sha256_file(strategy),
+        "strategy_symbol": "MaCrossStrategy",
         "test_suite_path": "strategy_tests.py",
         "test_suite_sha256": sha256_file(suite),
         "results": [
@@ -396,6 +400,32 @@ class FreezeAttackTests(unittest.TestCase):
         spec = valid_spec(HASH_A)
         spec["data_manifest"]["sha256"] = "invalid"
         self.assertFalse(validate_strategy_spec(spec, self.capability).ok)
+
+    def test_frozen_strategy_symbol_is_required(self) -> None:
+        spec = valid_spec(HASH_A)
+        del spec["implementation"]["strategy_symbol"]
+        report = validate_strategy_spec(spec, self.capability)
+        self.assertFalse(report.ok)
+        self.assertTrue(any("strategy_symbol" in item for item in report.errors))
+
+    def test_freeze_rejects_strategy_symbol_missing_from_locked_code(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            spec, registry, protocol, data, strategy, receipt = fixture_files(root)
+            payload = load_json(spec)
+            payload["implementation"]["strategy_symbol"] = "MissingStrategy"
+            payload["traceability"][0]["code_symbol"] = "MissingStrategy.on_bar"
+            write_json(spec, payload)
+            write_json(registry, valid_registry(sha256_file(spec)))
+            report, created = create_freeze_receipt(
+                spec_path=spec, registry_path=registry, protocol_path=protocol,
+                capability_path=CAPABILITY_PATH, data_manifest_path=data,
+                repo_root=REPO_ROOT, receipt_path=receipt,
+                strategy_code_path=strategy,
+            )
+            self.assertFalse(report.ok)
+            self.assertIsNone(created)
+            self.assertTrue(any("entrypoint" in item for item in report.errors))
 
     def test_12_frozen_spec_mutation_invalidates_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -520,7 +550,7 @@ class PositiveEnforcementTests(unittest.TestCase):
                 strategy_spec_sha256=sha256_file(spec),
                 fidelity_classification=compute_fidelity_summary(spec_payload),
                 comparability_class="DIRECTLY_COMPARABLE",
-                capability_manifest_version="BACKTESTER_V2_EXECUTION_CONTRACT_3",
+                capability_manifest_version="BACKTESTER_V2_EXECUTION_CONTRACT_4",
                 freeze_receipt_sha256=sha256_file(freeze_receipt),
             )
             start = 1_577_836_800_000

@@ -9,6 +9,7 @@ from unittest.mock import patch
 from research.backtester_v2.models import BacktestConfig, Bar
 from research.strategy_replications.production_runner import (
     ProductionRunRequest,
+    _load_strategy,
     canonical_bars_sha256,
     run_production_research,
     validate_v2_run_receipt,
@@ -99,7 +100,7 @@ def _request(root: Path, paths, *, protected: bool = False, output_name: str = "
         repo_root=REPO_ROOT, spec_path=spec, registry_path=registry,
         protocol_path=protocol, data_manifest_path=data,
         freeze_receipt_path=freeze_receipt, strategy_code_path=strategy,
-        strategy_symbol="MaCrossStrategy", strategy_test_suite_path=suite,
+        strategy_test_suite_path=suite,
         bars=(Bar(start, 100, 100, 100, 100, 1), Bar(end, 100, 100, 100, 100, 1)),
         config=BacktestConfig(),
         run_stage="PROTECTED_VALIDATION" if protected else "COMPARISON",
@@ -321,8 +322,81 @@ class AtomicProductionRunnerTests(unittest.TestCase):
         fields = set(ProductionRunRequest.__dataclass_fields__)
         self.assertNotIn("result", fields)
         self.assertNotIn("strategy", fields)
+        self.assertNotIn("strategy_symbol", fields)
         self.assertNotIn("run_id", fields)
         self.assertNotIn("state_path", fields)
+
+    def test_frozen_symbol_not_alternate_class_in_same_file_is_executed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); paths = _fixture(root); state = root / "state.sqlite3"
+            strategy = paths[4]
+            freeze_receipt = paths[5]
+            freeze_receipt.unlink()
+            (root / "receipt_index.json").unlink()
+            strategy.write_text(
+                strategy.read_text(encoding="utf-8")
+                + "\nclass AlternateStrategy:\n"
+                + "    def __init__(self, fast_length, slow_length): pass\n"
+                + "    def on_bar(self, bar, state):\n"
+                + "        from research.backtester_v2.models import OrderIntent\n"
+                + "        return [OrderIntent.market('long', 1.0)]\n",
+                encoding="utf-8",
+            )
+            spec = load_json(paths[0])
+            spec["traceability"][0]["implementation_sha256"] = sha256_file(strategy)
+            write_json(paths[0], spec)
+            write_json(paths[1], valid_registry(sha256_file(paths[0])))
+            report, created = create_freeze_receipt(
+                spec_path=paths[0], registry_path=paths[1], protocol_path=paths[2],
+                capability_path=CAPABILITY_PATH, data_manifest_path=paths[3],
+                repo_root=REPO_ROOT, receipt_path=freeze_receipt,
+                strategy_code_path=strategy,
+            )
+            self.assertTrue(report.ok, report.render())
+            self.assertIsNotNone(created)
+            outcome = self._run(_request(root, paths), state)
+            result = load_json(outcome.output_dir / "result.json")
+            attestation = load_json(outcome.output_dir / "execution_attestation.json")
+            self.assertEqual(attestation["strategy_symbol"], "MaCrossStrategy")
+            self.assertEqual(result["open_positions"], {})
+
+    def test_strategy_loader_executes_captured_bytes_not_reread_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "strategy.py"
+            path.write_text(
+                "class Locked:\n"
+                "    def __init__(self, value): self.value = value\n"
+                "    def on_bar(self, bar, state): return ['locked']\n",
+                encoding="utf-8",
+            )
+            captured = path.read_bytes()
+            path.write_text(
+                "class Locked:\n"
+                "    def __init__(self, value): self.value = value\n"
+                "    def on_bar(self, bar, state): return ['replaced']\n",
+                encoding="utf-8",
+            )
+            loaded = _load_strategy(captured, path, "Locked", {"value": 1})
+            self.assertEqual(loaded.on_bar(None, None), ["locked"])
+
+    def test_attested_strategy_symbol_mutation_invalidates_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); paths = _fixture(root); state = root / "state.sqlite3"
+            outcome = self._run(_request(root, paths), state)
+            attestation_path = outcome.output_dir / "execution_attestation.json"
+            attestation = load_json(attestation_path)
+            attestation["strategy_symbol"] = "AlternateStrategy"
+            write_json(attestation_path, attestation)
+            manifest_path = outcome.output_dir / "manifest.json"
+            manifest = load_json(manifest_path)
+            manifest["checksums"]["execution_attestation.json"] = sha256_file(attestation_path)
+            write_json(manifest_path, manifest)
+            report = self._validate(outcome.output_dir, state)
+            self.assertFalse(report.ok)
+            self.assertTrue(any(
+                "execution_attestation.strategy_symbol" in item
+                for item in report.errors
+            ))
 
 
 if __name__ == "__main__":
