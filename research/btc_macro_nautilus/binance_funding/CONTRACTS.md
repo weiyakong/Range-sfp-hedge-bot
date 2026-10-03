@@ -25,6 +25,9 @@ to CSV as text. No floating-point conversion or rounding is permitted.
 Duplicate timestamps are excluded from normalized output and reported. No
 event is interpolated or synthesized.
 
-An unusual interval is defined for review as any consecutive delta different
-from the modal observed delta. This flag does not assert that data is missing;
-the manifest retains every interval and surrounding source events.
+An unusual interval is defined for review as any consecutive delta whose
+absolute difference from the exact modal observed delta is at least 60 seconds.
+This data-derived rule does not assume an eight-hour schedule, while avoiding
+false flags for Binance's observed millisecond timestamp jitter. The flag does
+not assert that data is missing; the manifest retains the exact distribution
+of every interval and surrounding source events for every flagged delta.

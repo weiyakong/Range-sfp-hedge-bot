@@ -134,25 +134,25 @@ class BinanceFundingCollectorTests(unittest.TestCase):
     def test_validation_reports_duplicates_ordering_and_non_modal_intervals(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            config = self.config(root, start_ms=0, end_ms=60_000)
+            config = self.config(root, start_ms=0, end_ms=3_600_000)
             page_dir = config.raw_pages_dir
             page_dir.mkdir(parents=True)
             raw = response(
-                {"symbol": "BTCUSDT", "fundingTime": 10_000, "fundingRate": "0.1", "markPrice": "1"},
-                {"symbol": "BTCUSDT", "fundingTime": 30_000, "fundingRate": "0.3", "markPrice": "3"},
-                {"symbol": "BTCUSDT", "fundingTime": 20_000, "fundingRate": "0.2", "markPrice": "2"},
-                {"symbol": "BTCUSDT", "fundingTime": 20_000, "fundingRate": "0.2", "markPrice": "2"},
-                {"symbol": "BTCUSDT", "fundingTime": 50_000, "fundingRate": "0.4", "markPrice": "4"},
+                {"symbol": "BTCUSDT", "fundingTime": 600_000, "fundingRate": "0.1", "markPrice": "1"},
+                {"symbol": "BTCUSDT", "fundingTime": 1_800_000, "fundingRate": "0.3", "markPrice": "3"},
+                {"symbol": "BTCUSDT", "fundingTime": 1_200_000, "fundingRate": "0.2", "markPrice": "2"},
+                {"symbol": "BTCUSDT", "fundingTime": 1_200_000, "fundingRate": "0.2", "markPrice": "2"},
+                {"symbol": "BTCUSDT", "fundingTime": 3_000_000, "fundingRate": "0.4", "markPrice": "4"},
             )
-            (page_dir / "page-000001-start-0-end-60000.json").write_bytes(raw)
+            (page_dir / "page-000001-start-0-end-3600000.json").write_bytes(raw)
 
             report = normalize_and_validate(config)
 
             self.assertEqual(report.duplicate_count, 1)
             self.assertEqual(report.ordering_violations, 1)
-            self.assertEqual(report.interval_distribution_ms, {10_000: 2, 20_000: 1})
+            self.assertEqual(report.interval_distribution_ms, {600_000: 2, 1_200_000: 1})
             self.assertEqual(len(report.unusual_intervals), 1)
-            self.assertEqual(report.unusual_intervals[0]["delta_ms"], 20_000)
+            self.assertEqual(report.unusual_intervals[0]["delta_ms"], 1_200_000)
 
     def test_repeated_page_is_rejected_instead_of_looping_forever(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

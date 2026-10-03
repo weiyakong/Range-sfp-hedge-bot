@@ -29,6 +29,7 @@ SCHEMA_VERSION = "binance-usdm-funding-v1"
 COLLECTOR_VERSION = "1.0.0"
 ENDPOINT = "https://fapi.binance.com/fapi/v1/fundingRate"
 DEFAULT_LIMIT = 1000
+UNUSUAL_INTERVAL_DEVIATION_MS = 60_000
 PAGE_RE = re.compile(r"^page-(\d{6})-start-(\d+)-end-(\d+)\.json$")
 CSV_FIELDS = ("symbol", "funding_time_ms", "funding_time_utc", "funding_rate", "mark_price")
 
@@ -583,7 +584,7 @@ def normalize_and_validate(config: CollectorConfig) -> ValidationReport:
             previous = normalized[index - 1]
             current = normalized[index]
             delta = current["fundingTime"] - previous["fundingTime"]
-            if delta == modal_interval:
+            if abs(delta - modal_interval) < UNUSUAL_INTERVAL_DEVIATION_MS:
                 continue
             context = normalized[max(0, index - 2) : min(len(normalized), index + 3)]
             unusual.append(
@@ -699,7 +700,8 @@ def finalize(config: CollectorConfig, collection: CollectionResult) -> Dict[str,
             "symbol_mismatch_count": report.symbol_mismatch_count,
             "out_of_window_count": report.out_of_window_count,
             "normalized_reproducible": report.normalized_reproducible,
-            "unusual_interval_definition": "delta_ms differs from the modal observed interval; this is a review flag, not an assertion of missing data",
+            "unusual_interval_definition": "absolute difference from the exact modal observed interval is at least 60000 ms; this is a review flag, not an assertion of missing data",
+            "unusual_interval_deviation_threshold_ms": UNUSUAL_INTERVAL_DEVIATION_MS,
             "modal_interval_ms": report.modal_interval_ms,
             "interval_distribution_ms": {str(key): value for key, value in report.interval_distribution_ms.items()},
             "unusual_intervals": report.unusual_intervals,
