@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Dict, Mapping, Optional, Protocol, Sequence, Tuple
@@ -19,6 +20,7 @@ from typing import Dict, Mapping, Optional, Protocol, Sequence, Tuple
 STRATEGY_SPEC_SCHEMA = "STRATEGY_SPEC_V2"
 DATASET_IDENTITY_SCHEMA = "BACKTESTER_V3A_DATASET_IDENTITY_V1"
 INSTRUMENT_METADATA_SCHEMA = "BACKTESTER_V3A_INSTRUMENT_METADATA_V1"
+INSTRUMENT_METADATA_SCHEMA_V2 = "BACKTESTER_V3A_INSTRUMENT_METADATA_V2"
 RESULT_METADATA_SCHEMA = "BACKTESTER_V3A_RESULT_METADATA_V1"
 ATTESTATION_SCHEMA = "BACKTESTER_V3A_EXECUTION_ATTESTATION_V1"
 RECEIPT_SCHEMA = "BACKTESTER_V3A_RUN_RECEIPT_V1"
@@ -131,6 +133,19 @@ def _entrypoint(value: object, path: str) -> str:
     text = _text(value, path)
     if any(not part.isidentifier() or part.startswith("_") for part in text.split(".")):
         raise ContractError(f"{path} must be a public dotted Python entrypoint")
+    return text
+
+
+def _utc_timestamp(value: object, path: str) -> str:
+    text = _text(value, path)
+    if not text.endswith("Z"):
+        raise ContractError(f"{path} must use canonical UTC Z notation")
+    try:
+        parsed = datetime.fromisoformat(text[:-1] + "+00:00")
+    except ValueError as exc:
+        raise ContractError(f"{path} must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo != timezone.utc:
+        raise ContractError(f"{path} must be UTC")
     return text
 
 
@@ -458,10 +473,12 @@ class MetadataProvenance:
 
 @dataclass(frozen=True)
 class InstrumentMetadata:
+    schema_version: str
     exchange: str
     market: str
     symbol: str
     metadata_id: str
+    collected_at_utc: Optional[str]
     tick_size: str
     step_size: str
     min_qty: str
@@ -475,8 +492,8 @@ class InstrumentMetadata:
         return canonical_sha256(self.to_payload())
 
     def to_payload(self) -> Dict[str, object]:
-        return {
-            "schema_version": INSTRUMENT_METADATA_SCHEMA,
+        payload: Dict[str, object] = {
+            "schema_version": self.schema_version,
             "exchange": self.exchange,
             "market": self.market,
             "symbol": self.symbol,
@@ -489,19 +506,42 @@ class InstrumentMetadata:
             "quantity_precision": self.quantity_precision,
             "provenance": self.provenance.to_payload(),
         }
+        if self.schema_version == INSTRUMENT_METADATA_SCHEMA_V2:
+            payload["collected_at_utc"] = self.collected_at_utc
+            ordered = (
+                "schema_version", "exchange", "market", "symbol",
+                "metadata_id", "collected_at_utc", "tick_size", "step_size",
+                "min_qty", "min_notional", "price_precision",
+                "quantity_precision", "provenance",
+            )
+            return {key: payload[key] for key in ordered}
+        return payload
 
 
 def parse_instrument_metadata(payload: Mapping[str, object]) -> InstrumentMetadata:
     root = _object(payload, "instrument_metadata")
-    _exact_keys(root, (
+    schema_version = root.get("schema_version")
+    base_fields = (
         "schema_version", "exchange", "market", "symbol", "metadata_id",
         "tick_size", "step_size", "min_qty", "min_notional",
         "price_precision", "quantity_precision", "provenance",
-    ), "instrument_metadata")
-    if root["schema_version"] != INSTRUMENT_METADATA_SCHEMA:
+    )
+    if schema_version == INSTRUMENT_METADATA_SCHEMA:
+        _exact_keys(root, base_fields, "instrument_metadata")
+        collected_at_utc = None
+    elif schema_version == INSTRUMENT_METADATA_SCHEMA_V2:
+        _exact_keys(
+            root,
+            (*base_fields[:5], "collected_at_utc", *base_fields[5:]),
+            "instrument_metadata",
+        )
+        collected_at_utc = _utc_timestamp(
+            root["collected_at_utc"],
+            "instrument_metadata.collected_at_utc",
+        )
+    else:
         raise ContractError(
-            "instrument_metadata.schema_version must equal "
-            f"{INSTRUMENT_METADATA_SCHEMA}",
+            "instrument_metadata.schema_version is unsupported",
         )
     symbol = _text(root["symbol"], "instrument_metadata.symbol")
     if symbol != symbol.upper() or _SYMBOL_RE.fullmatch(symbol) is None:
@@ -564,10 +604,12 @@ def parse_instrument_metadata(payload: Mapping[str, object]) -> InstrumentMetada
         effective_end_ms=effective_end,
     )
     return InstrumentMetadata(
+        schema_version=str(schema_version),
         exchange=_text(root["exchange"], "instrument_metadata.exchange"),
         market=_text(root["market"], "instrument_metadata.market"),
         symbol=symbol,
         metadata_id=_text(root["metadata_id"], "instrument_metadata.metadata_id"),
+        collected_at_utc=collected_at_utc,
         tick_size=_positive_decimal_text(
             root["tick_size"], "instrument_metadata.tick_size",
         ),
@@ -1033,6 +1075,7 @@ __all__ = [
     "ATTESTATION_SCHEMA",
     "DATASET_IDENTITY_SCHEMA",
     "INSTRUMENT_METADATA_SCHEMA",
+    "INSTRUMENT_METADATA_SCHEMA_V2",
     "RECEIPT_SCHEMA",
     "RESULT_METADATA_SCHEMA",
     "STRATEGY_SPEC_SCHEMA",

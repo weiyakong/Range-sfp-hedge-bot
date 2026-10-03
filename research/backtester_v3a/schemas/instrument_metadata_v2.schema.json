@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "BACKTESTER_V3A_INSTRUMENT_METADATA_V2",
+  "title": "Backtester V3-A collected instrument metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "exchange",
+    "market",
+    "symbol",
+    "metadata_id",
+    "collected_at_utc",
+    "tick_size",
+    "step_size",
+    "min_qty",
+    "min_notional",
+    "price_precision",
+    "quantity_precision",
+    "provenance"
+  ],
+  "properties": {
+    "schema_version": {"const": "BACKTESTER_V3A_INSTRUMENT_METADATA_V2"},
+    "exchange": {"type": "string", "minLength": 1},
+    "market": {"type": "string", "minLength": 1},
+    "symbol": {"type": "string", "pattern": "^[A-Z0-9]{2,40}$"},
+    "metadata_id": {"type": "string", "minLength": 1},
+    "collected_at_utc": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T.*Z$"
+    },
+    "tick_size": {"type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$"},
+    "step_size": {"type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$"},
+    "min_qty": {"type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$"},
+    "min_notional": {"type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$"},
+    "price_precision": {"type": ["integer", "null"], "minimum": 0},
+    "quantity_precision": {"type": ["integer", "null"], "minimum": 0},
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fidelity_classification",
+        "source",
+        "source_sha256",
+        "effective_start_ms",
+        "effective_end_ms"
+      ],
+      "properties": {
+        "fidelity_classification": {
+          "enum": [
+            "HISTORICAL_VERIFIED",
+            "STATIC_CURRENT_PROXY",
+            "RESEARCH_ASSUMPTION"
+          ]
+        },
+        "source": {"type": "string", "minLength": 1},
+        "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "effective_start_ms": {"type": ["integer", "null"]},
+        "effective_end_ms": {"type": ["integer", "null"]}
+      }
+    }
+  }
+}
