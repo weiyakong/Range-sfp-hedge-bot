@@ -22,9 +22,10 @@ Machine authority is split as follows:
 production path. It does not accept a caller-supplied `BacktestResult`, strategy
 object, run ID, preflight context, state database, or receipt/index path. It:
 
-1. reads `implementation.strategy_symbol` only from the frozen spec, captures
-   the locked strategy bytes once, and constructs that exact entrypoint with
-   frozen parameters; callers cannot choose an alternate class or function;
+1. captures the frozen strategy-spec bytes once, parses all execution-critical
+   spec values from that immutable snapshot, captures the locked strategy bytes
+   once, and constructs the frozen entrypoint with those exact parameters;
+   callers cannot choose an alternate class, function, or parameter payload;
 2. verifies the suite hash frozen in the strategy spec, executes that unittest
    suite, and records structured process evidence;
 3. derives the actual window and row count from the bars passed to V2;
@@ -52,7 +53,10 @@ The frozen strategy spec must also contain
 approved executable tests, and every `BacktestConfig` field, including fields
 not represented by the common protocol. The entrypoint is repeated and
 cross-checked in the freeze receipt, executed-test evidence, execution
-attestation, and `RUN_RECEIPT_V2`.
+attestation, and `RUN_RECEIPT_V2`. The canonical constructor-parameter payload
+is likewise hashed as `strategy_parameters_sha256` in the execution attestation
+and `RUN_RECEIPT_V2`, then revalidated against the authoritative frozen spec
+and canonical state.
 
 `RUN_RECEIPT_V1` issuance and validation are disabled. V1 artifacts remain
 historical evidence only and are explicitly not execution-attested authority.

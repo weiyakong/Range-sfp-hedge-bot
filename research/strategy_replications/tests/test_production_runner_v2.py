@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
 
+import research.strategy_replications.production_runner as production_runner_module
 from research.backtester_v2.models import BacktestConfig, Bar
 from research.strategy_replications.production_runner import (
     ProductionRunRequest,
@@ -395,6 +397,142 @@ class AtomicProductionRunnerTests(unittest.TestCase):
             self.assertFalse(report.ok)
             self.assertTrue(any(
                 "execution_attestation.strategy_symbol" in item
+                for item in report.errors
+            ))
+
+    def test_snapshot_parameters_are_constructor_authority(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); paths = _fixture(root); state = root / "state.sqlite3"
+            outcome = self._run(_request(root, paths), state)
+            attestation = load_json(outcome.output_dir / "execution_attestation.json")
+            receipt = load_json(outcome.receipt_path)
+            metadata = load_json(outcome.output_dir / "run_metadata.json")
+            expected = production_runner_module._canonical_hash({
+                "fast_length": 10, "slow_length": 20,
+            })
+            self.assertEqual(metadata["strategy"]["parameters"], {
+                "fast_length": 10, "slow_length": 20,
+            })
+            self.assertEqual(attestation["strategy_parameters_sha256"], expected)
+            self.assertEqual(receipt["strategy_parameters_sha256"], expected)
+            self.assertTrue(self._validate(outcome.output_dir, state).ok)
+
+    def test_transient_spec_replacement_cannot_change_executed_parameters(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); paths = _fixture(root); state_path = root / "state.sqlite3"
+            spec, registry, protocol, data, strategy, freeze_receipt, suite = paths
+            freeze_receipt.unlink()
+            (root / "receipt_index.json").unlink()
+            strategy.write_text(
+                "from research.backtester_v2.models import OrderIntent\n\n"
+                "class MaCrossStrategy:\n"
+                "    def __init__(self, fast_length, slow_length):\n"
+                "        self.fast_length = fast_length\n"
+                "        self.slow_length = slow_length\n"
+                "        self.sent = False\n"
+                "    def on_bar(self, bar, state):\n"
+                "        if self.fast_length == 999 and not self.sent:\n"
+                "            self.sent = True\n"
+                "            return [OrderIntent.market('long', 1.0)]\n"
+                "        return []\n",
+                encoding="utf-8",
+            )
+            frozen_spec = load_json(spec)
+            frozen_spec["traceability"][0]["implementation_sha256"] = sha256_file(strategy)
+            write_json(spec, frozen_spec)
+            write_json(registry, valid_registry(sha256_file(spec)))
+            frozen, created = create_freeze_receipt(
+                spec_path=spec, registry_path=registry, protocol_path=protocol,
+                capability_path=CAPABILITY_PATH, data_manifest_path=data,
+                repo_root=REPO_ROOT, receipt_path=freeze_receipt,
+                strategy_code_path=strategy,
+            )
+            self.assertTrue(frozen.ok, frozen.render())
+            self.assertIsNotNone(created)
+            frozen_bytes = spec.read_bytes()
+            replacement = json.loads(frozen_bytes)
+            replacement["parameters"][0]["value"] = 999
+            replacement_bytes = (
+                json.dumps(replacement, indent=2, sort_keys=True) + "\n"
+            ).encode("utf-8")
+            real_critical = production_runner_module._execution_critical_hashes
+            real_tests = production_runner_module._run_test_suite
+            swapped = False
+
+            def swap_after_identity(repo_root):
+                nonlocal swapped
+                hashes = real_critical(repo_root)
+                if not swapped:
+                    spec.write_bytes(replacement_bytes)
+                    swapped = True
+                return hashes
+
+            def restore_before_preflight(**kwargs):
+                spec.write_bytes(frozen_bytes)
+                return real_tests(**kwargs)
+
+            p1, p2, p3 = self._patches(state_path)
+            with p1, p2, p3, patch.object(
+                production_runner_module, "_execution_critical_hashes",
+                side_effect=swap_after_identity,
+            ), patch.object(
+                production_runner_module, "_run_test_suite",
+                side_effect=restore_before_preflight,
+            ):
+                outcome = run_production_research(_request(root, paths))
+            result = load_json(outcome.output_dir / "result.json")
+            metadata = load_json(outcome.output_dir / "run_metadata.json")
+            self.assertTrue(swapped)
+            self.assertEqual(spec.read_bytes(), frozen_bytes)
+            self.assertEqual(metadata["strategy"]["parameters"]["fast_length"], 10)
+            self.assertEqual(result["open_positions"], {})
+            self.assertTrue(self._validate(outcome.output_dir, state_path).ok)
+
+    def test_attested_parameter_identity_mutation_invalidates_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); paths = _fixture(root); state = root / "state.sqlite3"
+            outcome = self._run(_request(root, paths), state)
+            attestation_path = outcome.output_dir / "execution_attestation.json"
+            attestation = load_json(attestation_path)
+            attestation["strategy_parameters_sha256"] = "0" * 64
+            write_json(attestation_path, attestation)
+            manifest_path = outcome.output_dir / "manifest.json"
+            manifest = load_json(manifest_path)
+            manifest["checksums"]["execution_attestation.json"] = sha256_file(attestation_path)
+            write_json(manifest_path, manifest)
+            report = self._validate(outcome.output_dir, state)
+            self.assertFalse(report.ok)
+            self.assertTrue(any(
+                "execution_attestation.strategy_parameters_sha256" in item
+                for item in report.errors
+            ))
+
+    def test_frozen_spec_parameter_mutation_invalidates_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); paths = _fixture(root); state = root / "state.sqlite3"
+            outcome = self._run(_request(root, paths), state)
+            spec = load_json(paths[0])
+            spec["parameters"][0]["value"] = 999
+            write_json(paths[0], spec)
+            report = self._validate(outcome.output_dir, state)
+            self.assertFalse(report.ok)
+            self.assertTrue(any(
+                "upstream_files.spec" in item
+                or "strategy_parameters_sha256" in item
+                for item in report.errors
+            ))
+
+    def test_receipt_parameter_identity_mutation_invalidates_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); paths = _fixture(root); state = root / "state.sqlite3"
+            outcome = self._run(_request(root, paths), state)
+            receipt = load_json(outcome.receipt_path)
+            receipt["strategy_parameters_sha256"] = "0" * 64
+            write_json(outcome.receipt_path, receipt)
+            report = self._validate(outcome.output_dir, state)
+            self.assertFalse(report.ok)
+            self.assertTrue(any(
+                "run_receipt_v2.strategy_parameters_sha256" in item
                 for item in report.errors
             ))
 

@@ -114,6 +114,16 @@ def _write_json(path: Path, value: object) -> None:
         handle.write("\n")
 
 
+def _load_json_snapshot(source: bytes, label: str) -> Dict[str, object]:
+    try:
+        payload = json.loads(source)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot parse immutable {label} snapshot: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"immutable {label} snapshot must contain a JSON object")
+    return payload
+
+
 def _git(repo_root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=repo_root, check=True, capture_output=True, text=True,
@@ -358,6 +368,7 @@ def _data_contract(path: Path) -> Mapping[str, object]:
 
 def _run_test_suite(
     *, suite_path: Path, spec: Mapping[str, object], spec_path: Path,
+    strategy_spec_sha256: str,
     strategy_code_path: Path, strategy_code_sha256: str,
     strategy_symbol: str, evidence_path: Path,
 ) -> Dict[str, object]:
@@ -401,7 +412,7 @@ def _run_test_suite(
         "executed_at_utc": _utc_now(),
         "command": command,
         "exit_code": completed.returncode,
-        "strategy_spec_sha256": sha256_file(spec_path),
+        "strategy_spec_sha256": strategy_spec_sha256,
         "strategy_code_sha256": strategy_code_sha256,
         "strategy_symbol": strategy_symbol,
         "test_suite_path": str(suite_path.resolve()),
@@ -429,6 +440,7 @@ def _run_test_suite(
 def _lineage(
     spec: Mapping[str, object], registry: Mapping[str, object],
     protocol: Mapping[str, object], paths: ProductionRunRequest,
+    strategy_spec_sha256: str,
 ) -> ReplicationLineage:
     return ReplicationLineage(
         candidate_id=str(spec["candidate_id"]), variant_id=str(spec["variant_id"]),
@@ -436,7 +448,7 @@ def _lineage(
         registry_sha256=sha256_file(paths.registry_path),
         protocol_version=str(protocol["protocol_version"]),
         protocol_sha256=sha256_file(paths.protocol_path),
-        strategy_spec_sha256=sha256_file(paths.spec_path),
+        strategy_spec_sha256=strategy_spec_sha256,
         fidelity_classification=compute_fidelity_summary(spec),
         comparability_class=str(spec["comparability_class"]),
         capability_manifest_version="BACKTESTER_V2_EXECUTION_CONTRACT_4",
@@ -770,6 +782,12 @@ def run_production_research(request: ProductionRunRequest) -> ProductionRunOutco
     if not bars:
         raise ValueError("production run requires at least one bar")
     upstream_files = _upstream_files(request, repo_root)
+    spec_path = _regular_file(request.spec_path, "spec")
+    spec_source = spec_path.read_bytes()
+    spec_source_sha256 = hashlib.sha256(spec_source).hexdigest()
+    if spec_source_sha256 != upstream_files["spec"]["sha256"]:
+        raise ValueError("strategy spec changed while its immutable snapshot was captured")
+    spec = _load_json_snapshot(spec_source, "strategy spec")
     strategy_path = _regular_file(request.strategy_code_path, "strategy_code")
     strategy_source = strategy_path.read_bytes()
     strategy_source_sha256 = hashlib.sha256(strategy_source).hexdigest()
@@ -782,15 +800,15 @@ def run_production_research(request: ProductionRunRequest) -> ProductionRunOutco
         if getattr(request, field) != data_contract[field]:
             raise ValueError(f"actual {field} differs from production data contract")
     config = _clone_config(request.config)
-    spec = load_json(request.spec_path)
     strategy_symbol = _strategy_symbol(spec)
     config_payload_hash = canonical_config_sha256(config)
     if spec.get("execution_config_sha256") != config_payload_hash:
         raise ValueError("actual BacktestConfig differs from frozen strategy spec")
-    spec["__file_sha256"] = sha256_file(request.spec_path)
+    spec["__file_sha256"] = spec_source_sha256
     registry = load_json(request.registry_path)
     protocol = load_json(request.protocol_path)
     parameters = _strategy_parameters(spec)
+    strategy_parameters_sha256 = _canonical_hash(parameters)
     strategy = _load_strategy(
         strategy_source, strategy_path, strategy_symbol, parameters,
     )
@@ -821,7 +839,8 @@ def run_production_research(request: ProductionRunRequest) -> ProductionRunOutco
     try:
         evidence = _run_test_suite(
             suite_path=request.strategy_test_suite_path.resolve(), spec=spec,
-            spec_path=request.spec_path, strategy_code_path=request.strategy_code_path,
+            spec_path=request.spec_path, strategy_spec_sha256=spec_source_sha256,
+            strategy_code_path=request.strategy_code_path,
             strategy_code_sha256=strategy_source_sha256,
             strategy_symbol=strategy_symbol,
             evidence_path=evidence_path,
@@ -853,7 +872,9 @@ def run_production_research(request: ProductionRunRequest) -> ProductionRunOutco
             manifest_path=request.data_manifest_path, symbol=request.symbol,
             market=request.market, timeframe=request.timeframe,
             tested_start=actual_start, tested_end=actual_end, row_count=len(bars),
-            replication_lineage=_lineage(spec, registry, protocol, request),
+            replication_lineage=_lineage(
+                spec, registry, protocol, request, spec_source_sha256,
+            ),
             strategy_code_path=request.strategy_code_path,
             capability_manifest_path=repo_root / CANONICAL_CAPABILITY_RELATIVE_PATH,
             freeze_receipt_path=request.freeze_receipt_path,
@@ -886,7 +907,7 @@ def run_production_research(request: ProductionRunRequest) -> ProductionRunOutco
             config_payload_sha256=config_payload_hash,
             strategy_code_sha256=sha256_file(request.strategy_code_path),
             strategy_symbol=strategy_symbol,
-            strategy_parameters_sha256=_canonical_hash(parameters),
+            strategy_parameters_sha256=strategy_parameters_sha256,
             engine_code_sha256=sha256_file(repo_root / "research/backtester_v2/engine.py"),
             runner_code_sha256=sha256_file(Path(__file__)),
             enforcement_code_sha256=sha256_file(repo_root / "research/strategy_replications/validation/core.py"),
@@ -917,7 +938,7 @@ def run_production_research(request: ProductionRunRequest) -> ProductionRunOutco
             "execution_id": execution_id, "created_at_utc": _utc_now(),
             "candidate_id": spec["candidate_id"], "variant_id": spec["variant_id"],
             "strategy_version": spec["strategy_version"], "run_stage": request.run_stage,
-            "spec_sha256": sha256_file(request.spec_path),
+            "spec_sha256": spec_source_sha256,
             "registry_sha256": sha256_file(request.registry_path),
             "protocol_sha256": sha256_file(request.protocol_path),
             "freeze_receipt_sha256": sha256_file(request.freeze_receipt_path),
@@ -925,6 +946,7 @@ def run_production_research(request: ProductionRunRequest) -> ProductionRunOutco
             "data_manifest_sha256": data_hash,
             "strategy_code_sha256": sha256_file(request.strategy_code_path),
             "strategy_symbol": strategy_symbol,
+            "strategy_parameters_sha256": strategy_parameters_sha256,
             "output_manifest_sha256": sha256_file(staged_output / "manifest.json"),
             "execution_attestation_sha256": sha256_file(staged_output / "execution_attestation.json"),
             "test_execution_sha256": sha256_file(staged_output / "test_execution.json"),
@@ -1044,20 +1066,33 @@ def validate_v2_run_receipt(*, output_dir: Path, repo_root: Path) -> ValidationR
         receipt_key = top_level_hashes.get(name)
         if receipt_key is not None and receipt.get(receipt_key) != identity.get("sha256"):
             report.error(f"run_receipt_v2.{receipt_key}", "does not match upstream identity")
+    frozen_spec = None
     frozen_strategy_symbol = None
+    frozen_parameters_sha256 = None
+    frozen_parameter_identity_sha256 = None
     spec_upstream = upstream.get("spec")
     if isinstance(spec_upstream, dict) and isinstance(spec_upstream.get("path"), str):
         try:
-            frozen_strategy_symbol = _strategy_symbol(load_json(Path(spec_upstream["path"])))
+            frozen_spec = load_json(Path(spec_upstream["path"]))
+            frozen_strategy_symbol = _strategy_symbol(frozen_spec)
+            frozen_parameters_sha256 = _canonical_hash(_strategy_parameters(frozen_spec))
+            frozen_parameter_identity_sha256 = _canonical_hash(
+                frozen_spec.get("parameters", []),
+            )
         except (OSError, ValueError) as exc:
-            report.error("spec.implementation.strategy_symbol", str(exc))
+            report.error("spec.execution_identity", str(exc))
     freeze_upstream = upstream.get("freeze_receipt")
     freeze_strategy_symbol = None
+    freeze_parameter_identity_sha256 = None
     if isinstance(freeze_upstream, dict) and isinstance(freeze_upstream.get("path"), str):
         try:
-            freeze_strategy_symbol = load_json(Path(freeze_upstream["path"])).get("strategy_symbol")
+            frozen_receipt = load_json(Path(freeze_upstream["path"]))
+            freeze_strategy_symbol = frozen_receipt.get("strategy_symbol")
+            freeze_parameter_identity_sha256 = frozen_receipt.get(
+                "parameter_identity_sha256",
+            )
         except (OSError, ValueError) as exc:
-            report.error("freeze_receipt.strategy_symbol", str(exc))
+            report.error("freeze_receipt.execution_identity", str(exc))
     symbol_identities = {
         "run_receipt_v2.strategy_symbol": receipt.get("strategy_symbol"),
         "execution_attestation.strategy_symbol": attested.get("strategy_symbol"),
@@ -1067,6 +1102,38 @@ def validate_v2_run_receipt(*, output_dir: Path, repo_root: Path) -> ValidationR
     for path, actual_symbol in symbol_identities.items():
         if actual_symbol != frozen_strategy_symbol:
             report.error(path, "does not match frozen strategy entrypoint")
+    parameter_identities = {
+        "run_receipt_v2.strategy_parameters_sha256": receipt.get(
+            "strategy_parameters_sha256",
+        ),
+        "execution_attestation.strategy_parameters_sha256": attested.get(
+            "strategy_parameters_sha256",
+        ),
+    }
+    for path, actual_identity in parameter_identities.items():
+        if actual_identity != frozen_parameters_sha256:
+            report.error(path, "does not match frozen strategy parameters")
+    if freeze_parameter_identity_sha256 != frozen_parameter_identity_sha256:
+        report.error(
+            "freeze_receipt.parameter_identity_sha256",
+            "does not match frozen strategy spec",
+        )
+    try:
+        metadata = load_json(output_dir / "run_metadata.json")
+        metadata_strategy = metadata.get("strategy")
+        metadata_parameters = (
+            metadata_strategy.get("parameters")
+            if isinstance(metadata_strategy, dict) else None
+        )
+        metadata_parameters_sha256 = _canonical_hash(metadata_parameters)
+    except (OSError, TypeError, ValueError) as exc:
+        report.error("run_metadata.strategy.parameters", str(exc))
+    else:
+        if metadata_parameters_sha256 != frozen_parameters_sha256:
+            report.error(
+                "run_metadata.strategy.parameters",
+                "does not match frozen strategy parameters",
+            )
     critical = attested.get("execution_critical_sha256")
     try:
         current_critical = _execution_critical_hashes(repo_root)
@@ -1140,6 +1207,17 @@ def validate_v2_run_receipt(*, output_dir: Path, repo_root: Path) -> ValidationR
             "SELECT execution_id, status, receipt_path, receipt_sha256 FROM runs WHERE run_id=?",
             (receipt.get("run_id"),),
         ).fetchone()
+        freeze_record = None
+        if isinstance(frozen_spec, dict):
+            freeze_record = state.execute(
+                "SELECT parameter_sha256, spec_sha256 FROM freeze_identities "
+                "WHERE candidate_id=? AND variant_id=? AND strategy_version=?",
+                (
+                    frozen_spec.get("candidate_id"),
+                    frozen_spec.get("variant_id"),
+                    frozen_spec.get("strategy_version"),
+                ),
+            ).fetchone()
         state.close()
     except (sqlite3.Error, ValueError) as exc:
         report.error("canonical_state", str(exc))
@@ -1150,6 +1228,16 @@ def validate_v2_run_receipt(*, output_dir: Path, repo_root: Path) -> ValidationR
     )
     if record != expected_record:
         report.error("canonical_state", "receipt is absent, replaced, or discontinuous")
+    if isinstance(spec_upstream, dict):
+        expected_freeze_record = (
+            frozen_parameter_identity_sha256,
+            spec_upstream.get("sha256"),
+        )
+        if freeze_record != expected_freeze_record:
+            report.error(
+                "canonical_state.freeze_identity",
+                "frozen spec and parameter identity are absent or inconsistent",
+            )
     return report
 
 

@@ -10,7 +10,7 @@
     "research/backtester_v2/metrics.py": "616b0abf1d561420239ab566f48cefd9d1cb945389f40fc527d00d46549ce644",
     "research/backtester_v2/models.py": "7a0109d305450309d008116c9556b99ba97c36d2aec28f68242d729e672e83e7",
     "research/backtester_v2/output.py": "f2f59ebe2f0231ac72817f90e8a2a9abeee6484e889c629092e316de97c66ecf",
-    "research/strategy_replications/production_runner.py": "1a8ff125d01d8fa7194f7671803dad1ec7789075407367288c164d48cb93aa29",
+    "research/strategy_replications/production_runner.py": "ce3e98a53434181412d21d0485167005b2136c8cf80377df809a645b04c12b2a",
     "research/strategy_replications/run_production_v2.py": "619c5b44a34c79feff73e1a609c0409d944c2015e0de34ab979d94efce4c8016",
     "research/strategy_replications/validation/core.py": "12fdca38556086e855e4fc9dfc7bd43eb59913df3c1224bcb88b92a658cd020b"
   },
