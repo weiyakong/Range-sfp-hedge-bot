@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "BACKTESTER_V3A_OUTPUT_MANIFEST_V1",
+  "title": "Backtester V3-A output checksum manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "run_id",
+    "required_start_ms",
+    "required_end_ms",
+    "checksums"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "BACKTESTER_V3A_OUTPUT_MANIFEST_V1"
+    },
+    "status": {
+      "const": "COMPLETE"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "required_start_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "required_end_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "checksums": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    }
+  }
+}

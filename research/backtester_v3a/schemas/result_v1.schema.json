@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "BACKTESTER_V3A_RESULT_V1",
+  "title": "Backtester V3-A execution result envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "result",
+    "raw_strategy_intents",
+    "normalized_order_intents"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "BACKTESTER_V3A_RESULT_V1"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "result": {
+      "type": "object"
+    },
+    "raw_strategy_intents": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "normalized_order_intents": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:range-sfp:backtester-v3a:instrument-metadata-v1",
+  "title": "Backtester V3-A Frozen Instrument Metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "exchange",
+    "market",
+    "symbol",
+    "metadata_id",
+    "tick_size",
+    "step_size",
+    "min_qty",
+    "min_notional",
+    "price_precision",
+    "quantity_precision",
+    "provenance"
+  ],
+  "properties": {
+    "schema_version": {"const": "BACKTESTER_V3A_INSTRUMENT_METADATA_V1"},
+    "exchange": {"type": "string", "minLength": 1},
+    "market": {"type": "string", "minLength": 1},
+    "symbol": {"type": "string", "pattern": "^[A-Z0-9]{2,40}$"},
+    "metadata_id": {"type": "string", "minLength": 1},
+    "tick_size": {"type": "string", "pattern": "^(?!0+(?:\\.0+)?$)[0-9]+(?:\\.[0-9]+)?$"},
+    "step_size": {"type": "string", "pattern": "^(?!0+(?:\\.0+)?$)[0-9]+(?:\\.[0-9]+)?$"},
+    "min_qty": {"type": "string", "pattern": "^(?!0+(?:\\.0+)?$)[0-9]+(?:\\.[0-9]+)?$"},
+    "min_notional": {"type": "string", "pattern": "^(?!0+(?:\\.0+)?$)[0-9]+(?:\\.[0-9]+)?$"},
+    "price_precision": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+    "quantity_precision": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fidelity_classification",
+        "source",
+        "source_sha256",
+        "effective_start_ms",
+        "effective_end_ms"
+      ],
+      "properties": {
+        "fidelity_classification": {
+          "enum": [
+            "HISTORICAL_VERIFIED",
+            "STATIC_CURRENT_PROXY",
+            "RESEARCH_ASSUMPTION"
+          ]
+        },
+        "source": {"type": "string", "minLength": 1},
+        "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "effective_start_ms": {"oneOf": [{"type": "integer"}, {"type": "null"}]},
+        "effective_end_ms": {"oneOf": [{"type": "integer"}, {"type": "null"}]}
+      }
+    }
+  }
+}

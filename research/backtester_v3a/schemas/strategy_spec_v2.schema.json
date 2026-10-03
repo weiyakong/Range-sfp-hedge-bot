@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:range-sfp:backtester-v3a:strategy-spec-v2",
+  "title": "Backtester V3-A Frozen Strategy Spec V2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "strategy_id",
+    "strategy_version",
+    "candidate_id",
+    "variant_id",
+    "execution_identity",
+    "implementation",
+    "data_requirements"
+  ],
+  "properties": {
+    "schema_version": {"const": "STRATEGY_SPEC_V2"},
+    "status": {"const": "FROZEN"},
+    "strategy_id": {"$ref": "#/$defs/nonempty"},
+    "strategy_version": {"$ref": "#/$defs/nonempty"},
+    "candidate_id": {"$ref": "#/$defs/nonempty"},
+    "variant_id": {"$ref": "#/$defs/nonempty"},
+    "execution_identity": {"$ref": "#/$defs/execution_identity"},
+    "implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategy_entrypoint",
+        "parameters",
+        "parameters_sha256",
+        "execution_config_sha256"
+      ],
+      "properties": {
+        "strategy_entrypoint": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)*$"
+        },
+        "parameters": {"type": "object"},
+        "parameters_sha256": {"$ref": "#/$defs/sha256"},
+        "execution_config_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "data_requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trade_price",
+        "funding",
+        "mark_price",
+        "instrument_metadata"
+      ],
+      "properties": {
+        "trade_price": {"$ref": "#/$defs/input_requirement"},
+        "funding": {"$ref": "#/$defs/input_requirement"},
+        "mark_price": {"$ref": "#/$defs/input_requirement"},
+        "instrument_metadata": {"$ref": "#/$defs/input_requirement"}
+      }
+    }
+  },
+  "$defs": {
+    "nonempty": {"type": "string", "minLength": 1},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "execution_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "exchange",
+        "market",
+        "symbol",
+        "execution_timeframe",
+        "timezone",
+        "timestamp_semantics"
+      ],
+      "properties": {
+        "exchange": {"$ref": "#/$defs/nonempty"},
+        "market": {"$ref": "#/$defs/nonempty"},
+        "symbol": {"type": "string", "pattern": "^[A-Z0-9]{2,40}$"},
+        "execution_timeframe": {"$ref": "#/$defs/nonempty"},
+        "timezone": {"$ref": "#/$defs/nonempty"},
+        "timestamp_semantics": {"$ref": "#/$defs/nonempty"}
+      }
+    },
+    "input_requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "contract_sha256", "absence_policy"],
+      "properties": {
+        "mode": {"enum": ["REQUIRED", "EXPLICITLY_NOT_USED"]},
+        "contract_sha256": {
+          "oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]
+        },
+        "absence_policy": {
+          "oneOf": [
+            {"const": "EXPLICITLY_NOT_USED_BY_FROZEN_SPEC"},
+            {"type": "null"}
+          ]
+        }
+      }
+    }
+  }
+}

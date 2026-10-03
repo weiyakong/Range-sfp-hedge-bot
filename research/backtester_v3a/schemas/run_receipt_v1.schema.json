@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:range-sfp:backtester-v3a:run-receipt-v1",
+  "title": "Backtester V3-A Run Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "authority",
+    "run_id",
+    "execution_id",
+    "execution_identity",
+    "strategy_spec_sha256",
+    "strategy_entrypoint",
+    "strategy_parameters_sha256",
+    "trade_price_contract_sha256",
+    "funding_contract_sha256",
+    "mark_price_contract_sha256",
+    "instrument_metadata_contract_sha256",
+    "result_metadata_sha256",
+    "execution_attestation_sha256",
+    "code_identity_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": "BACKTESTER_V3A_RUN_RECEIPT_V1"},
+    "authority": {"const": "ATOMIC_PRODUCTION_RUNNER_V3A"},
+    "run_id": {"type": "string", "minLength": 1},
+    "execution_id": {"type": "string", "minLength": 1},
+    "execution_identity": {"$ref": "strategy_spec_v2.schema.json#/$defs/execution_identity"},
+    "strategy_spec_sha256": {"$ref": "#/$defs/sha256"},
+    "strategy_entrypoint": {"type": "string", "minLength": 1},
+    "strategy_parameters_sha256": {"$ref": "#/$defs/sha256"},
+    "trade_price_contract_sha256": {"$ref": "#/$defs/sha256"},
+    "funding_contract_sha256": {"$ref": "#/$defs/optional_sha256"},
+    "mark_price_contract_sha256": {"$ref": "#/$defs/optional_sha256"},
+    "instrument_metadata_contract_sha256": {"$ref": "#/$defs/sha256"},
+    "result_metadata_sha256": {"$ref": "#/$defs/sha256"},
+    "execution_attestation_sha256": {"$ref": "#/$defs/sha256"},
+    "code_identity_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "optional_sha256": {
+      "oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]
+    }
+  }
+}

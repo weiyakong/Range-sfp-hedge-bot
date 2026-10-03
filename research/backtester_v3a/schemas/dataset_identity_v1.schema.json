@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:range-sfp:backtester-v3a:dataset-identity-v1",
+  "title": "Backtester V3-A Instrument-bound Dataset Identity",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "role",
+    "exchange",
+    "market",
+    "symbol",
+    "data_timeframe",
+    "timezone",
+    "timestamp_semantics",
+    "dataset_id",
+    "dataset_sha256",
+    "manifest_path",
+    "manifest_id",
+    "manifest_sha256",
+    "coverage_start_ms",
+    "coverage_end_ms"
+  ],
+  "properties": {
+    "schema_version": {"const": "BACKTESTER_V3A_DATASET_IDENTITY_V1"},
+    "role": {"enum": ["trade_price", "funding", "mark_price"]},
+    "exchange": {"type": "string", "minLength": 1},
+    "market": {"type": "string", "minLength": 1},
+    "symbol": {"type": "string", "pattern": "^[A-Z0-9]{2,40}$"},
+    "data_timeframe": {"type": "string", "minLength": 1},
+    "timezone": {"type": "string", "minLength": 1},
+    "timestamp_semantics": {"type": "string", "minLength": 1},
+    "dataset_id": {"type": "string", "minLength": 1},
+    "dataset_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "manifest_path": {"type": "string", "minLength": 1},
+    "manifest_id": {"type": "string", "minLength": 1},
+    "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "coverage_start_ms": {"type": "integer"},
+    "coverage_end_ms": {"type": "integer"}
+  }
+}
