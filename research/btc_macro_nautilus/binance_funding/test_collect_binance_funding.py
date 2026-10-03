@@ -21,6 +21,7 @@ from collect_binance_funding import (  # noqa: E402
     normalize_and_validate,
     sha256_file,
 )
+from validate_binance_funding import validate_artifacts  # noqa: E402
 
 
 class FakeFetcher:
@@ -190,6 +191,8 @@ class BinanceFundingCollectorTests(unittest.TestCase):
             self.assertEqual(manifest["normalized_file"]["sha256"], sha256_file(config.normalized_path))
             expected = f"{sha256_file(config.manifest_path)}  funding_manifest.json\n"
             self.assertEqual(config.checksums_path.read_text(encoding="utf-8"), expected)
+            independent = validate_artifacts(root)
+            self.assertEqual(independent["qa_status"], "PASS", independent["errors"])
 
 
 if __name__ == "__main__":
